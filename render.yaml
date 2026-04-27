@@ -1,0 +1,17 @@
+# Render.com 배포 설정 파일
+# 이 파일이 있으면 Render가 자동으로 설정을 인식합니다.
+
+services:
+  - type: web
+    name: real-estate-asset-manager
+    runtime: python
+    region: singapore
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --timeout 60 --workers 2
+    envVars:
+      - key: MOLIT_API_KEY
+        sync: false  # 사용자가 Render 대시보드에서 직접 입력
+      - key: PYTHON_VERSION
+        value: 3.12.0
