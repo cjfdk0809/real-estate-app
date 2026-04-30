@@ -4,7 +4,7 @@
  * - API 요청은 항상 네트워크 우선 (실거래가는 최신 데이터 필요)
  */
 
-const CACHE_VERSION = 'v1.0.0';
+const CACHE_VERSION = 'v2.0.1-kapt';
 const CACHE_NAME = `real-estate-app-${CACHE_VERSION}`;
 
 // 캐시할 정적 자원 목록
