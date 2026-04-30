@@ -1,118 +1,29 @@
-/**
- * Service Worker for 부동산 자산관리 시스템
- * - 정적 파일 캐싱 (오프라인 지원)
- * - API 요청은 항상 네트워크 우선 (실거래가는 최신 데이터 필요)
- */
+# 변경 내역
 
-const CACHE_VERSION = 'v2.0.1-kapt';
-const CACHE_NAME = `real-estate-app-${CACHE_VERSION}`;
+## v2.0 — K-apt 통합 + 키움 CI 적용 (2026-04-30)
 
-// 캐시할 정적 자원 목록
-const STATIC_ASSETS = [
-  '/',
-  '/manifest.json',
-  '/icon-192.png',
-  '/icon-512.png',
-  '/icon.svg',
-];
+### 신규 기능
+- **K-apt 전국 단지 검색** — 시군구 → 동 선택 → 해당 동의 모든 아파트 단지 자동 표시
+- **단지 정보 자동 채움** — 클릭 시 주소·세대수·동수·준공일·시공사·시행사·관리실 전화 자동 입력
+- **연립다세대 실거래가** — 빌라·다세대·연립 매매·전월세 자동 수집 가능
+- **건축물대장 통합 조회** — 표제부 + 전유공용면적 + 공시가격 (호별 정확한 면적/공시가격)
 
-// CDN 자원 (네트워크 우선, 캐시 fallback)
-const CDN_PATTERNS = [
-  /^https:\/\/fonts\.googleapis\.com/,
-  /^https:\/\/fonts\.gstatic\.com/,
-  /^https:\/\/cdn\.jsdelivr\.net/,
-];
+### 디자인
+- 키움에프앤아이 CI 사이드바 상단 적용
+- 네이비 단색 톤 (핑크 제거)
+- PWA 아이콘 키움 브랜드 스타일
 
-// ============================================================
-// 설치 단계 — 정적 자원 미리 캐싱
-// ============================================================
-self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      // 개별 추가로 실패해도 다른 항목은 캐싱 진행
-      return Promise.all(
-        STATIC_ASSETS.map((url) =>
-          cache.add(url).catch((err) => console.warn('SW: 캐싱 실패', url, err))
-        )
-      );
-    })
-  );
-  self.skipWaiting(); // 새 SW가 즉시 활성화되도록
-});
+### 백엔드 신규 엔드포인트
+- `GET /api/danji/search?bjd_code=` — 법정동의 단지 목록
+- `GET /api/danji/info/{kaptCode}` — 단지 기본+상세 정보
+- `GET /api/building/lookup?sigungu_cd=&bjdong_cd=&bun=&ji=&dong_nm=&ho_nm=` — 건축물대장
+- `GET /api/transactions/rh-bulk?lawd_cd=&months=&danji_name=` — 연립다세대 실거래가
 
-// ============================================================
-// 활성화 단계 — 오래된 캐시 정리
-// ============================================================
-self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames
-          .filter((name) => name !== CACHE_NAME)
-          .map((name) => caches.delete(name))
-      );
-    })
-  );
-  self.clients.claim();
-});
+### 환경변수 변경 없음
+기존 `MOLIT_API_KEY` 그대로 사용 (공공데이터포털 한 계정 = 모든 API 동일 키)
 
-// ============================================================
-// 요청 가로채기
-// ============================================================
-self.addEventListener('fetch', (event) => {
-  const url = new URL(event.request.url);
-
-  // API 요청은 항상 네트워크 (캐싱 안 함 - 최신 데이터 필요)
-  if (url.pathname.startsWith('/api/')) {
-    return; // 기본 동작 (네트워크)
-  }
-
-  // POST 등 GET 외 요청은 캐싱 안 함
-  if (event.request.method !== 'GET') {
-    return;
-  }
-
-  // CDN 자원은 stale-while-revalidate (빠른 로딩 + 백그라운드 업데이트)
-  const isCDN = CDN_PATTERNS.some((p) => p.test(event.request.url));
-  if (isCDN) {
-    event.respondWith(
-      caches.open(CACHE_NAME).then((cache) =>
-        cache.match(event.request).then((cached) => {
-          const fetchPromise = fetch(event.request)
-            .then((response) => {
-              if (response && response.status === 200) {
-                cache.put(event.request, response.clone());
-              }
-              return response;
-            })
-            .catch(() => cached);
-          return cached || fetchPromise;
-        })
-      )
-    );
-    return;
-  }
-
-  // 같은 origin 정적 자원: cache-first
-  event.respondWith(
-    caches.match(event.request).then((cached) => {
-      if (cached) return cached;
-      return fetch(event.request)
-        .then((response) => {
-          if (response && response.status === 200 && response.type === 'basic') {
-            const responseToCache = response.clone();
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(event.request, responseToCache);
-            });
-          }
-          return response;
-        })
-        .catch(() => {
-          // 오프라인 + 캐시 없음 → 메인 페이지 fallback
-          if (event.request.mode === 'navigate') {
-            return caches.match('/');
-          }
-        });
-    })
-  );
-});
+## v1.0 — 초기 배포 (2026-04-27)
+- 자산관리 7개 모듈 구현
+- 국토부 아파트 실거래가 API 연동
+- Render 클라우드 배포
+- PWA 변환 (홈화면 추가 가능)
