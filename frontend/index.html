@@ -2,8 +2,28 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>부동산 자산관리 시스템</title>
+
+<!-- ========== PWA 메타태그 ========== -->
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#1a1a1a">
+<meta name="application-name" content="자산관리">
+<meta name="description" content="부동산 본건 정보, 거래사례, 경공매, 권리분석, 수익률 통합 관리">
+
+<!-- iOS 전용 -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="자산관리">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+<link rel="apple-touch-icon" sizes="192x192" href="/icon-192.png">
+
+<!-- 일반 favicon -->
+<link rel="icon" type="image/svg+xml" href="/icon.svg">
+<link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
+<link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png">
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;500;600;700&family=Pretendard:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -11,19 +31,27 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
 :root {
-  --bg: #fafaf7;
+  /* ========== 키움에프앤아이 브랜드 컬러 (네이비 단색 톤) ========== */
+  --kiwoom-navy: #011F8E;        /* 메인 네이비 */
+  --kiwoom-navy-deep: #00164D;   /* 진한 네이비 (호버, 강조) */
+  --kiwoom-navy-light: #2A4FBE;  /* 밝은 네이비 */
+  --kiwoom-navy-soft: #E6EAF5;   /* 연한 네이비 (배경) */
+  --kiwoom-grey: #E7EBF0;        /* CI 그레이 */
+  
+  /* ========== 시스템 컬러 ========== */
+  --bg: #f5f7fb;                 /* 차분한 블루-화이트 배경 */
   --bg-card: #ffffff;
-  --bg-subtle: #f4f3ee;
-  --ink: #1a1a1a;
-  --ink-soft: #4a4a4a;
-  --ink-muted: #8a8a85;
-  --line: #e5e3dc;
-  --line-strong: #c9c5b8;
-  --accent: #8b1818;
-  --accent-soft: #f4ebeb;
-  --navy: #1e2a44;
+  --bg-subtle: #eef1f7;
+  --ink: #00164D;                /* 진한 네이비 텍스트 */
+  --ink-soft: #2D3D6B;
+  --ink-muted: #8892A6;
+  --line: #dde3ee;
+  --line-strong: #c2cad9;
+  --accent: var(--kiwoom-navy);  /* 강조색 = 네이비 */
+  --accent-soft: var(--kiwoom-navy-soft);
+  --navy: var(--kiwoom-navy);
   --gold: #a8884a;
-  --green: #2d5a3d;
+  --green: #1e7a3d;
   --warn: #b85c00;
   --serif: 'Noto Serif KR', serif;
   --sans: 'Pretendard', -apple-system, sans-serif;
@@ -44,38 +72,171 @@ input, select, textarea { font-family: inherit; font-size: 13px; }
 table { border-collapse: collapse; width: 100%; }
 
 /* ========== LAYOUT ========== */
-.app { display: grid; grid-template-columns: 280px 1fr; min-height: 100vh; }
+.app { display: grid; grid-template-columns: 290px 1fr; min-height: 100vh; }
 .sidebar { background: var(--bg-card); border-right: 1px solid var(--line); display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh; }
-.main { padding: 32px 48px; overflow-x: auto; }
+.main { padding: 32px 48px; overflow-x: auto; background: var(--bg); }
 
 /* ========== SIDEBAR ========== */
-.brand { padding: 24px 22px 20px; border-bottom: 1px solid var(--line); }
-.brand-mark { font-family: var(--serif); font-size: 20px; font-weight: 700; letter-spacing: -0.02em; color: var(--ink); display: flex; align-items: baseline; gap: 8px; }
-.brand-mark::before { content: '◆'; color: var(--accent); font-size: 12px; }
-.brand-sub { font-size: 10px; letter-spacing: 0.15em; color: var(--ink-muted); margin-top: 4px; text-transform: uppercase; }
+.sidebar { 
+  background: linear-gradient(180deg, var(--kiwoom-navy) 0%, var(--kiwoom-navy-deep) 100%); 
+  border-right: 1px solid var(--kiwoom-navy-deep); 
+  display: flex; 
+  flex-direction: column; 
+  position: sticky; 
+  top: 0; 
+  height: 100vh;
+  color: white;
+}
+.brand { 
+  padding: 0;
+  border-bottom: 1px solid rgba(255,255,255,0.12);
+  background: rgba(0,0,0,0.15);
+}
+.brand-ci-wrap {
+  background: white;
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.brand-ci-img {
+  width: 100%;
+  max-width: 220px;
+  height: auto;
+  display: block;
+}
+.brand-divider {
+  height: 1px;
+  background: rgba(255,255,255,0.08);
+}
+.brand-mark { 
+  font-family: var(--serif); 
+  font-size: 15px; 
+  font-weight: 600; 
+  letter-spacing: -0.01em; 
+  color: white;
+  line-height: 1.2;
+  padding: 14px 22px 2px;
+}
+.brand-sub { 
+  font-size: 9px; 
+  letter-spacing: 0.18em; 
+  color: rgba(255,255,255,0.5); 
+  text-transform: uppercase;
+  font-weight: 500;
+  padding: 0 22px 16px;
+}
 
 .nav-section { padding: 16px 14px 8px; }
-.nav-label { font-size: 10px; letter-spacing: 0.15em; color: var(--ink-muted); text-transform: uppercase; padding: 0 8px 8px; font-weight: 600; }
-.nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; color: var(--ink-soft); margin-bottom: 1px; transition: all 0.15s; font-weight: 500; }
-.nav-item:hover { background: var(--bg-subtle); color: var(--ink); }
-.nav-item.active { background: var(--ink); color: var(--bg-card); }
-.nav-item-num { font-family: var(--mono); font-size: 10px; opacity: 0.6; min-width: 14px; }
+.nav-label { 
+  font-size: 10px; 
+  letter-spacing: 0.15em; 
+  color: rgba(255,255,255,0.5); 
+  text-transform: uppercase; 
+  padding: 0 8px 8px; 
+  font-weight: 600; 
+}
+.nav-item { 
+  display: flex; 
+  align-items: center; 
+  gap: 10px; 
+  padding: 10px 12px; 
+  border-radius: 6px; 
+  cursor: pointer; 
+  font-size: 13px; 
+  color: rgba(255,255,255,0.8); 
+  margin-bottom: 2px; 
+  transition: all 0.15s; 
+  font-weight: 500; 
+}
+.nav-item:hover { 
+  background: rgba(255,255,255,0.08); 
+  color: white;
+}
+.nav-item.active { 
+  background: rgba(255,255,255,0.15); 
+  color: white; 
+  font-weight: 600;
+  border-left: 3px solid white;
+  padding-left: 9px;
+}
+.nav-item-num { 
+  font-family: var(--mono); 
+  font-size: 10px; 
+  opacity: 0.7; 
+  min-width: 14px; 
+}
 
 .property-list { flex: 1; overflow-y: auto; padding: 0 14px; }
-.property-item { padding: 10px 12px; border-radius: 6px; cursor: pointer; margin-bottom: 2px; border: 1px solid transparent; }
-.property-item:hover { background: var(--bg-subtle); }
-.property-item.active { background: var(--accent-soft); border-color: var(--accent); }
-.property-item-name { font-size: 12px; font-weight: 600; color: var(--ink); margin-bottom: 2px; }
-.property-item-addr { font-size: 11px; color: var(--ink-muted); }
+.property-item { 
+  padding: 10px 12px; 
+  border-radius: 6px; 
+  cursor: pointer; 
+  margin-bottom: 3px; 
+  border: 1px solid transparent;
+  background: rgba(255,255,255,0.04);
+}
+.property-item:hover { 
+  background: rgba(255,255,255,0.1); 
+  border-color: rgba(255,255,255,0.15);
+}
+.property-item.active { 
+  background: rgba(255,255,255,0.15); 
+  border-color: rgba(255,255,255,0.4); 
+}
+.property-item-name { 
+  font-size: 12px; 
+  font-weight: 600; 
+  color: white; 
+  margin-bottom: 2px; 
+}
+.property-item-addr { 
+  font-size: 11px; 
+  color: rgba(255,255,255,0.55); 
+}
 
-.sidebar-footer { padding: 14px; border-top: 1px solid var(--line); }
-.btn-add { width: 100%; padding: 10px; background: var(--ink); color: var(--bg-card); border-radius: 6px; font-size: 12px; font-weight: 500; transition: opacity 0.15s; }
-.btn-add:hover { opacity: 0.85; }
+.sidebar-footer { 
+  padding: 14px; 
+  border-top: 1px solid rgba(255,255,255,0.12);
+  background: rgba(0,0,0,0.15);
+}
+.btn-add { 
+  width: 100%; 
+  padding: 11px; 
+  background: white; 
+  color: var(--kiwoom-navy); 
+  border-radius: 6px; 
+  font-size: 12px; 
+  font-weight: 700; 
+  letter-spacing: 0.02em;
+  transition: all 0.15s; 
+}
+.btn-add:hover { 
+  background: var(--bg-subtle);
+  transform: translateY(-1px);
+}
 
 /* ========== MAIN HEADER ========== */
-.page-head { margin-bottom: 28px; padding-bottom: 20px; border-bottom: 2px solid var(--ink); }
-.page-eyebrow { font-size: 10px; letter-spacing: 0.2em; color: var(--accent); text-transform: uppercase; font-weight: 600; margin-bottom: 6px; }
-.page-title { font-family: var(--serif); font-size: 28px; font-weight: 600; letter-spacing: -0.02em; color: var(--ink); }
+.page-head { 
+  margin-bottom: 28px; 
+  padding-bottom: 20px; 
+  border-bottom: 2px solid var(--kiwoom-navy); 
+}
+.page-eyebrow { 
+  font-size: 10px; 
+  letter-spacing: 0.2em; 
+  color: var(--kiwoom-navy); 
+  text-transform: uppercase; 
+  font-weight: 700; 
+  margin-bottom: 6px; 
+}
+.page-title { 
+  font-family: var(--serif); 
+  font-size: 28px; 
+  font-weight: 700; 
+  letter-spacing: -0.02em; 
+  color: var(--kiwoom-navy); 
+}
 .page-sub { font-size: 13px; color: var(--ink-muted); margin-top: 4px; }
 
 /* ========== CARDS ========== */
@@ -85,31 +246,97 @@ table { border-collapse: collapse; width: 100%; }
 .grid-4 { grid-template-columns: repeat(4, 1fr); }
 
 .card { background: var(--bg-card); border: 1px solid var(--line); border-radius: 8px; padding: 20px; }
-.card-title { font-family: var(--serif); font-size: 16px; font-weight: 600; margin-bottom: 14px; color: var(--ink); display: flex; align-items: center; justify-content: space-between; }
+.card-title { 
+  font-family: var(--serif); 
+  font-size: 16px; 
+  font-weight: 700; 
+  margin-bottom: 14px; 
+  color: var(--kiwoom-navy); 
+  display: flex; 
+  align-items: center; 
+  justify-content: space-between; 
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
 .card-title::before { content: ''; }
 
 .editable-card { cursor: pointer; transition: all 0.15s; position: relative; }
-.editable-card:hover { border-color: var(--ink); box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
+.editable-card:hover { 
+  border-color: var(--kiwoom-navy); 
+  box-shadow: 0 2px 12px rgba(1, 31, 142, 0.08); 
+}
 .editable-card:hover .edit-hint { opacity: 1; }
-.edit-hint { font-size: 10px; color: var(--accent); font-weight: 500; opacity: 0.5; transition: opacity 0.15s; letter-spacing: 0.05em; font-family: var(--sans); }
+.edit-hint { 
+  font-size: 10px; 
+  color: var(--kiwoom-navy); 
+  font-weight: 600; 
+  opacity: 0.5; 
+  transition: opacity 0.15s; 
+  letter-spacing: 0.05em; 
+  font-family: var(--sans); 
+}
 
-.stat-card { background: var(--bg-card); border: 1px solid var(--line); border-radius: 8px; padding: 18px 20px; }
-.stat-label { font-size: 10px; letter-spacing: 0.15em; color: var(--ink-muted); text-transform: uppercase; font-weight: 600; margin-bottom: 8px; }
-.stat-value { font-family: var(--mono); font-size: 22px; font-weight: 600; color: var(--ink); letter-spacing: -0.02em; }
+.stat-card { 
+  background: var(--bg-card); 
+  border: 1px solid var(--line); 
+  border-left: 3px solid var(--kiwoom-navy);
+  border-radius: 8px; 
+  padding: 18px 20px; 
+  transition: all 0.15s;
+}
+.stat-card:hover {
+  border-left-color: var(--kiwoom-navy-deep);
+  box-shadow: 0 2px 8px rgba(1, 31, 142, 0.08);
+}
+.stat-label { 
+  font-size: 10px; 
+  letter-spacing: 0.15em; 
+  color: var(--ink-muted); 
+  text-transform: uppercase; 
+  font-weight: 600; 
+  margin-bottom: 8px; 
+}
+.stat-value { 
+  font-family: var(--mono); 
+  font-size: 22px; 
+  font-weight: 700; 
+  color: var(--kiwoom-navy); 
+  letter-spacing: -0.02em; 
+}
 .stat-unit { font-size: 12px; color: var(--ink-muted); margin-left: 4px; font-family: var(--sans); }
-.stat-trend { font-size: 11px; margin-top: 4px; font-family: var(--mono); }
-.stat-trend.up { color: var(--accent); }
+.stat-trend { font-size: 11px; margin-top: 4px; font-family: var(--mono); color: var(--ink-muted); }
+.stat-trend.up { color: var(--kiwoom-navy); }
 .stat-trend.down { color: var(--green); }
 
 /* ========== TABLES ========== */
 .tbl { width: 100%; font-size: 12px; }
-.tbl th { text-align: left; padding: 10px 12px; background: var(--bg-subtle); font-size: 11px; letter-spacing: 0.05em; color: var(--ink-soft); text-transform: uppercase; font-weight: 600; border-bottom: 1px solid var(--line-strong); }
+.tbl th { 
+  text-align: left; 
+  padding: 10px 12px; 
+  background: var(--kiwoom-navy); 
+  font-size: 11px; 
+  letter-spacing: 0.05em; 
+  color: white; 
+  text-transform: uppercase; 
+  font-weight: 600; 
+  border-bottom: 1px solid var(--kiwoom-navy-deep); 
+}
 .tbl td { padding: 11px 12px; border-bottom: 1px solid var(--line); color: var(--ink); }
 .tbl tbody tr:hover { background: var(--bg-subtle); }
 .tbl .num { font-family: var(--mono); text-align: right; }
-.tbl .price { font-family: var(--mono); font-weight: 600; text-align: right; }
-.tbl-action { display: inline-block; padding: 3px 8px; font-size: 10px; border-radius: 4px; cursor: pointer; margin-left: 4px; background: var(--bg-subtle); color: var(--ink-soft); }
-.tbl-action:hover { background: var(--accent-soft); color: var(--accent); }
+.tbl .price { font-family: var(--mono); font-weight: 600; text-align: right; color: var(--kiwoom-navy); }
+.tbl-action { 
+  display: inline-block; 
+  padding: 3px 8px; 
+  font-size: 10px; 
+  border-radius: 4px; 
+  cursor: pointer; 
+  margin-left: 4px; 
+  background: var(--bg-subtle); 
+  color: var(--ink-soft); 
+  font-weight: 500;
+}
+.tbl-action:hover { background: var(--kiwoom-navy-soft); color: var(--kiwoom-navy); }
 
 /* ========== FORMS ========== */
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 20px; }
@@ -123,30 +350,64 @@ table { border-collapse: collapse; width: 100%; }
   border-radius: 5px;
   background: var(--bg-card);
   font-size: 13px;
-  transition: border 0.15s;
+  transition: all 0.15s;
+  color: var(--ink);
 }
-.field input:focus, .field select:focus, .field textarea:focus { outline: none; border-color: var(--ink); }
+.field input:focus, .field select:focus, .field textarea:focus { 
+  outline: none; 
+  border-color: var(--kiwoom-navy); 
+  box-shadow: 0 0 0 3px rgba(1, 31, 142, 0.1);
+}
 .field textarea { resize: vertical; min-height: 60px; font-family: inherit; }
 .field-hint { font-size: 11px; color: var(--ink-muted); }
 
 /* ========== BUTTONS ========== */
-.btn { padding: 9px 18px; border-radius: 6px; font-size: 12px; font-weight: 600; transition: all 0.15s; letter-spacing: 0.02em; display: inline-flex; align-items: center; gap: 6px; }
-.btn-primary { background: var(--ink); color: var(--bg-card); }
-.btn-primary:hover { background: var(--accent); }
-.btn-ghost { background: transparent; color: var(--ink-soft); border: 1px solid var(--line-strong); }
-.btn-ghost:hover { background: var(--bg-subtle); color: var(--ink); }
-.btn-danger { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
-.btn-danger:hover { background: var(--accent); color: var(--bg-card); }
+.btn { 
+  padding: 9px 18px; 
+  border-radius: 6px; 
+  font-size: 12px; 
+  font-weight: 600; 
+  transition: all 0.15s; 
+  letter-spacing: 0.02em; 
+  display: inline-flex; 
+  align-items: center; 
+  gap: 6px; 
+}
+.btn-primary { 
+  background: var(--kiwoom-navy); 
+  color: white; 
+}
+.btn-primary:hover { 
+  background: var(--kiwoom-navy-deep);
+}
+.btn-ghost { 
+  background: transparent; 
+  color: var(--kiwoom-navy); 
+  border: 1px solid var(--kiwoom-navy); 
+}
+.btn-ghost:hover { 
+  background: var(--kiwoom-navy); 
+  color: white; 
+}
+.btn-danger { 
+  background: transparent; 
+  color: #c0392b; 
+  border: 1px solid #c0392b; 
+}
+.btn-danger:hover { 
+  background: #c0392b; 
+  color: white; 
+}
 
 .btn-row { display: flex; gap: 10px; align-items: center; }
 .btn-row.right { justify-content: flex-end; }
 
 /* ========== BADGES ========== */
-.badge { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 10px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; }
-.badge-매매 { background: #1e2a44; color: white; }
-.badge-전세 { background: #2d5a3d; color: white; }
+.badge { display: inline-block; padding: 3px 9px; border-radius: 3px; font-size: 10px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
+.badge-매매 { background: var(--kiwoom-navy); color: white; }
+.badge-전세 { background: #1e7a3d; color: white; }
 .badge-월세 { background: #a8884a; color: white; }
-.badge-경매 { background: var(--accent); color: white; }
+.badge-경매 { background: #8b1818; color: white; }
 .badge-공매 { background: #6b3d8c; color: white; }
 
 /* ========== EMPTY STATE ========== */
@@ -155,10 +416,26 @@ table { border-collapse: collapse; width: 100%; }
 .empty-text { font-size: 13px; }
 
 /* ========== MODAL ========== */
-.modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: none; align-items: center; justify-content: center; z-index: 100; padding: 20px; }
+.modal-bg { position: fixed; inset: 0; background: rgba(0, 22, 77, 0.55); display: none; align-items: center; justify-content: center; z-index: 100; padding: 20px; backdrop-filter: blur(2px); }
 .modal-bg.show { display: flex; }
-.modal { background: var(--bg-card); border-radius: 10px; max-width: 700px; width: 100%; max-height: 90vh; overflow-y: auto; padding: 28px 32px; }
-.modal-title { font-family: var(--serif); font-size: 20px; font-weight: 600; margin-bottom: 6px; }
+.modal { 
+  background: var(--bg-card); 
+  border-radius: 10px; 
+  max-width: 700px; 
+  width: 100%; 
+  max-height: 90vh; 
+  overflow-y: auto; 
+  padding: 28px 32px; 
+  border-top: 4px solid var(--kiwoom-navy);
+  box-shadow: 0 20px 60px rgba(0, 22, 77, 0.3);
+}
+.modal-title { 
+  font-family: var(--serif); 
+  font-size: 20px; 
+  font-weight: 700; 
+  margin-bottom: 6px; 
+  color: var(--kiwoom-navy);
+}
 .modal-sub { font-size: 12px; color: var(--ink-muted); margin-bottom: 22px; }
 
 /* ========== TABS ========== */
@@ -185,19 +462,38 @@ table { border-collapse: collapse; width: 100%; }
 .divider { height: 1px; background: var(--line); margin: 16px 0; }
 
 /* Section header */
-.section-h { font-family: var(--serif); font-size: 14px; font-weight: 600; color: var(--ink); margin: 20px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 8px; }
-.section-h::before { content: '§'; color: var(--accent); font-weight: 700; }
+.section-h { 
+  font-family: var(--serif); 
+  font-size: 14px; 
+  font-weight: 700; 
+  color: var(--kiwoom-navy); 
+  margin: 20px 0 10px; 
+  padding-bottom: 6px; 
+  border-bottom: 2px solid var(--kiwoom-navy); 
+  display: flex; 
+  align-items: center; 
+  gap: 8px; 
+}
+.section-h::before { content: '◆'; color: var(--kiwoom-navy); font-weight: 700; font-size: 11px; }
 
 /* Info row */
 .info-row { display: grid; grid-template-columns: 130px 1fr; gap: 10px; padding: 8px 0; border-bottom: 1px dashed var(--line); font-size: 13px; }
 .info-row:last-child { border-bottom: none; }
-.info-label { color: var(--ink-muted); font-size: 12px; }
+.info-label { color: var(--ink-muted); font-size: 12px; font-weight: 500; }
 .info-value { color: var(--ink); font-weight: 500; }
-.info-value.mono { font-family: var(--mono); }
+.info-value.mono { font-family: var(--mono); color: var(--kiwoom-navy); }
 
 /* Notice banner */
-.notice { background: var(--accent-soft); border-left: 3px solid var(--accent); padding: 12px 16px; border-radius: 0 6px 6px 0; font-size: 12px; color: var(--ink-soft); margin-bottom: 16px; }
-.notice-title { font-weight: 600; color: var(--accent); margin-bottom: 4px; }
+.notice { 
+  background: var(--kiwoom-navy-soft); 
+  border-left: 3px solid var(--kiwoom-navy); 
+  padding: 12px 16px; 
+  border-radius: 0 6px 6px 0; 
+  font-size: 12px; 
+  color: var(--ink-soft); 
+  margin-bottom: 16px; 
+}
+.notice-title { font-weight: 700; color: var(--kiwoom-navy); margin-bottom: 4px; }
 
 /* Print Styles */
 @media print {
@@ -208,16 +504,139 @@ table { border-collapse: collapse; width: 100%; }
   body { background: white; font-size: 11px; }
   .page-head { margin-bottom: 16px; }
 }
+
+/* ========== MOBILE RESPONSIVE ========== */
+@media (max-width: 900px) {
+  .app {
+    grid-template-columns: 1fr;
+  }
+  .sidebar {
+    position: fixed;
+    top: 0; left: -280px;
+    height: 100vh;
+    width: 280px;
+    z-index: 1000;
+    transition: left 0.25s ease;
+    box-shadow: 2px 0 12px rgba(0,0,0,0.15);
+  }
+  .sidebar.open {
+    left: 0;
+  }
+  .sidebar-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 999;
+  }
+  .sidebar-overlay.show {
+    display: block;
+  }
+  .mobile-menu-btn {
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    background: var(--bg-card);
+    border: 1px solid var(--line);
+    font-size: 18px;
+    cursor: pointer;
+    position: fixed;
+    top: 12px; left: 12px;
+    z-index: 100;
+  }
+  .main {
+    padding: 64px 16px 24px;
+  }
+  .grid-2, .grid-3, .grid-4 {
+    grid-template-columns: 1fr !important;
+  }
+  .form-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .page-title {
+    font-size: 22px;
+  }
+  .page-head {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+  }
+  .page-head .btn-row {
+    margin-top: 12px;
+    width: 100%;
+  }
+  .page-head .btn {
+    flex: 1;
+  }
+  .card {
+    padding: 14px;
+  }
+  .stat-value {
+    font-size: 18px;
+  }
+  .modal {
+    padding: 20px 16px;
+    max-height: 85vh;
+  }
+  .modal-title {
+    font-size: 17px;
+  }
+  /* 테이블은 가로 스크롤 가능하게 */
+  .card .tbl,
+  .tbl {
+    font-size: 11px;
+  }
+  .card {
+    overflow-x: auto;
+  }
+  .tbl th, .tbl td {
+    padding: 8px 6px;
+    white-space: nowrap;
+  }
+  .info-row {
+    grid-template-columns: 100px 1fr;
+    font-size: 12px;
+  }
+  /* PWA standalone 모드: iOS notch 고려 */
+  body {
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+.mobile-menu-btn {
+  display: none;
+}
+
+/* PWA standalone 모드 표시 */
+@media (display-mode: standalone) {
+  body {
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
 </style>
 </head>
 <body>
 
 <div class="app">
+  <!-- 모바일 햄버거 메뉴 버튼 -->
+  <button class="mobile-menu-btn no-print" onclick="toggleSidebar()">☰</button>
+  
+  <!-- 사이드바 오버레이 (모바일) -->
+  <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
+  
   <!-- ========== SIDEBAR ========== -->
-  <aside class="sidebar no-print">
+  <aside class="sidebar no-print" id="sidebar">
     <div class="brand">
-      <div class="brand-mark">자산관리</div>
-      <div class="brand-sub">Real Estate Asset Manager</div>
+      <div class="brand-ci-wrap">
+        <img src="/kiwoom_ci.jpg" alt="키움에프앤아이" class="brand-ci-img">
+      </div>
+      <div class="brand-divider"></div>
+      <div class="brand-mark">자산관리 시스템</div>
+      <div class="brand-sub">REAL ESTATE ASSET MANAGER</div>
     </div>
 
     <div class="nav-section">
@@ -253,13 +672,33 @@ table { border-collapse: collapse; width: 100%; }
     <div class="modal-title" id="propertyModalTitle">물건 등록</div>
     <div class="modal-sub">본건의 기본 정보를 입력하세요. 모든 항목은 나중에 수정할 수 있습니다.</div>
 
-    <div class="autofill-box no-print" style="background: linear-gradient(135deg, #f4ebeb 0%, #fafaf7 100%); border: 1px solid var(--accent); border-radius: 8px; padding: 16px 18px; margin-bottom: 22px;">
-      <div style="font-size: 11px; letter-spacing: 0.1em; color: var(--accent); text-transform: uppercase; font-weight: 700; margin-bottom: 8px;">⚡ 단지 자동입력</div>
-      <div style="font-size: 12px; color: var(--ink-soft); margin-bottom: 10px;">단지명을 입력하면 주소·세대수·준공일·시공사 등이 자동으로 채워집니다. 동·호수·면적은 별도 입력 필요.</div>
-      <input type="text" id="danjiSearch" placeholder="예: 반포힐스테이트, 감일한라비발디, 헬리오시티..."
-        style="width: 100%; padding: 10px 14px; border: 1px solid var(--line-strong); border-radius: 6px; font-size: 13px; background: white;"
-        oninput="searchDanji(this.value)" onfocus="searchDanji(this.value)">
-      <div id="danjiSuggestions" style="margin-top: 6px; max-height: 200px; overflow-y: auto;"></div>
+    <div class="autofill-box no-print" style="background: var(--bg-subtle); border: 1px solid var(--kiwoom-navy); border-left: 4px solid var(--kiwoom-navy); border-radius: 6px; padding: 14px 16px; margin-bottom: 22px;">
+      <div style="font-size: 11px; letter-spacing: 0.1em; color: var(--kiwoom-navy); text-transform: uppercase; font-weight: 700; margin-bottom: 6px;">⚡ 단지 자동입력 (K-apt 전국)</div>
+      <div style="font-size: 12px; color: var(--ink-soft); margin-bottom: 10px;">시군구 → 동을 선택하면 해당 동의 모든 아파트 단지 목록이 표시됩니다. 클릭 시 주소·세대수·준공일·시공사 등이 자동 입력됩니다.</div>
+      
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
+        <div>
+          <label style="font-size: 10px; color: var(--ink-muted); text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600;">시군구</label>
+          <input type="text" id="kaptSigungu" placeholder="예: 서초구, 하남시" autocomplete="off"
+            style="width: 100%; padding: 8px 10px; margin-top: 3px; border: 1px solid var(--line-strong); border-radius: 5px; font-size: 12px; background: white;"
+            oninput="searchSigungu(this.value)" onfocus="searchSigungu(this.value)">
+        </div>
+        <div>
+          <label style="font-size: 10px; color: var(--ink-muted); text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600;">읍면동</label>
+          <input type="text" id="kaptDong" placeholder="시군구 선택 후" autocomplete="off" disabled
+            style="width: 100%; padding: 8px 10px; margin-top: 3px; border: 1px solid var(--line-strong); border-radius: 5px; font-size: 12px; background: white;"
+            oninput="searchDongInSigungu(this.value)" onfocus="searchDongInSigungu(this.value)">
+        </div>
+      </div>
+      <div id="kaptSuggestions" style="max-height: 280px; overflow-y: auto;"></div>
+      
+      <div style="margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--line);">
+        <div style="font-size: 10px; color: var(--ink-muted); margin-bottom: 4px;">또는 즐겨찾기 단지 (오프라인 DB)</div>
+        <input type="text" id="danjiSearch" placeholder="예: 반포힐스테이트, 감일한라비발디..."
+          style="width: 100%; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 5px; font-size: 12px; background: white;"
+          oninput="searchDanji(this.value)" onfocus="searchDanji(this.value)">
+        <div id="danjiSuggestions" style="margin-top: 4px; max-height: 150px; overflow-y: auto;"></div>
+      </div>
     </div>
 
     <form id="propertyForm">
@@ -403,6 +842,133 @@ table { border-collapse: collapse; width: 100%; }
 </div>
 
 <script>
+// ============================================================
+// PWA: Service Worker 등록
+// ============================================================
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js')
+      .then(reg => console.log('[PWA] Service Worker 등록됨:', reg.scope))
+      .catch(err => console.warn('[PWA] Service Worker 등록 실패:', err));
+  });
+}
+
+// ============================================================
+// 영구 저장: window.storage 폴리필 (실제 브라우저용 localStorage 기반)
+// ============================================================
+if (!window.storage) {
+  window.storage = {
+    async get(key) {
+      try {
+        const value = localStorage.getItem(key);
+        if (value === null) return null;
+        return { key, value };
+      } catch (e) { return null; }
+    },
+    async set(key, value) {
+      try {
+        localStorage.setItem(key, value);
+        return { key, value };
+      } catch (e) {
+        console.error('localStorage 저장 실패:', e);
+        return null;
+      }
+    },
+    async delete(key) {
+      try {
+        localStorage.removeItem(key);
+        return { key, deleted: true };
+      } catch (e) { return null; }
+    },
+    async list(prefix) {
+      try {
+        const keys = Object.keys(localStorage).filter(k => !prefix || k.startsWith(prefix));
+        return { keys, prefix };
+      } catch (e) { return { keys: [] }; }
+    },
+  };
+}
+
+// ============================================================
+// PWA: 홈 화면 추가 안내 (iOS Safari, Android Chrome)
+// ============================================================
+let _deferredInstallPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  _deferredInstallPrompt = e;
+  showInstallBanner('android');
+});
+
+window.addEventListener('appinstalled', () => {
+  _deferredInstallPrompt = null;
+  hideInstallBanner();
+});
+
+function isIOS() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+}
+function isInStandaloneMode() {
+  return window.matchMedia('(display-mode: standalone)').matches
+    || window.navigator.standalone === true;
+}
+
+function showInstallBanner(platform) {
+  if (isInStandaloneMode()) return;  // 이미 설치됨
+  if (sessionStorage.getItem('install_banner_dismissed')) return;
+  
+  // 기존 배너 제거
+  const existing = document.getElementById('installBanner');
+  if (existing) existing.remove();
+  
+  const msg = platform === 'ios'
+    ? '홈 화면에 추가하면 앱처럼 사용할 수 있어요. 하단 <strong>공유 버튼 ⬆️</strong> → <strong>"홈 화면에 추가"</strong> 선택'
+    : '홈 화면에 추가하여 앱처럼 사용해보세요';
+  
+  const banner = document.createElement('div');
+  banner.id = 'installBanner';
+  banner.innerHTML = `
+    <div style="position: fixed; bottom: 16px; left: 16px; right: 16px; max-width: 480px; margin: 0 auto;
+                background: var(--ink, #1a1a1a); color: white; border-radius: 12px; padding: 14px 16px;
+                box-shadow: 0 8px 24px rgba(0,0,0,0.25); z-index: 9999; display: flex; align-items: center; gap: 12px;
+                font-family: 'Pretendard', sans-serif; font-size: 13px;">
+      <div style="font-size: 24px;">📱</div>
+      <div style="flex: 1; line-height: 1.4;">${msg}</div>
+      ${platform === 'android' 
+        ? '<button onclick="installApp()" style="background: white; color: #1a1a1a; border: none; padding: 8px 14px; border-radius: 6px; font-weight: 600; font-size: 12px; cursor: pointer; white-space: nowrap;">설치</button>'
+        : ''}
+      <button onclick="dismissInstallBanner()" style="background: transparent; color: rgba(255,255,255,0.6); border: none; font-size: 20px; cursor: pointer; padding: 0 4px;">×</button>
+    </div>
+  `;
+  document.body.appendChild(banner);
+}
+
+function hideInstallBanner() {
+  const banner = document.getElementById('installBanner');
+  if (banner) banner.remove();
+}
+
+function dismissInstallBanner() {
+  hideInstallBanner();
+  sessionStorage.setItem('install_banner_dismissed', '1');
+}
+
+async function installApp() {
+  if (!_deferredInstallPrompt) return;
+  _deferredInstallPrompt.prompt();
+  const result = await _deferredInstallPrompt.userChoice;
+  if (result.outcome === 'accepted') hideInstallBanner();
+  _deferredInstallPrompt = null;
+}
+
+// iOS는 beforeinstallprompt 이벤트가 없어서 별도로 안내
+window.addEventListener('load', () => {
+  setTimeout(() => {
+    if (isIOS() && !isInStandaloneMode()) {
+      showInstallBanner('ios');
+    }
+  }, 3000);  // 3초 후 (사용자가 화면 적응 후)
+});
+
 // ============================================================
 // STATE & STORAGE
 // ============================================================
@@ -725,8 +1291,29 @@ document.querySelectorAll('.nav-item').forEach(item => {
     item.classList.add('active');
     state.currentView = item.dataset.view;
     renderView();
+    // 모바일에서 메뉴 클릭 시 사이드바 자동 닫기
+    if (window.innerWidth <= 900) {
+      closeSidebar();
+    }
   });
 });
+
+// ============================================================
+// 모바일 사이드바 토글
+// ============================================================
+function toggleSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('sidebarOverlay');
+  if (!sidebar || !overlay) return;
+  sidebar.classList.toggle('open');
+  overlay.classList.toggle('show');
+}
+function closeSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('sidebarOverlay');
+  if (sidebar) sidebar.classList.remove('open');
+  if (overlay) overlay.classList.remove('show');
+}
 
 // ============================================================
 // VIEW ROUTER
@@ -971,14 +1558,14 @@ function drawPriceChart(comps) {
         {
           label: '매매',
           data: sales.map(x => ({x: x.date, y: x.price / 10000})),
-          borderColor: '#8b1818', backgroundColor: 'rgba(139,24,24,0.1)',
-          tension: 0.3, pointRadius: 5, pointHoverRadius: 7, borderWidth: 2,
+          borderColor: '#011F8E', backgroundColor: 'rgba(1,31,142,0.1)',
+          tension: 0.3, pointRadius: 5, pointHoverRadius: 7, borderWidth: 2.5,
         },
         {
           label: '전세',
           data: jeonse.map(x => ({x: x.date, y: x.price / 10000})),
-          borderColor: '#1e2a44', backgroundColor: 'rgba(30,42,68,0.1)',
-          tension: 0.3, pointRadius: 5, pointHoverRadius: 7, borderWidth: 2,
+          borderColor: '#a8884a', backgroundColor: 'rgba(168,136,74,0.1)',
+          tension: 0.3, pointRadius: 5, pointHoverRadius: 7, borderWidth: 2.5,
         }
       ]
     },
@@ -1530,6 +2117,319 @@ function fillArea(exclusive, supply) {
 }
 
 // ============================================================
+// K-apt 전국 단지 검색 (시군구 → 동 → 단지)
+// ============================================================
+let _selectedSigunguCd = null;
+let _selectedSigunguName = '';
+let _selectedBjdCode = null;  // 10자리 법정동코드
+
+// 시군구 자동완성 (백엔드의 LAWD_CODES 사용 - 5자리 시군구 코드)
+async function searchSigungu(query) {
+  const box = document.getElementById('kaptSuggestions');
+  if (!query || query.trim().length === 0) {
+    box.innerHTML = '<div style="padding: 8px; font-size: 11px; color: var(--ink-muted);">시군구명을 입력하세요 (예: 서초구, 하남시, 강남구)</div>';
+    return;
+  }
+  try {
+    const r = await fetch(`${BACKEND_URL}/api/lawd-codes?q=${encodeURIComponent(query)}`);
+    const d = await r.json();
+    if (!d.items || d.items.length === 0) {
+      box.innerHTML = '<div style="padding: 8px; font-size: 11px; color: var(--ink-muted);">일치하는 시군구 없음</div>';
+      return;
+    }
+    box.innerHTML = '<div style="font-size: 10px; color: var(--ink-muted); padding: 4px 6px; letter-spacing: 0.05em;">시군구 선택</div>' +
+      d.items.slice(0, 10).map(([name, code]) => `
+        <div onclick="selectSigungu('${name.replace(/'/g, "\\'")}', '${code}')"
+          style="padding: 7px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; margin-top: 2px; display: flex; justify-content: space-between; background: white; border: 1px solid var(--line);"
+          onmouseover="this.style.background='var(--bg-subtle)'; this.style.borderColor='var(--kiwoom-navy)'"
+          onmouseout="this.style.background='white'; this.style.borderColor='var(--line)'">
+          <span>${name}</span><span class="text-mono text-muted">${code}</span>
+        </div>
+      `).join('');
+  } catch (e) {
+    box.innerHTML = `<div style="font-size: 11px; color: var(--accent); padding: 6px;">백엔드 연결 실패: ${e.message}</div>`;
+  }
+}
+
+function selectSigungu(name, code) {
+  _selectedSigunguCd = code;  // 5자리
+  _selectedSigunguName = name;
+  // 동 입력 활성화
+  const dongInput = document.getElementById('kaptDong');
+  dongInput.disabled = false;
+  dongInput.value = '';
+  dongInput.placeholder = `${name}의 읍면동`;
+  dongInput.focus();
+  document.getElementById('kaptSuggestions').innerHTML = `
+    <div style="padding: 8px 10px; background: var(--bg-subtle); border-radius: 4px; font-size: 11px; color: var(--green); margin-bottom: 8px;">
+      ✓ 시군구 선택: <strong>${name}</strong> (${code}) — 위 "읍면동" 입력란에 동 이름을 입력하세요
+    </div>
+  `;
+}
+
+// 시군구가 선택된 후, 그 안의 읍면동을 검색
+// 동 데이터는 K-apt API의 단지 목록을 통해 간접 추출 (캐시됨)
+let _dongCache = {};  // { sigunguCd: [{bjdCode, name, danjiCount}, ...] }
+
+async function searchDongInSigungu(query) {
+  if (!_selectedSigunguCd) {
+    document.getElementById('kaptSuggestions').innerHTML = '<div style="padding: 8px; font-size: 11px; color: var(--accent);">먼저 시군구를 선택하세요</div>';
+    return;
+  }
+  // 동 데이터가 없으면 단지 검색을 통해 추출 (시군구 5자리로는 직접 동 목록 조회 API 없음)
+  // → 사용자가 직접 동 이름 입력하면 즉시 단지 검색 시도
+  const box = document.getElementById('kaptSuggestions');
+  if (!query || query.trim().length < 1) {
+    box.innerHTML = `<div style="padding: 8px; font-size: 11px; color: var(--ink-muted);">동 이름을 입력하세요 (예: 반포동, 감이동, 잠실동)</div>`;
+    return;
+  }
+  
+  // 시군구 + 동 → 법정동코드 추정 (10자리)
+  // 정확한 코드는 행정표준코드관리시스템에서 조회되지만,
+  // 여기서는 사용자가 입력한 동 이름으로 K-apt를 조회하기 위해 추정 코드 시도
+  box.innerHTML = `
+    <div style="padding: 10px; background: var(--bg-subtle); border-radius: 5px; font-size: 12px; color: var(--ink-soft);">
+      <div style="margin-bottom: 8px;">⏳ <strong>${_selectedSigunguName} ${query}</strong>의 단지 검색 중...</div>
+      <div style="font-size: 11px; color: var(--ink-muted);">
+        ※ K-apt API는 10자리 법정동코드를 사용합니다. 동의 정확한 코드는 행정표준코드관리시스템에서 확인하세요.
+      </div>
+    </div>
+  `;
+  
+  // 입력된 동 이름으로 가능한 법정동코드를 추정해서 시도
+  await tryFetchAptListByDongName(query.trim());
+}
+
+// 사용자 입력 동 이름으로 단지 검색 (법정동코드 추정)
+// 시군구코드 5자리 + 동코드 5자리 = 10자리
+// 동코드는 알 수 없으므로, 가장 흔한 동들의 코드를 미리 매핑하거나, 
+// 사용자가 직접 10자리 코드를 입력하도록 유도
+async function tryFetchAptListByDongName(dongName) {
+  const box = document.getElementById('kaptSuggestions');
+  
+  // 자주 쓰이는 동 → 법정동 끝 5자리 매핑 (사용자가 추가 가능)
+  const knownDongs = COMMON_DONG_CODES[_selectedSigunguCd] || {};
+  const dongTail = knownDongs[dongName] || knownDongs[dongName.replace('동', '')];
+  
+  if (!dongTail) {
+    // 매핑이 없으면 안내
+    box.innerHTML = `
+      <div style="padding: 12px; background: #fff5e6; border-left: 3px solid var(--warn); border-radius: 4px; font-size: 12px;">
+        <div style="font-weight: 600; color: var(--warn); margin-bottom: 6px;">⚠ 동 코드를 찾을 수 없습니다</div>
+        <div style="color: var(--ink-soft); margin-bottom: 8px;">
+          <strong>${_selectedSigunguName}</strong>의 <strong>${dongName}</strong>은 등록된 동 매핑에 없습니다.
+        </div>
+        <div style="font-size: 11px; color: var(--ink-muted); margin-bottom: 6px;">
+          해결 방법:
+        </div>
+        <ol style="font-size: 11px; color: var(--ink-soft); padding-left: 20px; margin: 0;">
+          <li>아래 "즐겨찾기 단지" DB에서 검색해보기</li>
+          <li>아래 "법정동 직접 입력" 박스에 10자리 코드 입력</li>
+        </ol>
+        <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line);">
+          <input type="text" id="manualBjdCode" placeholder="10자리 법정동코드 직접 입력 (예: 1165010800)" maxlength="10"
+            style="width: 100%; padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: 4px; font-size: 12px; font-family: var(--mono);"
+            oninput="if(this.value.length===10) fetchAptListByBjdCode(this.value)">
+        </div>
+      </div>
+    `;
+    return;
+  }
+  
+  const bjdCode = _selectedSigunguCd + dongTail;
+  await fetchAptListByBjdCode(bjdCode);
+}
+
+async function fetchAptListByBjdCode(bjdCode) {
+  const box = document.getElementById('kaptSuggestions');
+  box.innerHTML = `<div style="padding: 12px; text-align: center; color: var(--ink-muted); font-size: 12px;">⏳ K-apt에서 단지 목록 조회 중... (${bjdCode})</div>`;
+  
+  try {
+    const r = await fetch(`${BACKEND_URL}/api/danji/search?bjd_code=${bjdCode}`);
+    const d = await r.json();
+    if (d.error) {
+      box.innerHTML = `<div style="padding: 10px; background: var(--accent-soft); border-radius: 4px; font-size: 12px; color: var(--accent);">오류: ${d.error}</div>`;
+      return;
+    }
+    if (!d.items || d.items.length === 0) {
+      box.innerHTML = `<div style="padding: 10px; background: var(--bg-subtle); border-radius: 4px; font-size: 12px;">해당 동에 등록된 단지 없음</div>`;
+      return;
+    }
+    _selectedBjdCode = bjdCode;
+    box.innerHTML = `
+      <div style="font-size: 11px; color: var(--green); padding: 6px 8px; background: #f0f7f0; border-radius: 4px; margin-bottom: 6px;">
+        ✓ <strong>${d.count}개</strong> 단지 발견 (법정동 ${bjdCode})
+      </div>
+      ${d.items.map(item => `
+        <div onclick="fillFromKapt('${item.kaptCode}')"
+          style="padding: 9px 11px; border: 1px solid var(--line); border-radius: 5px; cursor: pointer; font-size: 12px; margin-top: 3px; background: white; transition: all 0.1s;"
+          onmouseover="this.style.background='var(--bg-subtle)'; this.style.borderColor='var(--kiwoom-navy)'"
+          onmouseout="this.style.background='white'; this.style.borderColor='var(--line)'">
+          <div style="font-weight: 600; color: var(--kiwoom-navy);">${item.kaptName}</div>
+          <div style="font-size: 10px; color: var(--ink-muted); margin-top: 2px; font-family: var(--mono);">${item.kaptCode}</div>
+        </div>
+      `).join('')}
+    `;
+  } catch (e) {
+    box.innerHTML = `<div style="padding: 10px; background: var(--accent-soft); border-radius: 4px; font-size: 12px; color: var(--accent);">백엔드 연결 실패: ${e.message}</div>`;
+  }
+}
+
+// K-apt 단지 정보로 폼 자동 채우기
+async function fillFromKapt(kaptCode) {
+  const box = document.getElementById('kaptSuggestions');
+  box.innerHTML = `<div style="padding: 12px; text-align: center; color: var(--ink-muted); font-size: 12px;">⏳ 단지 상세정보 조회 중...</div>`;
+  
+  try {
+    const r = await fetch(`${BACKEND_URL}/api/danji/info/${kaptCode}`);
+    const d = await r.json();
+    if (d.error) {
+      box.innerHTML = `<div style="padding: 10px; background: var(--accent-soft); border-radius: 4px; font-size: 12px; color: var(--accent);">오류: ${d.error}</div>`;
+      return;
+    }
+    
+    // 폼에 자동 채움
+    const form = document.getElementById('propertyForm');
+    const setValue = (k, v) => { if (form.elements[k] && v) form.elements[k].value = v; };
+    
+    setValue('name', d.name);
+    setValue('addrRoad', d.addrRoad);
+    setValue('addrLot', d.addrLot);
+    setValue('totalUnits', d.totalUnits);
+    setValue('completionDate', d.completionDate);
+    setValue('contractor', d.contractor);
+    setValue('developer', d.developer);
+    setValue('usage', d.usage);
+    
+    // 메모에 추가 정보 누적
+    let notes = form.elements.notes ? (form.elements.notes.value || '') : '';
+    const extraInfo = [];
+    if (d.totalDongs) extraInfo.push(`동수: ${d.totalDongs}동`);
+    if (d.heatingType) extraInfo.push(`난방: ${d.heatingType}`);
+    if (d.hallType) extraInfo.push(`복도: ${d.hallType}`);
+    if (d.tel) extraInfo.push(`관리실: ${d.tel}`);
+    if (d.mgmtMethod) extraInfo.push(`관리: ${d.mgmtMethod}`);
+    if (d.parking && d.parking.total) extraInfo.push(`주차: ${d.parking.total}대`);
+    
+    if (extraInfo.length && !notes.includes('K-apt')) {
+      notes = (notes ? notes + '\n\n' : '') + `[K-apt] ${extraInfo.join(' · ')}`;
+      if (form.elements.notes) form.elements.notes.value = notes;
+    }
+    
+    // 면적별 세대 분포 안내
+    const areaDist = [];
+    if (d.mparea_60 && d.mparea_60 !== '0') areaDist.push(`60㎡↓: ${d.mparea_60}세대`);
+    if (d.mparea_85 && d.mparea_85 !== '0') areaDist.push(`60~85㎡: ${d.mparea_85}세대`);
+    if (d.mparea_135 && d.mparea_135 !== '0') areaDist.push(`85~135㎡: ${d.mparea_135}세대`);
+    if (d.mparea_136 && d.mparea_136 !== '0') areaDist.push(`135㎡↑: ${d.mparea_136}세대`);
+    
+    box.innerHTML = `
+      <div style="padding: 12px; background: #f0f7f0; border-left: 3px solid var(--green); border-radius: 4px; font-size: 12px;">
+        <div style="font-weight: 700; color: var(--green); margin-bottom: 8px;">✓ ${d.name} 정보 자동 입력 완료</div>
+        <div style="color: var(--ink-soft); margin-bottom: 8px;">
+          ${d.addrRoad || d.addrLot}<br>
+          ${d.totalUnits}세대 · ${d.totalDongs}개동 · ${d.completionDate} 준공
+        </div>
+        ${areaDist.length ? `
+          <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line);">
+            <div style="font-size: 10px; color: var(--ink-muted); margin-bottom: 4px;">단지 면적별 세대 분포:</div>
+            <div style="font-size: 11px; color: var(--ink-soft);">${areaDist.join(' · ')}</div>
+            <div style="font-size: 10px; color: var(--ink-muted); margin-top: 4px;">※ 호별 정확한 전용면적은 직접 입력하거나 건축물대장 조회를 사용하세요</div>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  } catch (e) {
+    box.innerHTML = `<div style="padding: 10px; background: var(--accent-soft); border-radius: 4px; font-size: 12px; color: var(--accent);">오류: ${e.message}</div>`;
+  }
+}
+
+// ============================================================
+// 자주 사용하는 동 → 법정동 끝 5자리 매핑
+// 행정표준코드관리시스템(www.code.go.kr)에서 추가 가능
+// ============================================================
+const COMMON_DONG_CODES = {
+  // 서울 서초구 (11650)
+  '11650': {
+    '반포동': '10800', '잠원동': '10700', '서초동': '10100',
+    '방배동': '10300', '양재동': '10600', '내곡동': '10900',
+    '우면동': '10500', '원지동': '10400', '신원동': '11000',
+    '염곡동': '11100',
+  },
+  // 서울 강남구 (11680)
+  '11680': {
+    '역삼동': '10100', '개포동': '10300', '청담동': '10500',
+    '삼성동': '10600', '대치동': '10700', '신사동': '10800',
+    '논현동': '10400', '압구정동': '10900', '세곡동': '11000',
+    '자곡동': '11100', '일원동': '11200', '수서동': '11300',
+    '도곡동': '11400',
+  },
+  // 서울 송파구 (11710)
+  '11710': {
+    '잠실동': '10100', '신천동': '10200', '풍납동': '10300',
+    '송파동': '10400', '석촌동': '10500', '삼전동': '10600',
+    '가락동': '10700', '문정동': '10800', '장지동': '10900',
+    '방이동': '11000', '오금동': '11100', '거여동': '11200',
+    '마천동': '11300',
+  },
+  // 서울 강동구 (11740)
+  '11740': {
+    '명일동': '10100', '고덕동': '10200', '상일동': '10300',
+    '길동': '10400', '둔촌동': '10500', '암사동': '10600',
+    '성내동': '10700', '천호동': '10800', '강일동': '10900',
+  },
+  // 서울 마포구 (11440)
+  '11440': {
+    '아현동': '10100', '공덕동': '10200', '신공덕동': '10300',
+    '도화동': '10400', '용강동': '10500', '대흥동': '10600',
+    '염리동': '10700', '신수동': '10800', '현석동': '11000',
+    '서교동': '11600', '동교동': '11700', '합정동': '11800',
+    '연남동': '12000', '망원동': '11900', '성산동': '12100',
+    '상암동': '12200', '중동': '12500',
+  },
+  // 서울 강서구 (11500)
+  '11500': {
+    '염창동': '10100', '등촌동': '10200', '화곡동': '10300',
+    '가양동': '10400', '마곡동': '10500', '내발산동': '10600',
+    '외발산동': '10700', '공항동': '10800', '방화동': '10900',
+    '개화동': '11000', '과해동': '11100', '오곡동': '11200',
+    '오쇠동': '11300', '대저1동': '11400', '대저2동': '11500',
+  },
+  // 서울 영등포구 (11560)
+  '11560': {
+    '영등포동': '10100', '여의도동': '10200', '당산동1가': '10300',
+    '당산동2가': '10400', '당산동3가': '10500', '당산동4가': '10600',
+    '당산동5가': '10700', '당산동6가': '10800', '도림동': '11200',
+    '문래동': '11500', '양평동': '12000', '신길동': '12500', '대림동': '13000',
+  },
+  // 경기 하남시 (41450) - 위례·미사·감일
+  '41450': {
+    '천현동': '10100', '신장동': '10200', '구산동': '10300',
+    '망월동': '10400', '풍산동': '10500', '미사동': '10600',
+    '선동': '10700', '덕풍동': '10800', '교산동': '10900',
+    '춘궁동': '11000', '하사창동': '11100', '상사창동': '11200',
+    '항동': '11300', '배알미동': '11400', '창우동': '11500',
+    '학암동': '11600', '감북동': '11700', '광암동': '11800',
+    '초이동': '11900', '초일동': '12000', '감이동': '12100',
+    '감일동': '12200', '위례동': '12300',
+  },
+  // 경기 성남시 분당구 (41135)
+  '41135': {
+    '분당동': '10100', '수내동': '10200', '정자동': '10300',
+    '율동': '10400', '서현동': '10500', '이매동': '10600',
+    '야탑동': '10700', '판교동': '10800', '삼평동': '10900',
+    '백현동': '11000', '운중동': '11100', '석운동': '11200',
+    '대장동': '11300', '하산운동': '11400', '금곡동': '11500',
+    '구미동': '11600',
+  },
+  // 인천 연수구 (28185) - 송도
+  '28185': {
+    '옥련동': '10100', '선학동': '10200', '연수동': '10300',
+    '청학동': '10400', '동춘동': '10500', '송도동': '10600',
+  },
+};
+
+// ============================================================
 // MODAL HANDLERS
 // ============================================================
 let editingPropertyId = null;
@@ -1540,6 +2440,16 @@ function openPropertyModal(id) {
   // 단지 자동입력 박스 초기화
   document.getElementById('danjiSearch').value = '';
   document.getElementById('danjiSuggestions').innerHTML = '';
+  // K-apt 검색 박스 초기화
+  document.getElementById('kaptSigungu').value = '';
+  const dongInput = document.getElementById('kaptDong');
+  dongInput.value = '';
+  dongInput.disabled = true;
+  dongInput.placeholder = '시군구 선택 후';
+  document.getElementById('kaptSuggestions').innerHTML = '';
+  _selectedSigunguCd = null;
+  _selectedSigunguName = '';
+  _selectedBjdCode = null;
   if (id) {
     const p = state.properties[id];
     Object.keys(p).forEach(k => {
