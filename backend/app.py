@@ -374,7 +374,7 @@ def health():
             'url_set': bool(SUPABASE_URL),
             'key_set': bool(SUPABASE_KEY),
         },
-        'version': 'v2.5-npl',
+        'version': 'v2.7-fallback',
     })
 
 
@@ -543,10 +543,26 @@ def get_transactions_bulk():
         except Exception as e:
             errors.append(f'{ym}: {e}')
 
-    # 필터링
+    # 필터링 (양방향 부분 매칭으로 강건하게)
     if danji_filter:
-        normalized_filter = danji_filter.replace(' ', '').lower()
-        all_items = [x for x in all_items if normalized_filter in x['name'].replace(' ', '').lower()]
+        nf = danji_filter.replace(' ', '').lower()
+        def matches(item_name):
+            n = (item_name or '').replace(' ', '').lower()
+            if not n or not nf:
+                return False
+            # 1. 양방향 부분 매칭 (검색어 ↔ 거래명)
+            if nf in n or n in nf:
+                return True
+            # 2. 마지막 N글자 매칭 (브랜드명 매칭, 위치 prefix 자동 처리)
+            if len(nf) >= 4 and len(n) >= 4:
+                if nf[-4:] in n or n[-4:] in nf:
+                    return True
+            # 3. 첫 4글자 매칭
+            if len(nf) >= 4 and len(n) >= 4:
+                if nf[:4] in n or n[:4] in nf:
+                    return True
+            return False
+        all_items = [x for x in all_items if matches(x.get('name', ''))]
     if min_area is not None:
         all_items = [x for x in all_items if x['area'] >= min_area]
     if max_area is not None:
@@ -2080,6 +2096,25 @@ async function selectDanji(danji) {
     return;
   }
   
+  // 단지명에서 핵심 키워드 추출 (위치 prefix 제거)
+  // 예: "방학삼익세라믹" + dong="방학동" → "삼익세라믹"
+  let searchKeyword = danji.kapt_name;
+  if (danji.dong) {
+    const dongStripped = danji.dong.replace(/(동|읍|면|리|가)$/, '');
+    if (dongStripped && searchKeyword.startsWith(dongStripped) && searchKeyword.length > dongStripped.length + 2) {
+      searchKeyword = searchKeyword.substring(dongStripped.length).trim();
+    }
+  }
+  // 시군구 prefix도 제거 시도
+  if (danji.sigungu) {
+    const sgStripped = danji.sigungu.replace(/(시|군|구)$/, '').replace(/\s/g, '');
+    if (sgStripped && searchKeyword.startsWith(sgStripped) && searchKeyword.length > sgStripped.length + 2) {
+      searchKeyword = searchKeyword.substring(sgStripped.length).trim();
+    }
+  }
+  
+  console.log('[NPL] 검색 키워드:', searchKeyword, '(원래 단지명:', danji.kapt_name, ')');
+  
   // 로딩 메시지 카운터
   let elapsed = 0;
   const loadingTimer = setInterval(() => {
@@ -2089,26 +2124,75 @@ async function selectDanji(danji) {
   }, 1000);
   
   try {
-    const url = `/api/transactions/bulk?lawd_cd=${lawd_cd}&months=12&danji_name=${encodeURIComponent(danji.kapt_name)}`;
-    const res = await fetch(url);
+    // 1차 시도: 단지명 필터 적용
+    let url = `/api/transactions/bulk?lawd_cd=${lawd_cd}&months=12&danji_name=${encodeURIComponent(searchKeyword)}`;
+    let res = await fetch(url);
+    if (!res.ok) throw new Error('서버 오류 ' + res.status);
+    let data = await res.json();
+    if (data.error) { showError('조회 실패: ' + data.error); clearInterval(loadingTimer); return; }
+    
+    let items = data.items || [];
+    let fallbackUsed = false;
+    
+    // Fallback: 단지명 매칭 0건이면 필터 없이 재시도 + 클라이언트 측 매칭
+    if (items.length === 0) {
+      document.getElementById('loading-msg').textContent = '단지명 자동매칭 실패, 시군구 전체 데이터로 재시도 중...';
+      document.getElementById('loading-sub').textContent = '거의 다 됐어요. 추가 30~60초 소요.';
+      
+      url = `/api/transactions/bulk?lawd_cd=${lawd_cd}&months=12`;
+      res = await fetch(url);
+      if (!res.ok) throw new Error('서버 오류 ' + res.status);
+      data = await res.json();
+      if (data.error) { showError('조회 실패: ' + data.error); clearInterval(loadingTimer); return; }
+      
+      const rawItems = data.items || [];
+      
+      // 클라이언트 측 단지명 매칭 (양방향 + 부분 매칭)
+      const kw = (searchKeyword || '').replace(/\s/g, '').toLowerCase();
+      // 키워드의 핵심 부분 (3-4글자) 추출 시도
+      const kwSuffix = kw.length >= 4 ? kw.slice(-4) : kw;
+      const kwPrefix = kw.length >= 4 ? kw.slice(0, 4) : kw;
+      
+      items = rawItems.filter(x => {
+        const n = (x.name || '').replace(/\s/g, '').toLowerCase();
+        if (!n) return false;
+        // 양방향 부분 매칭
+        if (n.includes(kw) || kw.includes(n)) return true;
+        // 마지막 4글자 매칭 (브랜드명)
+        if (kwSuffix.length >= 3 && n.includes(kwSuffix)) return true;
+        // 첫 4글자 매칭
+        if (kwPrefix.length >= 3 && n.includes(kwPrefix)) return true;
+        return false;
+      });
+      
+      fallbackUsed = true;
+      console.log(`[NPL] Fallback 매칭: ${rawItems.length}건 중 ${items.length}건 매칭 (키워드: ${kw})`);
+    }
+    
     clearInterval(loadingTimer);
-    
-    if (!res.ok) {
-      throw new Error('서버 오류 ' + res.status);
-    }
-    const data = await res.json();
-    
-    if (data.error) {
-      showError('조회 실패: ' + data.error);
-      return;
-    }
-    
-    allItems = data.items || [];
     document.getElementById('loading').style.display = 'none';
     
+    allItems = items;
+    
     if (allItems.length === 0) {
-      showError('해당 단지의 12개월 거래 내역이 없습니다. 단지명이 정확한지 확인하시거나, 거래가 적은 단지일 수 있습니다.');
+      showError(fallbackUsed 
+        ? '시군구 전체 데이터에서도 매칭되는 단지가 없습니다. 단지명을 확인하시거나, 메인 시군구 코드(' + lawd_cd + ')가 맞는지 확인해주세요.'
+        : '해당 단지의 12개월 거래 내역이 없습니다. 거래가 적은 단지일 수 있습니다.');
       return;
+    }
+    
+    // Fallback 사용 시 사용자에게 알림
+    const oldBanner = document.getElementById('fallback-banner');
+    if (oldBanner) oldBanner.remove();
+    if (fallbackUsed) {
+      const banner = document.createElement('div');
+      banner.id = 'fallback-banner';
+      banner.className = 'error-box';
+      banner.style.background = '#fff3e0';
+      banner.style.borderColor = '#ffcc80';
+      banner.style.color = '#bf6900';
+      banner.innerHTML = `ℹ️ 단지명 자동매칭으로 시군구(${lawd_cd}) 전체에서 ${items.length}건 추출 (검색 키워드: <strong>${escapeHtml(searchKeyword)}</strong>). 정확도가 낮을 수 있으니, 거래 표 하단의 <strong>지번 입력</strong>으로 사장님 단지를 좁혀주세요.`;
+      document.getElementById('analysis').insertBefore(banner, document.getElementById('analysis').firstChild);
     }
     
     // 분석
@@ -2460,7 +2544,7 @@ def admin_diag_kapt():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     print('=' * 60)
-    print('부동산 자산관리 백엔드 서버 (v2.5-npl)')
+    print('부동산 자산관리 백엔드 서버 (v2.7-fallback)')
     print('=' * 60)
     print(f'API 키 설정: {"O" if API_KEY else "X (.env 파일에 MOLIT_API_KEY 추가 필요)"}')
     print(f'Supabase 연결: {"O" if supabase else "X (선택사항 - 자동완성만 비활성화)"}')
