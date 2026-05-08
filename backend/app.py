@@ -1,12 +1,15 @@
 """
 부동산 자산관리 시스템 - 백엔드 서버
 국토교통부 실거래가 공공 API를 프록시하여 프론트엔드에 제공합니다.
++ Supabase DB 기반 전국 단지/법정동 자동완성 검색.
 
 실행:
     python app.py
 
 환경변수 (.env):
     MOLIT_API_KEY=공공데이터포털에서 발급받은 인증키
+    SUPABASE_URL=Supabase 프로젝트 URL (예: https://xxxxx.supabase.co)
+    SUPABASE_KEY=Supabase service_role(secret) 키 (sb_secret_... 또는 eyJ...)
 """
 import os
 import xml.etree.ElementTree as ET
@@ -20,11 +23,34 @@ from dotenv import load_dotenv
 
 from lawd_codes import LAWD_CODES, find_lawd_code
 
+# Supabase 클라이언트 (선택적 - 미설치/미설정 시에도 기존 기능은 정상 작동)
+try:
+    from supabase import create_client
+    HAS_SUPABASE_LIB = True
+except ImportError:
+    HAS_SUPABASE_LIB = False
+
 # ============================================================
 # 환경설정
 # ============================================================
 load_dotenv()
 API_KEY = os.environ.get('MOLIT_API_KEY', '').strip()
+
+# Supabase 연결 (자동완성 DB) - 환경변수 미설정 시 None으로 두고 기존 기능은 그대로
+SUPABASE_URL = os.environ.get('SUPABASE_URL', '').strip()
+SUPABASE_KEY = os.environ.get('SUPABASE_KEY', '').strip()
+supabase = None
+if HAS_SUPABASE_LIB and SUPABASE_URL and SUPABASE_KEY:
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+        print(f'[INFO] Supabase 연결 성공: {SUPABASE_URL[:50]}...')
+    except Exception as e:
+        print(f'[WARN] Supabase 연결 실패 (자동완성 비활성화): {e}')
+        supabase = None
+elif not HAS_SUPABASE_LIB:
+    print('[INFO] supabase 패키지 미설치 - 자동완성 기능 비활성화')
+elif not SUPABASE_URL or not SUPABASE_KEY:
+    print('[INFO] SUPABASE_URL/SUPABASE_KEY 환경변수 미설정 - 자동완성 기능 비활성화')
 
 # 국토부 실거래가 API 엔드포인트 (2024년 신규 HTTPS 엔드포인트)
 URL_TRADE = 'https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev'  # 상세
@@ -260,8 +286,15 @@ def health():
             'danji_info': True,
             'building_register': True,
             'price_disclosure': True,
+            'supabase_search': supabase is not None,  # 신규: 자동완성 가능 여부
         },
-        'version': 'v2.0-kapt',
+        'supabase': {
+            'lib_installed': HAS_SUPABASE_LIB,
+            'connected': supabase is not None,
+            'url_set': bool(SUPABASE_URL),
+            'key_set': bool(SUPABASE_KEY),
+        },
+        'version': 'v2.1-supabase',
     })
 
 
@@ -966,14 +999,171 @@ def get_rh_transactions_bulk():
 
 
 # ============================================================
+# 신규: 자동완성 검색 (Supabase DB 기반)
+# 전국 법정동(약 5만건) + 아파트 단지(약 1.8만개)를 빠르게 검색
+# ============================================================
+
+@app.route('/api/search/dong')
+def search_dong():
+    """동 이름 자동완성. (예: ?q=방학동)
+    Query params:
+        q: 검색어 (필수, 1자 이상)
+        limit: 결과 개수 (기본 10, 최대 30)
+    Returns:
+        items: [{bjd_code, sido, sigungu, dong, sigungu_cd, dong_cd}]
+    """
+    if not supabase:
+        return jsonify({
+            'error': 'Supabase 미연결. 환경변수(SUPABASE_URL/SUPABASE_KEY) 확인 또는 supabase 패키지 설치 필요.',
+            'lib_installed': HAS_SUPABASE_LIB,
+            'url_set': bool(SUPABASE_URL),
+            'key_set': bool(SUPABASE_KEY),
+        }), 503
+    q = request.args.get('q', '').strip()
+    limit = min(request.args.get('limit', default=10, type=int), 30)
+    if len(q) < 1:
+        return jsonify({'error': 'q(검색어)는 1자 이상이어야 합니다.'}), 400
+    try:
+        resp = (
+            supabase.table('legal_dong')
+            .select('bjd_code, sido, sigungu, dong, sigungu_cd, dong_cd')
+            .ilike('dong', f'%{q}%')
+            .eq('is_active', True)
+            .limit(limit)
+            .execute()
+        )
+        return jsonify({'count': len(resp.data), 'items': resp.data})
+    except Exception as e:
+        return jsonify({'error': f'Supabase 조회 오류: {e}'}), 500
+
+
+@app.route('/api/search/apt')
+def search_apt():
+    """아파트 단지명 자동완성. (예: ?q=삼익세라믹)
+    Query params:
+        q: 검색어 (필수, 2자 이상)
+        sido: 시도 필터 (선택)
+        sigungu: 시군구 필터 (선택)
+        limit: 결과 개수 (기본 10, 최대 30)
+    Returns:
+        items: [{kapt_code, kapt_name, sido, sigungu, dong, addr_road, total_units, ...}]
+    """
+    if not supabase:
+        return jsonify({'error': 'Supabase 미연결.'}), 503
+    q = request.args.get('q', '').strip()
+    sido = request.args.get('sido', '').strip()
+    sigungu = request.args.get('sigungu', '').strip()
+    limit = min(request.args.get('limit', default=10, type=int), 30)
+    if len(q) < 2:
+        return jsonify({'error': 'q(단지명)는 2자 이상이어야 합니다.'}), 400
+    try:
+        query = (
+            supabase.table('apt_master')
+            .select(
+                'kapt_code, kapt_name, bjd_code, sido, sigungu, dong, '
+                'addr_road, addr_lot, total_units, total_dongs, completion_date'
+            )
+            .ilike('kapt_name', f'%{q}%')
+        )
+        if sido:
+            query = query.eq('sido', sido)
+        if sigungu:
+            query = query.eq('sigungu', sigungu)
+        resp = query.limit(limit).execute()
+        return jsonify({'count': len(resp.data), 'items': resp.data})
+    except Exception as e:
+        return jsonify({'error': f'Supabase 조회 오류: {e}'}), 500
+
+
+@app.route('/api/search/address')
+def search_address():
+    """주소 자동 파싱 → 동/단지 후보 반환.
+    
+    예시:
+        ?q=서울 도봉구 방학동 274
+        → 토큰화하여 '방학동' 동 후보 추출 → '서울', '도봉구'로 필터링 → 단지 목록 조회
+    
+    Query params:
+        q: 주소 (필수, 공백 구분)
+    Returns:
+        query, tokens, dong_candidates, apt_candidates
+    """
+    if not supabase:
+        return jsonify({'error': 'Supabase 미연결.'}), 503
+    q = request.args.get('q', '').strip()
+    if not q:
+        return jsonify({'error': 'q(주소) 필수'}), 400
+    
+    # 주소 토큰화 (콤마/공백 구분)
+    tokens = q.replace(',', ' ').split()
+    if not tokens:
+        return jsonify({'error': '주소 형식 오류'}), 400
+    
+    try:
+        # 1. 동 이름 후보 추출 ('~동/읍/면'으로 끝나는 토큰)
+        dong_candidates = []
+        for tok in tokens:
+            if tok and tok[-1] in ('동', '읍', '면'):
+                resp = (
+                    supabase.table('legal_dong')
+                    .select('bjd_code, sido, sigungu, dong, sigungu_cd, dong_cd')
+                    .eq('dong', tok)
+                    .eq('is_active', True)
+                    .limit(20)
+                    .execute()
+                )
+                dong_candidates.extend(resp.data or [])
+        
+        # 2. 시도/시군구 키워드로 좁히기 (다른 토큰이 시도/시군구에 매칭되면 필터링)
+        for tok in tokens:
+            if not dong_candidates:
+                break
+            filtered = [
+                d for d in dong_candidates
+                if tok in (d.get('sido') or '') or tok in (d.get('sigungu') or '')
+            ]
+            if filtered:
+                dong_candidates = filtered
+        
+        # 3. 매칭된 동의 단지 목록 (최대 5개 동 × 20개 단지 = 100)
+        apt_candidates = []
+        seen_codes = set()
+        for d in dong_candidates[:5]:
+            resp = (
+                supabase.table('apt_master')
+                .select(
+                    'kapt_code, kapt_name, sido, sigungu, dong, '
+                    'addr_road, addr_lot, total_units'
+                )
+                .eq('bjd_code', d['bjd_code'])
+                .limit(20)
+                .execute()
+            )
+            for a in (resp.data or []):
+                if a['kapt_code'] not in seen_codes:
+                    seen_codes.add(a['kapt_code'])
+                    apt_candidates.append(a)
+        
+        return jsonify({
+            'query': q,
+            'tokens': tokens,
+            'dong_candidates': dong_candidates,
+            'apt_candidates': apt_candidates,
+        })
+    except Exception as e:
+        return jsonify({'error': f'Supabase 조회 오류: {e}'}), 500
+
+
+# ============================================================
 # 시작
 # ============================================================
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     print('=' * 60)
-    print('부동산 자산관리 백엔드 서버')
+    print('부동산 자산관리 백엔드 서버 (v2.1-supabase)')
     print('=' * 60)
     print(f'API 키 설정: {"O" if API_KEY else "X (.env 파일에 MOLIT_API_KEY 추가 필요)"}')
+    print(f'Supabase 연결: {"O" if supabase else "X (선택사항 - 자동완성만 비활성화)"}')
     print(f'법정동 코드: {len(LAWD_CODES)}건 로드됨')
     print(f'서버 시작: http://localhost:{port}')
     print(f'프론트엔드: http://localhost:{port}')
