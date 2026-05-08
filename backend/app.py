@@ -102,6 +102,82 @@ def parse_xml_items(xml_text):
     return items, None
 
 
+def parse_kapt_response(response_text):
+    """K-apt V3 API 응답을 파싱 (XML/JSON 자동 감지).
+    
+    V3 API는 _type 파라미터에 따라 XML 또는 JSON으로 응답하며,
+    파라미터 미지정 시 기본 형식이 XML과 다를 수 있음. 양쪽 모두 처리.
+    
+    Returns: (items_list, error_message_or_None)
+    """
+    import json as _json
+    text = (response_text or '').strip()
+    if not text:
+        return [], 'API 응답이 비어있음'
+    
+    # JSON 시도 (V3에서 기본일 가능성 큼)
+    if text[0] in ('{', '['):
+        try:
+            data = _json.loads(text)
+            # K-apt JSON 구조: { "response": { "header": {...}, "body": { "items": {...} } } }
+            response_node = data.get('response', data) if isinstance(data, dict) else {}
+            
+            # resultCode 확인
+            header = response_node.get('header', {}) if isinstance(response_node, dict) else {}
+            result_code = str(header.get('resultCode', '')).strip()
+            result_msg = str(header.get('resultMsg', '')).strip()
+            if result_code and result_code not in ('00', '000'):
+                return [], f'API 오류 [{result_code}]: {result_msg}'
+            
+            # items 추출
+            body = response_node.get('body', {}) if isinstance(response_node, dict) else {}
+            items_wrapper = body.get('items') if isinstance(body, dict) else None
+            
+            if items_wrapper is None or items_wrapper == '':
+                return [], None  # 데이터 없음 (오류 아님)
+            
+            if isinstance(items_wrapper, list):
+                items = items_wrapper
+            elif isinstance(items_wrapper, dict):
+                inner = items_wrapper.get('item', [])
+                if isinstance(inner, dict):
+                    items = [inner]  # 단일 아이템
+                elif isinstance(inner, list):
+                    items = inner
+                else:
+                    items = []
+            else:
+                items = []
+            
+            # 모든 값을 string으로 변환 (XML 파싱과 호환)
+            normalized = []
+            for it in items:
+                if isinstance(it, dict):
+                    normalized.append({k: ('' if v is None else str(v).strip()) for k, v in it.items()})
+            return normalized, None
+        except _json.JSONDecodeError as e:
+            return [], f'JSON 파싱 실패: {e}. 응답 앞부분: {text[:150]}'
+    
+    # XML 시도 (V2 형식 호환)
+    if text[0] == '<':
+        try:
+            root = ET.fromstring(text)
+            result_code = root.findtext('.//resultCode', default='')
+            result_msg = root.findtext('.//resultMsg', default='')
+            if result_code and result_code not in ('00', '000'):
+                return [], f'API 오류 [{result_code}]: {result_msg}'
+            items = []
+            for item in root.findall('.//item'):
+                d = {child.tag: (child.text or '').strip() for child in item}
+                items.append(d)
+            return items, None
+        except ET.ParseError as e:
+            return [], f'XML 파싱 실패: {e}. 응답 앞부분: {text[:150]}'
+    
+    # 둘 다 아닌 경우 (HTML 에러 페이지 등)
+    return [], f'알 수 없는 응답 형식. 응답 앞부분: {text[:200]}'
+
+
 def normalize_trade_item(raw):
     """매매 거래 항목 정규화."""
     # 거래금액에서 콤마 제거
@@ -298,7 +374,7 @@ def health():
             'url_set': bool(SUPABASE_URL),
             'key_set': bool(SUPABASE_KEY),
         },
-        'version': 'v2.3-v3api',
+        'version': 'v2.4-robust',
     })
 
 
@@ -548,7 +624,7 @@ def search_danji_by_dong():
         return jsonify({'error': 'bjd_code는 10자리 법정동코드여야 합니다.'}), 400
     try:
         xml_text = fetch_apt_list_by_dong_cached(bjd_code, cache_ts())
-        raw_items, err = parse_xml_items(xml_text)
+        raw_items, err = parse_kapt_response(xml_text)
         if err:
             return jsonify({'error': err}), 502
         items = []
@@ -604,7 +680,7 @@ def get_danji_info(kapt_code):
     try:
         # 기본정보
         basis_xml = fetch_apt_basis_cached(kapt_code, cache_ts())
-        basis_items, err = parse_xml_items(basis_xml)
+        basis_items, err = parse_kapt_response(basis_xml)
         if err:
             return jsonify({'error': f'기본정보 조회 실패: {err}'}), 502
         if not basis_items:
@@ -647,7 +723,7 @@ def get_danji_info(kapt_code):
         # 상세정보 (선택적 - 실패해도 무시)
         try:
             detail_xml = fetch_apt_detail_cached(kapt_code, cache_ts())
-            detail_items, _ = parse_xml_items(detail_xml)
+            detail_items, _ = parse_kapt_response(detail_xml)
             if detail_items:
                 d = detail_items[0]
                 result['parking'] = {
@@ -1471,19 +1547,29 @@ def admin_load_apt_master():
             errors.append(f'page {page_no}: {e}')
             continue
 
-        # 응답 파싱
-        raw_items, err = parse_xml_items(xml_text)
+        # 응답 파싱 (V3 API: XML/JSON 자동 감지)
+        raw_items, err = parse_kapt_response(xml_text)
         if err:
             errors.append(f'page {page_no}: {err}')
             continue
 
-        # 첫 번째 호출에서 totalCount 추출
+        # 첫 번째 호출에서 totalCount 추출 (XML/JSON 양쪽 시도)
         if i == 0:
             try:
-                root = ET.fromstring(xml_text)
-                tc = root.findtext('.//totalCount')
-                if tc and tc.isdigit():
-                    total_count = int(tc)
+                # XML 형식
+                if xml_text.strip().startswith('<'):
+                    root = ET.fromstring(xml_text)
+                    tc = root.findtext('.//totalCount')
+                    if tc and tc.isdigit():
+                        total_count = int(tc)
+                # JSON 형식
+                elif xml_text.strip().startswith('{'):
+                    import json as _json
+                    data = _json.loads(xml_text)
+                    body = data.get('response', {}).get('body', {})
+                    tc = body.get('totalCount', 0)
+                    if isinstance(tc, (int, str)) and str(tc).isdigit():
+                        total_count = int(tc)
             except Exception:
                 pass
 
@@ -1570,13 +1656,56 @@ def admin_load_apt_master():
     })
 
 
+@app.route('/api/admin/diag-kapt')
+def admin_diag_kapt():
+    """K-apt V3 API 응답을 raw 그대로 반환 (진단용).
+    Query: key=ADMIN_SECRET, bjd_code=4113510300 (선택, 기본 분당 정자동)
+    """
+    ok, msg = _check_admin(request)
+    if not ok:
+        return jsonify({'error': msg}), 403
+    if not API_KEY:
+        return jsonify({'error': 'MOLIT_API_KEY 미설정'}), 500
+    
+    bjd_code = request.args.get('bjd_code', '4113510300').strip()
+    test_total = request.args.get('total', '0') == '1'
+    
+    if test_total:
+        url = URL_APT_LIST_TOTAL
+        params = {
+            'serviceKey': API_KEY,
+            'numOfRows': '5',
+            'pageNo': '1',
+        }
+    else:
+        url = URL_APT_LIST_DONG
+        params = {
+            'serviceKey': API_KEY,
+            'bjdCode': bjd_code,
+            'numOfRows': '5',
+            'pageNo': '1',
+        }
+    
+    try:
+        r = requests.get(url, params=params, timeout=30)
+        return jsonify({
+            'request_url': url,
+            'status_code': r.status_code,
+            'content_type': r.headers.get('Content-Type', ''),
+            'response_first_1000_chars': r.text[:1000],
+            'response_length': len(r.text),
+        })
+    except Exception as e:
+        return jsonify({'error': str(e), 'request_url': url}), 500
+
+
 # ============================================================
 # 시작
 # ============================================================
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     print('=' * 60)
-    print('부동산 자산관리 백엔드 서버 (v2.3-v3api)')
+    print('부동산 자산관리 백엔드 서버 (v2.4-robust)')
     print('=' * 60)
     print(f'API 키 설정: {"O" if API_KEY else "X (.env 파일에 MOLIT_API_KEY 추가 필요)"}')
     print(f'Supabase 연결: {"O" if supabase else "X (선택사항 - 자동완성만 비활성화)"}')
