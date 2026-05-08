@@ -374,7 +374,7 @@ def health():
             'url_set': bool(SUPABASE_URL),
             'key_set': bool(SUPABASE_KEY),
         },
-        'version': 'v2.4-robust',
+        'version': 'v2.5-npl',
     })
 
 
@@ -1656,6 +1656,761 @@ def admin_load_apt_master():
     })
 
 
+@app.route('/npl')
+def npl_analysis_page():
+    """NPL 자산 분석 페이지: 단지 자동완성 + 12개월 실거래가 분석."""
+    html = '''<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NPL 자산 분석 - 키움에프앤아이</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; background: #f5f5f7; color: #1d1d1f; padding: 0; }
+.container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+
+/* 헤더 */
+header { background: linear-gradient(135deg, #0a3a6e 0%, #1056a6 100%); color: white; padding: 24px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+header .container { display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
+header h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.5px; }
+header h1 .icon { margin-right: 8px; }
+header a { color: white; text-decoration: none; padding: 8px 14px; background: rgba(255,255,255,0.15); border-radius: 8px; font-size: 14px; font-weight: 500; transition: 0.2s; }
+header a:hover { background: rgba(255,255,255,0.25); }
+
+/* 검색 카드 */
+.search-card { background: white; border-radius: 16px; padding: 32px; margin-bottom: 24px; box-shadow: 0 2px 12px rgba(0,0,0,0.05); }
+.search-card h2 { font-size: 18px; margin-bottom: 16px; color: #1d1d1f; }
+.search-wrap { position: relative; }
+.search-input { width: 100%; padding: 14px 18px; font-size: 16px; border: 2px solid #e8e8ed; border-radius: 10px; outline: none; transition: 0.2s; }
+.search-input:focus { border-color: #0a3a6e; box-shadow: 0 0 0 4px rgba(10, 58, 110, 0.08); }
+.search-hint { font-size: 13px; color: #6e6e73; margin-top: 8px; }
+
+/* 자동완성 드롭다운 */
+.autocomplete-list { position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid #e8e8ed; border-radius: 10px; max-height: 360px; overflow-y: auto; z-index: 100; margin-top: 4px; box-shadow: 0 4px 16px rgba(0,0,0,0.1); display: none; }
+.autocomplete-list.show { display: block; }
+.autocomplete-item { padding: 12px 16px; cursor: pointer; border-bottom: 1px solid #f5f5f7; transition: 0.15s; }
+.autocomplete-item:last-child { border-bottom: 0; }
+.autocomplete-item:hover, .autocomplete-item.active { background: #f0f4fa; }
+.autocomplete-item .name { font-weight: 600; color: #1d1d1f; font-size: 15px; }
+.autocomplete-item .addr { font-size: 13px; color: #6e6e73; margin-top: 3px; }
+.autocomplete-item .badge { display: inline-block; background: #0a3a6e; color: white; font-size: 11px; padding: 2px 8px; border-radius: 10px; margin-right: 8px; vertical-align: middle; }
+.autocomplete-item .badge.dong { background: #6e6e73; }
+
+.autocomplete-section { padding: 8px 16px; font-size: 11px; font-weight: 700; color: #0a3a6e; background: #f0f4fa; text-transform: uppercase; letter-spacing: 0.5px; }
+
+/* 결과 영역 */
+.results { display: none; }
+.results.show { display: block; }
+
+/* 단지 헤더 */
+.danji-header { background: white; border-radius: 16px; padding: 24px 32px; margin-bottom: 16px; box-shadow: 0 2px 12px rgba(0,0,0,0.05); }
+.danji-header .name { font-size: 24px; font-weight: 700; color: #1d1d1f; margin-bottom: 6px; }
+.danji-header .addr { font-size: 14px; color: #6e6e73; }
+.danji-header .codes { display: flex; gap: 16px; margin-top: 12px; }
+.danji-header .code-item { font-size: 12px; color: #6e6e73; padding: 4px 10px; background: #f5f5f7; border-radius: 6px; font-family: ui-monospace, monospace; }
+
+/* 로딩 */
+.loading-card { background: white; border-radius: 16px; padding: 40px; margin-bottom: 24px; text-align: center; box-shadow: 0 2px 12px rgba(0,0,0,0.05); }
+.loading-card .spinner { display: inline-block; width: 48px; height: 48px; border: 4px solid #e8e8ed; border-top-color: #0a3a6e; border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-card .msg { font-size: 16px; color: #1d1d1f; margin-top: 16px; font-weight: 500; }
+.loading-card .sub { font-size: 13px; color: #6e6e73; margin-top: 6px; }
+
+/* 요약 카드 그리드 */
+.summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+.summary-card { background: white; border-radius: 14px; padding: 20px; box-shadow: 0 2px 12px rgba(0,0,0,0.05); }
+.summary-card .label { font-size: 12px; color: #6e6e73; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+.summary-card .value { font-size: 28px; font-weight: 700; color: #0a3a6e; line-height: 1.2; }
+.summary-card .sub { font-size: 12px; color: #6e6e73; margin-top: 4px; }
+.summary-card.highlight { background: linear-gradient(135deg, #0a3a6e 0%, #1056a6 100%); color: white; }
+.summary-card.highlight .label, .summary-card.highlight .sub { color: rgba(255,255,255,0.85); }
+.summary-card.highlight .value { color: white; }
+
+/* 차트 카드 */
+.chart-card { background: white; border-radius: 16px; padding: 24px; margin-bottom: 24px; box-shadow: 0 2px 12px rgba(0,0,0,0.05); }
+.chart-card h3 { font-size: 16px; font-weight: 700; margin-bottom: 16px; color: #1d1d1f; }
+.chart-wrap { position: relative; height: 300px; }
+
+/* 표 카드 */
+.table-card { background: white; border-radius: 16px; padding: 24px; margin-bottom: 24px; box-shadow: 0 2px 12px rgba(0,0,0,0.05); overflow: hidden; }
+.table-card h3 { font-size: 16px; font-weight: 700; margin-bottom: 16px; color: #1d1d1f; }
+.table-controls { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+.table-controls button { background: #f5f5f7; color: #1d1d1f; border: 0; padding: 8px 14px; border-radius: 8px; font-size: 13px; cursor: pointer; font-weight: 500; transition: 0.2s; }
+.table-controls button:hover { background: #e8e8ed; }
+.table-controls button.active { background: #0a3a6e; color: white; }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+thead th { background: #f5f5f7; padding: 10px 12px; text-align: left; font-weight: 600; color: #1d1d1f; border-bottom: 2px solid #e8e8ed; cursor: pointer; user-select: none; }
+thead th:hover { background: #e8e8ed; }
+thead th.sorted-asc::after { content: ' ▲'; font-size: 10px; color: #0a3a6e; }
+thead th.sorted-desc::after { content: ' ▼'; font-size: 10px; color: #0a3a6e; }
+tbody td { padding: 10px 12px; border-bottom: 1px solid #f5f5f7; }
+tbody tr:hover { background: #f9f9fb; }
+tbody tr.target-jibun { background: #fff8e1; }
+tbody tr.target-jibun:hover { background: #fff3c4; }
+.badge-trade { background: #e8f0ff; color: #0a3a6e; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.badge-rent { background: #e8f5e8; color: #0a8a3a; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.badge-monthly { background: #fff3e0; color: #f57c00; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+
+/* 평형별 분석 */
+.area-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.area-card { background: #f9f9fb; border-radius: 10px; padding: 14px; }
+.area-card .area { font-size: 12px; color: #6e6e73; font-weight: 600; }
+.area-card .price { font-size: 18px; font-weight: 700; color: #0a3a6e; margin: 4px 0; }
+.area-card .meta { font-size: 11px; color: #6e6e73; }
+
+/* NPL 추정 박스 */
+.npl-box { background: linear-gradient(135deg, #fff8e1 0%, #ffe082 100%); border: 1px solid #ffca28; border-radius: 16px; padding: 24px 28px; margin-bottom: 24px; }
+.npl-box h3 { font-size: 16px; color: #5d4037; margin-bottom: 12px; font-weight: 700; }
+.npl-box .estimate { font-size: 32px; font-weight: 800; color: #5d4037; }
+.npl-box .estimate-range { font-size: 14px; color: #6d4c41; margin-top: 4px; }
+.npl-box .desc { font-size: 13px; color: #5d4037; margin-top: 12px; line-height: 1.5; }
+
+/* 빈 상태 */
+.empty-state { background: white; border-radius: 16px; padding: 60px 20px; text-align: center; box-shadow: 0 2px 12px rgba(0,0,0,0.05); }
+.empty-state .icon { font-size: 64px; margin-bottom: 16px; }
+.empty-state h3 { font-size: 18px; color: #1d1d1f; margin-bottom: 8px; }
+.empty-state p { font-size: 14px; color: #6e6e73; }
+
+/* 에러 박스 */
+.error-box { background: #ffe8e8; border: 1px solid #ffc8c8; color: #c62828; padding: 16px; border-radius: 10px; margin-bottom: 16px; font-size: 14px; }
+
+/* 반응형 */
+@media (max-width: 768px) {
+  .summary-grid { grid-template-columns: repeat(2, 1fr); }
+  header h1 { font-size: 18px; }
+  .container { padding: 16px; }
+  .search-card, .danji-header, .chart-card, .table-card { padding: 16px; }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="container">
+    <h1><span class="icon">🏢</span> NPL 자산 분석 시스템</h1>
+    <a href="/">← 메인으로</a>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- 검색 카드 -->
+  <div class="search-card">
+    <h2>🔍 단지 검색 (자동완성)</h2>
+    <div class="search-wrap">
+      <input type="text" id="search-input" class="search-input" placeholder="단지명, 동(예: 방학동), 또는 시군구를 입력하세요..." autocomplete="off">
+      <div id="autocomplete-list" class="autocomplete-list"></div>
+    </div>
+    <p class="search-hint">💡 단지명(예: "삼익세라믹"), 동 이름(예: "방학동"), 시군구(예: "도봉구") 등으로 검색 가능합니다.</p>
+  </div>
+
+  <!-- 빈 상태 -->
+  <div id="empty-state" class="empty-state">
+    <div class="icon">📊</div>
+    <h3>NPL 담보 부동산을 분석해보세요</h3>
+    <p>위 검색창에 단지명이나 주소를 입력하시면, 12개월 실거래가 데이터를 자동으로 분석합니다.</p>
+  </div>
+
+  <!-- 결과 영역 -->
+  <div id="results" class="results">
+
+    <!-- 단지 헤더 -->
+    <div id="danji-header" class="danji-header"></div>
+
+    <!-- 로딩 -->
+    <div id="loading" class="loading-card" style="display:none;">
+      <div class="spinner"></div>
+      <div class="msg" id="loading-msg">실거래가 데이터 수집 중...</div>
+      <div class="sub" id="loading-sub">12개월간의 매매 + 전월세 거래를 조회합니다 (약 30~60초)</div>
+    </div>
+
+    <!-- 에러 -->
+    <div id="error-box" class="error-box" style="display:none;"></div>
+
+    <!-- 분석 결과 -->
+    <div id="analysis" style="display:none;">
+
+      <!-- 요약 카드 4개 -->
+      <div class="summary-grid">
+        <div class="summary-card">
+          <div class="label">평균 매매가</div>
+          <div class="value" id="avg-trade">-</div>
+          <div class="sub" id="avg-trade-sub">-</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">평균 전세가</div>
+          <div class="value" id="avg-rent">-</div>
+          <div class="sub" id="avg-rent-sub">-</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">12개월 거래</div>
+          <div class="value" id="total-count">-</div>
+          <div class="sub" id="total-count-sub">-</div>
+        </div>
+        <div class="summary-card highlight">
+          <div class="label">전세가율</div>
+          <div class="value" id="rent-ratio">-</div>
+          <div class="sub" id="rent-ratio-sub">매매 대비 전세 비율</div>
+        </div>
+      </div>
+
+      <!-- NPL 회수 추정 -->
+      <div class="npl-box">
+        <h3>💰 NPL 회수 가능 금액 추정 (담보 평가)</h3>
+        <div class="estimate" id="npl-estimate">-</div>
+        <div class="estimate-range" id="npl-range">-</div>
+        <div class="desc" id="npl-desc">-</div>
+      </div>
+
+      <!-- 시세 추이 차트 -->
+      <div class="chart-card">
+        <h3>📈 월별 매매가 추이</h3>
+        <div class="chart-wrap">
+          <canvas id="price-chart"></canvas>
+        </div>
+      </div>
+
+      <!-- 평형별 분석 -->
+      <div class="table-card">
+        <h3>📐 평형별 시세 분석</h3>
+        <div id="area-grid" class="area-grid"></div>
+      </div>
+
+      <!-- 거래 상세 내역 -->
+      <div class="table-card">
+        <h3>📋 거래 상세 내역</h3>
+        <div class="table-controls">
+          <button class="filter-btn active" data-filter="all">전체</button>
+          <button class="filter-btn" data-filter="매매">매매</button>
+          <button class="filter-btn" data-filter="전세">전세</button>
+          <button class="filter-btn" data-filter="월세">월세</button>
+          <button class="filter-btn" data-filter="target">대상 지번만</button>
+        </div>
+        <input type="text" id="jibun-filter" placeholder="지번 입력 시 필터링 (예: 274)" style="width:100%; padding:8px 12px; margin-bottom:12px; border:1px solid #e8e8ed; border-radius:6px; font-size:13px;">
+        <div style="overflow-x:auto;">
+          <table id="trans-table">
+            <thead>
+              <tr>
+                <th data-sort="date">거래일</th>
+                <th data-sort="type">유형</th>
+                <th>단지</th>
+                <th data-sort="jibun">지번</th>
+                <th data-sort="building">동</th>
+                <th data-sort="floor">층</th>
+                <th data-sort="area">면적(㎡)</th>
+                <th data-sort="price">가격(만원)</th>
+              </tr>
+            </thead>
+            <tbody id="trans-tbody"></tbody>
+          </table>
+        </div>
+        <p class="search-hint" style="margin-top:12px;" id="table-info">-</p>
+      </div>
+
+    </div>
+
+  </div>
+
+</div>
+
+<script>
+// ============ 상태 ============
+let currentDanji = null;
+let allItems = [];
+let priceChart = null;
+let activeFilter = 'all';
+let jibunFilter = '';
+let sortColumn = 'date';
+let sortDesc = true;
+
+// ============ 자동완성 ============
+const searchInput = document.getElementById('search-input');
+const autocompleteList = document.getElementById('autocomplete-list');
+let acTimeoutId = null;
+let activeIdx = -1;
+let acItems = [];
+
+searchInput.addEventListener('input', (e) => {
+  clearTimeout(acTimeoutId);
+  const q = e.target.value.trim();
+  if (q.length < 2) {
+    hideAutocomplete();
+    return;
+  }
+  acTimeoutId = setTimeout(() => doAutocomplete(q), 250);
+});
+
+searchInput.addEventListener('keydown', (e) => {
+  if (!autocompleteList.classList.contains('show')) return;
+  if (e.key === 'ArrowDown') { e.preventDefault(); navigateAc(1); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); navigateAc(-1); }
+  else if (e.key === 'Enter') { e.preventDefault(); selectAc(activeIdx); }
+  else if (e.key === 'Escape') { hideAutocomplete(); }
+});
+
+document.addEventListener('click', (e) => {
+  if (!searchInput.contains(e.target) && !autocompleteList.contains(e.target)) {
+    hideAutocomplete();
+  }
+});
+
+async function doAutocomplete(q) {
+  try {
+    const [aptRes, dongRes] = await Promise.all([
+      fetch(`/api/search/apt?q=${encodeURIComponent(q)}`).then(r => r.json()),
+      fetch(`/api/search/dong?q=${encodeURIComponent(q)}`).then(r => r.json())
+    ]);
+    
+    const apts = (aptRes.items || []).slice(0, 8);
+    const dongs = (dongRes.items || []).slice(0, 4);
+    
+    if (apts.length === 0 && dongs.length === 0) {
+      autocompleteList.innerHTML = '<div style="padding:20px; text-align:center; color:#6e6e73;">검색 결과가 없습니다.</div>';
+      autocompleteList.classList.add('show');
+      return;
+    }
+    
+    let html = '';
+    acItems = [];
+    
+    if (apts.length > 0) {
+      html += '<div class="autocomplete-section">단지 (' + apts.length + ')</div>';
+      apts.forEach((apt) => {
+        acItems.push({ type: 'apt', data: apt });
+        const idx = acItems.length - 1;
+        html += `<div class="autocomplete-item" data-idx="${idx}">
+          <div class="name"><span class="badge">단지</span>${escapeHtml(apt.kapt_name)}</div>
+          <div class="addr">${escapeHtml(apt.sido || '')} ${escapeHtml(apt.sigungu || '')} ${escapeHtml(apt.dong || '')}</div>
+        </div>`;
+      });
+    }
+    
+    if (dongs.length > 0) {
+      html += '<div class="autocomplete-section">법정동 (' + dongs.length + ')</div>';
+      dongs.forEach((dong) => {
+        acItems.push({ type: 'dong', data: dong });
+        const idx = acItems.length - 1;
+        html += `<div class="autocomplete-item" data-idx="${idx}">
+          <div class="name"><span class="badge dong">동</span>${escapeHtml(dong.dong)}</div>
+          <div class="addr">${escapeHtml(dong.sido)} ${escapeHtml(dong.sigungu)}</div>
+        </div>`;
+      });
+    }
+    
+    autocompleteList.innerHTML = html;
+    autocompleteList.classList.add('show');
+    activeIdx = -1;
+    
+    // 클릭 핸들러
+    autocompleteList.querySelectorAll('.autocomplete-item').forEach((el) => {
+      el.addEventListener('click', () => {
+        selectAc(parseInt(el.dataset.idx));
+      });
+    });
+  } catch (err) {
+    console.error('자동완성 오류:', err);
+  }
+}
+
+function navigateAc(dir) {
+  const items = autocompleteList.querySelectorAll('.autocomplete-item');
+  if (items.length === 0) return;
+  if (activeIdx >= 0) items[activeIdx].classList.remove('active');
+  activeIdx += dir;
+  if (activeIdx < 0) activeIdx = items.length - 1;
+  if (activeIdx >= items.length) activeIdx = 0;
+  items[activeIdx].classList.add('active');
+  items[activeIdx].scrollIntoView({ block: 'nearest' });
+}
+
+function selectAc(idx) {
+  if (idx < 0 || idx >= acItems.length) return;
+  const item = acItems[idx];
+  hideAutocomplete();
+  if (item.type === 'apt') {
+    selectDanji(item.data);
+  } else {
+    // 동 선택 시: 해당 시군구의 동에 단지 검색하도록 안내
+    searchInput.value = item.data.dong + ' ';
+    searchInput.focus();
+    doAutocomplete(item.data.dong);
+  }
+}
+
+function hideAutocomplete() {
+  autocompleteList.classList.remove('show');
+  activeIdx = -1;
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str).replace(/[&<>"']/g, (m) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[m]));
+}
+
+// ============ 단지 선택 → 분석 ============
+async function selectDanji(danji) {
+  currentDanji = danji;
+  searchInput.value = danji.kapt_name;
+  
+  document.getElementById('empty-state').style.display = 'none';
+  document.getElementById('results').classList.add('show');
+  document.getElementById('analysis').style.display = 'none';
+  document.getElementById('error-box').style.display = 'none';
+  document.getElementById('loading').style.display = 'block';
+  
+  // 단지 헤더
+  document.getElementById('danji-header').innerHTML = `
+    <div class="name">${escapeHtml(danji.kapt_name)}</div>
+    <div class="addr">${escapeHtml(danji.sido || '')} ${escapeHtml(danji.sigungu || '')} ${escapeHtml(danji.dong || '')}</div>
+    <div class="codes">
+      <span class="code-item">단지 코드: ${escapeHtml(danji.kapt_code)}</span>
+      <span class="code-item">법정동 코드: ${escapeHtml(danji.bjd_code || '-')}</span>
+    </div>
+  `;
+  
+  // 12개월 데이터 조회
+  const lawd_cd = (danji.bjd_code || '').substring(0, 5);
+  if (!lawd_cd) {
+    showError('법정동 코드가 없어 실거래가 조회 불가.');
+    return;
+  }
+  
+  // 로딩 메시지 카운터
+  let elapsed = 0;
+  const loadingTimer = setInterval(() => {
+    elapsed += 1;
+    document.getElementById('loading-sub').textContent = 
+      `12개월간의 매매 + 전월세 거래를 조회 중 (${elapsed}초 경과, 30~60초 예상)`;
+  }, 1000);
+  
+  try {
+    const url = `/api/transactions/bulk?lawd_cd=${lawd_cd}&months=12&danji_name=${encodeURIComponent(danji.kapt_name)}`;
+    const res = await fetch(url);
+    clearInterval(loadingTimer);
+    
+    if (!res.ok) {
+      throw new Error('서버 오류 ' + res.status);
+    }
+    const data = await res.json();
+    
+    if (data.error) {
+      showError('조회 실패: ' + data.error);
+      return;
+    }
+    
+    allItems = data.items || [];
+    document.getElementById('loading').style.display = 'none';
+    
+    if (allItems.length === 0) {
+      showError('해당 단지의 12개월 거래 내역이 없습니다. 단지명이 정확한지 확인하시거나, 거래가 적은 단지일 수 있습니다.');
+      return;
+    }
+    
+    // 분석
+    analyzeAndRender();
+    document.getElementById('analysis').style.display = 'block';
+    
+  } catch (err) {
+    clearInterval(loadingTimer);
+    showError('네트워크 오류: ' + err.message);
+  }
+}
+
+function showError(msg) {
+  document.getElementById('loading').style.display = 'none';
+  const eb = document.getElementById('error-box');
+  eb.textContent = '⚠️ ' + msg;
+  eb.style.display = 'block';
+}
+
+// ============ 분석 ============
+function analyzeAndRender() {
+  const trades = allItems.filter(x => x.type === '매매');
+  const jeonse = allItems.filter(x => x.type === '전세');
+  const wolse = allItems.filter(x => x.type === '월세');
+  
+  // 유효한 매매 (해제되지 않은 것)
+  const validTrades = trades.filter(x => !x.memo || !x.memo.includes('해제'));
+  
+  // 평균 매매가
+  const avgTrade = validTrades.length > 0 
+    ? validTrades.reduce((s, x) => s + x.price, 0) / validTrades.length 
+    : 0;
+  
+  // 평균 전세가
+  const avgJeonse = jeonse.length > 0 
+    ? jeonse.reduce((s, x) => s + x.price, 0) / jeonse.length 
+    : 0;
+  
+  // 전세가율
+  const rentRatio = (avgTrade > 0 && avgJeonse > 0) 
+    ? (avgJeonse / avgTrade * 100) 
+    : 0;
+  
+  // 요약 카드 업데이트
+  document.getElementById('avg-trade').textContent = avgTrade > 0 ? formatPrice(avgTrade) : '-';
+  document.getElementById('avg-trade-sub').textContent = `${validTrades.length}건 평균`;
+  document.getElementById('avg-rent').textContent = avgJeonse > 0 ? formatPrice(avgJeonse) : '-';
+  document.getElementById('avg-rent-sub').textContent = `${jeonse.length}건 평균`;
+  document.getElementById('total-count').textContent = allItems.length + '건';
+  document.getElementById('total-count-sub').textContent = 
+    `매매 ${trades.length} / 전세 ${jeonse.length} / 월세 ${wolse.length}`;
+  document.getElementById('rent-ratio').textContent = rentRatio > 0 ? rentRatio.toFixed(1) + '%' : '-';
+  document.getElementById('rent-ratio-sub').textContent = avgTrade > 0 && avgJeonse > 0 
+    ? '매매 대비 전세 비율' : '데이터 부족';
+  
+  // NPL 회수 추정
+  if (avgTrade > 0) {
+    const lower = avgTrade * 0.85;  // 보수적 회수율 85%
+    const upper = avgTrade * 0.95;  // 적극적 회수율 95%
+    const median = avgTrade * 0.90;
+    document.getElementById('npl-estimate').textContent = formatPrice(median);
+    document.getElementById('npl-range').textContent = 
+      `회수 가능 범위: ${formatPrice(lower)} ~ ${formatPrice(upper)}`;
+    let descParts = [];
+    descParts.push(`📌 평균 매매가 ${formatPrice(avgTrade)}의 85~95%로 추정 (시장 변동성, 처분 비용 반영).`);
+    if (validTrades.length < 5) descParts.push('⚠️ 거래 건수가 적어(' + validTrades.length + '건) 추정 신뢰도 낮음. 추가 검토 필요.');
+    if (avgJeonse > 0 && rentRatio > 0) descParts.push(`💰 전세 보증금 회수 시 약 ${formatPrice(avgJeonse)} 확보 가능.`);
+    document.getElementById('npl-desc').innerHTML = descParts.join('<br>');
+  } else {
+    document.getElementById('npl-estimate').textContent = '추정 불가';
+    document.getElementById('npl-range').textContent = '매매 거래 데이터 부족';
+    document.getElementById('npl-desc').textContent = '12개월간 유효한 매매 거래가 없어 회수 금액 추정이 불가합니다.';
+  }
+  
+  // 차트
+  renderChart(validTrades);
+  
+  // 평형별 분석
+  renderAreaAnalysis(validTrades);
+  
+  // 거래 내역 표
+  renderTable();
+}
+
+function formatPrice(price) {
+  // price는 만원 단위
+  if (price >= 10000) {
+    const eok = Math.floor(price / 10000);
+    const man = Math.round(price % 10000);
+    return man > 0 ? `${eok}억 ${man.toLocaleString()}만` : `${eok}억`;
+  }
+  return Math.round(price).toLocaleString() + '만';
+}
+
+// ============ 차트 ============
+function renderChart(trades) {
+  // 월별 그룹화
+  const monthly = {};
+  trades.forEach(t => {
+    const ym = t.date ? t.date.substring(0, 7) : '';  // YYYY-MM
+    if (!monthly[ym]) monthly[ym] = [];
+    monthly[ym].push(t.price);
+  });
+  
+  const sortedMonths = Object.keys(monthly).sort();
+  const labels = sortedMonths;
+  const avgs = sortedMonths.map(m => {
+    const arr = monthly[m];
+    return arr.reduce((a,b) => a+b, 0) / arr.length;
+  });
+  const counts = sortedMonths.map(m => monthly[m].length);
+  
+  if (priceChart) priceChart.destroy();
+  const ctx = document.getElementById('price-chart').getContext('2d');
+  priceChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [
+        {
+          label: '월별 평균 매매가 (만원)',
+          data: avgs,
+          borderColor: '#0a3a6e',
+          backgroundColor: 'rgba(10, 58, 110, 0.1)',
+          tension: 0.3,
+          fill: true,
+          yAxisID: 'y',
+        },
+        {
+          label: '거래 건수',
+          data: counts,
+          borderColor: '#f57c00',
+          backgroundColor: 'rgba(245, 124, 0, 0.1)',
+          tension: 0.3,
+          type: 'bar',
+          yAxisID: 'y1',
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        y: {
+          beginAtZero: false,
+          position: 'left',
+          title: { display: true, text: '가격 (만원)' },
+          ticks: { callback: (v) => (v/10000).toFixed(1) + '억' }
+        },
+        y1: {
+          beginAtZero: true,
+          position: 'right',
+          title: { display: true, text: '거래 건수' },
+          grid: { drawOnChartArea: false },
+          ticks: { stepSize: 1 }
+        }
+      },
+      plugins: {
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              if (ctx.dataset.label.includes('가격') || ctx.dataset.label.includes('매매')) {
+                return ctx.dataset.label + ': ' + formatPrice(ctx.parsed.y);
+              }
+              return ctx.dataset.label + ': ' + ctx.parsed.y + '건';
+            }
+          }
+        }
+      }
+    }
+  });
+}
+
+// ============ 평형별 분석 ============
+function renderAreaAnalysis(trades) {
+  // 평형 그룹 (5㎡ 단위)
+  const groups = {};
+  trades.forEach(t => {
+    const bucket = Math.floor(t.area / 5) * 5;  // 5㎡ 단위
+    const key = `${bucket}~${bucket+5}㎡`;
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(t);
+  });
+  
+  const sortedKeys = Object.keys(groups).sort((a,b) => parseInt(a) - parseInt(b));
+  const grid = document.getElementById('area-grid');
+  
+  if (sortedKeys.length === 0) {
+    grid.innerHTML = '<div style="padding:20px; color:#6e6e73; text-align:center;">매매 거래 데이터가 없습니다.</div>';
+    return;
+  }
+  
+  grid.innerHTML = sortedKeys.map(k => {
+    const arr = groups[k];
+    const avg = arr.reduce((s,x) => s+x.price, 0) / arr.length;
+    const min = Math.min(...arr.map(x => x.price));
+    const max = Math.max(...arr.map(x => x.price));
+    return `<div class="area-card">
+      <div class="area">${k}</div>
+      <div class="price">${formatPrice(avg)}</div>
+      <div class="meta">${arr.length}건 / 최저 ${formatPrice(min)} ~ 최고 ${formatPrice(max)}</div>
+    </div>`;
+  }).join('');
+}
+
+// ============ 거래 내역 표 ============
+function renderTable() {
+  let items = allItems.slice();
+  
+  // 필터
+  if (activeFilter === 'target' && jibunFilter) {
+    items = items.filter(x => x.jibun === jibunFilter);
+  } else if (activeFilter !== 'all' && activeFilter !== 'target') {
+    items = items.filter(x => x.type === activeFilter);
+  }
+  if (jibunFilter && activeFilter !== 'target') {
+    items = items.filter(x => x.jibun && x.jibun.includes(jibunFilter));
+  }
+  
+  // 정렬
+  items.sort((a, b) => {
+    let av = a[sortColumn], bv = b[sortColumn];
+    if (av == null) av = '';
+    if (bv == null) bv = '';
+    if (typeof av === 'number' && typeof bv === 'number') {
+      return sortDesc ? bv - av : av - bv;
+    }
+    return sortDesc 
+      ? String(bv).localeCompare(String(av)) 
+      : String(av).localeCompare(String(bv));
+  });
+  
+  // 헤더 정렬 표시
+  document.querySelectorAll('thead th').forEach(th => {
+    th.classList.remove('sorted-asc', 'sorted-desc');
+    if (th.dataset.sort === sortColumn) {
+      th.classList.add(sortDesc ? 'sorted-desc' : 'sorted-asc');
+    }
+  });
+  
+  const tbody = document.getElementById('trans-tbody');
+  tbody.innerHTML = items.slice(0, 200).map(x => {
+    const typeBadge = x.type === '매매' 
+      ? `<span class="badge-trade">매매</span>`
+      : x.type === '전세' 
+      ? `<span class="badge-rent">전세</span>`
+      : `<span class="badge-monthly">${escapeHtml(x.type)}</span>`;
+    const isTarget = jibunFilter && x.jibun === jibunFilter;
+    return `<tr class="${isTarget ? 'target-jibun' : ''}">
+      <td>${escapeHtml(x.date || '-')}</td>
+      <td>${typeBadge}</td>
+      <td>${escapeHtml(x.name || '-')}</td>
+      <td>${escapeHtml(x.jibun || '-')}</td>
+      <td>${escapeHtml(x.building || '-')}</td>
+      <td>${x.floor != null ? x.floor + '층' : '-'}</td>
+      <td>${x.area != null ? x.area.toFixed(2) : '-'}</td>
+      <td><strong>${x.price != null ? x.price.toLocaleString() : '-'}</strong></td>
+    </tr>`;
+  }).join('');
+  
+  document.getElementById('table-info').textContent = 
+    `총 ${items.length}건 중 ${Math.min(200, items.length)}건 표시. (정렬: ${sortColumn}, ${sortDesc ? '내림차순' : '오름차순'})`;
+}
+
+// 필터 버튼
+document.querySelectorAll('.filter-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeFilter = btn.dataset.filter;
+    renderTable();
+  });
+});
+
+// 지번 필터
+document.getElementById('jibun-filter').addEventListener('input', (e) => {
+  jibunFilter = e.target.value.trim();
+  renderTable();
+});
+
+// 정렬
+document.querySelectorAll('thead th[data-sort]').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = th.dataset.sort;
+    if (sortColumn === col) {
+      sortDesc = !sortDesc;
+    } else {
+      sortColumn = col;
+      sortDesc = true;
+    }
+    renderTable();
+  });
+});
+
+</script>
+
+</body>
+</html>'''
+    return html
+
+
 @app.route('/api/admin/diag-kapt')
 def admin_diag_kapt():
     """K-apt V3 API 응답을 raw 그대로 반환 (진단용).
@@ -1705,7 +2460,7 @@ def admin_diag_kapt():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     print('=' * 60)
-    print('부동산 자산관리 백엔드 서버 (v2.4-robust)')
+    print('부동산 자산관리 백엔드 서버 (v2.5-npl)')
     print('=' * 60)
     print(f'API 키 설정: {"O" if API_KEY else "X (.env 파일에 MOLIT_API_KEY 추가 필요)"}')
     print(f'Supabase 연결: {"O" if supabase else "X (선택사항 - 자동완성만 비활성화)"}')
