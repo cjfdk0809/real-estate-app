@@ -1,118 +1,96 @@
 /**
- * Service Worker for 부동산 자산관리 시스템
- * - 정적 파일 캐싱 (오프라인 지원)
- * - API 요청은 항상 네트워크 우선 (실거래가는 최신 데이터 필요)
+ * Service Worker v2.0.2 — 캐시 무효화 강화 버전
+ * 
+ * 핵심 변경:
+ * - HTML(/, /index.html)은 절대 캐시하지 않음 → 항상 최신 받기
+ * - 옛 캐시 발견 시 즉시 모두 삭제
+ * - 정적 자원만 짧은 시간 캐싱
  */
 
-const CACHE_VERSION = 'v2.0.1-kapt';
+const CACHE_VERSION = 'v2.0.2-clean';
 const CACHE_NAME = `real-estate-app-${CACHE_VERSION}`;
 
-// 캐시할 정적 자원 목록
+// 정적 자원만 캐싱 (HTML 제외)
 const STATIC_ASSETS = [
-  '/',
   '/manifest.json',
   '/icon-192.png',
   '/icon-512.png',
   '/icon.svg',
-];
-
-// CDN 자원 (네트워크 우선, 캐시 fallback)
-const CDN_PATTERNS = [
-  /^https:\/\/fonts\.googleapis\.com/,
-  /^https:\/\/fonts\.gstatic\.com/,
-  /^https:\/\/cdn\.jsdelivr\.net/,
+  '/apple-touch-icon.png',
+  '/kiwoom_ci.jpg',
 ];
 
 // ============================================================
-// 설치 단계 — 정적 자원 미리 캐싱
+// 설치 — 모든 옛 캐시 즉시 삭제 + 새 자원 캐싱
 // ============================================================
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      // 개별 추가로 실패해도 다른 항목은 캐싱 진행
-      return Promise.all(
-        STATIC_ASSETS.map((url) =>
-          cache.add(url).catch((err) => console.warn('SW: 캐싱 실패', url, err))
-        )
-      );
-    })
+    caches.keys()
+      .then(names => Promise.all(names.map(n => caches.delete(n))))  // 옛 캐시 모두 삭제
+      .then(() => caches.open(CACHE_NAME))
+      .then(cache => Promise.all(
+        STATIC_ASSETS.map(url => cache.add(url).catch(() => null))
+      ))
   );
-  self.skipWaiting(); // 새 SW가 즉시 활성화되도록
+  self.skipWaiting();
 });
 
 // ============================================================
-// 활성화 단계 — 오래된 캐시 정리
+// 활성화 — 즉시 모든 클라이언트 제어 + 옛 캐시 정리
 // ============================================================
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames
-          .filter((name) => name !== CACHE_NAME)
-          .map((name) => caches.delete(name))
-      );
-    })
+    Promise.all([
+      // 옛 캐시 삭제
+      caches.keys().then(names =>
+        Promise.all(names.filter(n => n !== CACHE_NAME).map(n => caches.delete(n)))
+      ),
+      // 모든 클라이언트 즉시 제어
+      self.clients.claim(),
+    ])
   );
-  self.clients.claim();
 });
 
 // ============================================================
-// 요청 가로채기
+// fetch — HTML은 항상 네트워크, 정적 자원만 캐시
 // ============================================================
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
-
-  // API 요청은 항상 네트워크 (캐싱 안 함 - 최신 데이터 필요)
-  if (url.pathname.startsWith('/api/')) {
-    return; // 기본 동작 (네트워크)
+  
+  // POST 등 비-GET은 캐싱 안 함
+  if (event.request.method !== 'GET') return;
+  
+  // API 요청은 항상 네트워크 (캐싱 안 함)
+  if (url.pathname.startsWith('/api/')) return;
+  
+  // HTML/루트는 항상 네트워크 (캐싱 안 함) - 가장 중요!
+  if (url.pathname === '/' || url.pathname.endsWith('.html') || event.request.mode === 'navigate') {
+    return;  // 기본 동작 = 네트워크
   }
-
-  // POST 등 GET 외 요청은 캐싱 안 함
-  if (event.request.method !== 'GET') {
-    return;
-  }
-
-  // CDN 자원은 stale-while-revalidate (빠른 로딩 + 백그라운드 업데이트)
-  const isCDN = CDN_PATTERNS.some((p) => p.test(event.request.url));
-  if (isCDN) {
-    event.respondWith(
-      caches.open(CACHE_NAME).then((cache) =>
-        cache.match(event.request).then((cached) => {
-          const fetchPromise = fetch(event.request)
-            .then((response) => {
-              if (response && response.status === 200) {
-                cache.put(event.request, response.clone());
-              }
-              return response;
-            })
-            .catch(() => cached);
-          return cached || fetchPromise;
-        })
-      )
-    );
-    return;
-  }
-
-  // 같은 origin 정적 자원: cache-first
+  
+  // 정적 자원 (이미지, manifest 등): 캐시 우선, 없으면 네트워크
   event.respondWith(
-    caches.match(event.request).then((cached) => {
+    caches.match(event.request).then(cached => {
       if (cached) return cached;
-      return fetch(event.request)
-        .then((response) => {
-          if (response && response.status === 200 && response.type === 'basic') {
-            const responseToCache = response.clone();
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(event.request, responseToCache);
-            });
-          }
-          return response;
-        })
-        .catch(() => {
-          // 오프라인 + 캐시 없음 → 메인 페이지 fallback
-          if (event.request.mode === 'navigate') {
-            return caches.match('/');
-          }
-        });
+      return fetch(event.request).then(response => {
+        if (response && response.status === 200 && response.type === 'basic') {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
+        }
+        return response;
+      }).catch(() => cached);
     })
   );
+});
+
+// ============================================================
+// 메시지 핸들러 — 클라이언트가 강제 업데이트 요청 시
+// ============================================================
+self.addEventListener('message', (event) => {
+  if (event.data === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+  if (event.data === 'CLEAR_CACHE') {
+    caches.keys().then(names => Promise.all(names.map(n => caches.delete(n))));
+  }
 });

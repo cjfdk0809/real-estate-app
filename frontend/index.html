@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>부동산 자산관리 시스템</title>
 
 <!-- ========== PWA 메타태그 ========== -->
@@ -71,36 +74,47 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
 input, select, textarea { font-family: inherit; font-size: 13px; }
 table { border-collapse: collapse; width: 100%; }
 
-/* ========== LAYOUT ========== */
+/* ========== LAYOUT (강제 안전장치 적용) ========== */
 .app { 
-  display: grid; 
-  grid-template-columns: 290px 1fr; 
+  display: grid !important; 
+  grid-template-columns: 290px minmax(0, 1fr) !important; 
+  grid-template-rows: 1fr;
+  grid-template-areas: "sidebar main";
   min-height: 100vh; 
   width: 100%;
   max-width: 100vw;
+  margin: 0;
+  padding: 0;
 }
 .main { 
+  grid-area: main;
   padding: 32px 48px; 
   overflow-x: auto; 
   background: var(--bg);
-  min-width: 0;  /* 그리드 셀에서 콘텐츠가 넘치는 것 방지 */
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
 }
 
-/* ========== SIDEBAR ========== */
+/* ========== SIDEBAR (강제 좌측 + 290px 고정) ========== */
 .sidebar { 
+  grid-area: sidebar;
   background: linear-gradient(180deg, var(--kiwoom-navy) 0%, var(--kiwoom-navy-deep) 100%); 
   border-right: 1px solid var(--kiwoom-navy-deep); 
   display: flex; 
   flex-direction: column; 
   position: sticky; 
   top: 0; 
+  left: 0;
   height: 100vh;
-  width: 290px;       /* 명시적 너비 */
+  width: 290px;
+  min-width: 290px;
   max-width: 290px;
   overflow-y: auto;
   overflow-x: hidden;
   color: white;
   box-sizing: border-box;
+  flex-shrink: 0;
 }
 .brand { 
   padding: 0;
@@ -529,13 +543,15 @@ table { border-collapse: collapse; width: 100%; }
 /* ========== MOBILE RESPONSIVE ========== */
 @media (max-width: 900px) {
   .app {
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr !important;
+    grid-template-areas: "main" !important;
   }
   .sidebar {
+    grid-area: unset;
     position: fixed;
-    top: 0; left: -280px;
+    top: 0; left: -290px;
     height: 100vh;
-    width: 280px;
+    width: 290px;
     z-index: 1000;
     transition: left 0.25s ease;
     box-shadow: 2px 0 12px rgba(0,0,0,0.15);
@@ -864,13 +880,38 @@ table { border-collapse: collapse; width: 100%; }
 
 <script>
 // ============================================================
-// PWA: Service Worker 등록
+// PWA: Service Worker 등록 (즉시 업데이트 + 새 SW 자동 새로고침)
 // ============================================================
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js')
-      .then(reg => console.log('[PWA] Service Worker 등록됨:', reg.scope))
+      .then(reg => {
+        console.log('[PWA] Service Worker 등록됨:', reg.scope);
+        // 즉시 업데이트 체크
+        reg.update();
+        // 새 SW가 설치되면 즉시 활성화
+        reg.addEventListener('updatefound', () => {
+          const newSW = reg.installing;
+          if (newSW) {
+            newSW.addEventListener('statechange', () => {
+              if (newSW.state === 'installed' && navigator.serviceWorker.controller) {
+                console.log('[PWA] 새 Service Worker 발견 - 즉시 적용');
+                newSW.postMessage('SKIP_WAITING');
+              }
+            });
+          }
+        });
+      })
       .catch(err => console.warn('[PWA] Service Worker 등록 실패:', err));
+    
+    // 새 SW가 활성화되면 페이지 한 번 새로고침 (자동 반영)
+    let _refreshing = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (_refreshing) return;
+      _refreshing = true;
+      console.log('[PWA] Controller 변경 - 페이지 새로고침');
+      window.location.reload();
+    });
   });
 }
 

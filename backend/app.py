@@ -193,7 +193,12 @@ def cache_ts():
 # ============================================================
 @app.route('/')
 def index():
-    return send_from_directory('../frontend', 'index.html')
+    response = send_from_directory('../frontend', 'index.html')
+    # HTML은 절대 캐시하지 않음 - 항상 최신 받기
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
 
 
 # PWA 정적 자원 (manifest, service worker, 아이콘)
