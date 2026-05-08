@@ -52,6 +52,9 @@ elif not HAS_SUPABASE_LIB:
 elif not SUPABASE_URL or not SUPABASE_KEY:
     print('[INFO] SUPABASE_URL/SUPABASE_KEY 환경변수 미설정 - 자동완성 기능 비활성화')
 
+# 관리자 인증 (데이터 로드용 admin 엔드포인트)
+ADMIN_SECRET = os.environ.get('ADMIN_SECRET', '').strip()
+
 # 국토부 실거래가 API 엔드포인트 (2024년 신규 HTTPS 엔드포인트)
 URL_TRADE = 'https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev'  # 상세
 URL_RENT = 'https://apis.data.go.kr/1613000/RTMSDataSvcAptRent/getRTMSDataSvcAptRent'  # 전월세
@@ -294,7 +297,7 @@ def health():
             'url_set': bool(SUPABASE_URL),
             'key_set': bool(SUPABASE_KEY),
         },
-        'version': 'v2.1-supabase',
+        'version': 'v2.2-admin',
     })
 
 
@@ -1155,12 +1158,412 @@ def search_address():
 
 
 # ============================================================
+# 관리자: 데이터 로드 엔드포인트 (Step 4-5: 법정동/단지 마스터 적재)
+# - 보안: ADMIN_SECRET 환경변수와 일치하는 ?key= 파라미터 필요
+# - 동작: 청크 단위(소량씩)로 Supabase upsert → 타임아웃 회피
+# - UI: /admin/load 에서 자동 진행 (JS가 반복 호출)
+# ============================================================
+
+# 데이터 파일 경로 (backend/data/legal_dong_data.json)
+_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
+_LEGAL_DONG_FILE = os.path.join(_DATA_DIR, 'legal_dong_data.json')
+
+# 데이터 캐시 (한 번만 메모리에 로드)
+_legal_dong_cache = None
+
+
+def _load_legal_dong_file():
+    """legal_dong_data.json 파일을 메모리에 로드 (캐시)."""
+    global _legal_dong_cache
+    if _legal_dong_cache is None:
+        try:
+            import json as _json
+            with open(_LEGAL_DONG_FILE, encoding='utf-8') as f:
+                _legal_dong_cache = _json.load(f)
+            print(f'[INFO] legal_dong_data.json 로드: {len(_legal_dong_cache)}건')
+        except FileNotFoundError:
+            print(f'[ERROR] 데이터 파일 없음: {_LEGAL_DONG_FILE}')
+            _legal_dong_cache = []
+        except Exception as e:
+            print(f'[ERROR] 데이터 파일 로드 실패: {e}')
+            _legal_dong_cache = []
+    return _legal_dong_cache
+
+
+def _check_admin(req):
+    """관리자 인증 체크."""
+    if not ADMIN_SECRET:
+        return False, 'ADMIN_SECRET 환경변수가 설정되지 않았습니다.'
+    key = req.args.get('key', '')
+    if key != ADMIN_SECRET:
+        return False, '잘못된 관리자 키.'
+    return True, None
+
+
+@app.route('/admin/load')
+def admin_load_page():
+    """데이터 로드 진행 페이지 (HTML).
+    URL: /admin/load?key=ADMIN_SECRET
+    """
+    key = request.args.get('key', '')
+    if not ADMIN_SECRET:
+        return '<h1>ADMIN_SECRET 환경변수가 설정되지 않았습니다.</h1>', 503
+    if key != ADMIN_SECRET:
+        return '<h1>잘못된 관리자 키입니다.</h1>', 403
+
+    html = '''<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>관리자: 데이터 로드</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, "Apple SD Gothic Neo", sans-serif; padding: 30px; background: #f5f5f7; color: #1d1d1f; }
+.container { max-width: 760px; margin: 0 auto; }
+h1 { font-size: 24px; margin-bottom: 8px; }
+h2 { font-size: 18px; margin: 24px 0 12px; }
+.card { background: white; border-radius: 14px; padding: 20px 24px; margin-bottom: 20px; box-shadow: 0 1px 4px rgba(0,0,0,0.04); }
+.row { display: flex; align-items: center; gap: 12px; margin: 12px 0; }
+button { background: #0a3a6e; color: white; border: 0; padding: 10px 18px; border-radius: 8px; font-size: 14px; cursor: pointer; font-weight: 600; }
+button:hover { background: #082c54; }
+button:disabled { background: #ccc; cursor: not-allowed; }
+.bar-wrap { width: 100%; height: 22px; background: #e8e8ed; border-radius: 11px; overflow: hidden; }
+.bar { height: 100%; background: linear-gradient(90deg, #0a3a6e, #1056a6); transition: width 0.2s; width: 0; }
+.log { font-family: ui-monospace, "Courier New", monospace; font-size: 12px; background: #1d1d1f; color: #f5f5f7; padding: 12px; border-radius: 8px; max-height: 280px; overflow-y: auto; white-space: pre-wrap; line-height: 1.5; }
+.muted { color: #6e6e73; font-size: 13px; }
+.warn { color: #ff5a1f; font-weight: 600; }
+.ok { color: #0a8a3a; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="container">
+<h1>📊 관리자: 데이터 로드</h1>
+<p class="muted">법정동 마스터 + 아파트 단지 마스터를 Supabase DB에 채웁니다. 한 번만 실행하시면 됩니다.</p>
+
+<div class="card">
+<h2>1️⃣ 법정동 마스터 (약 20,000건)</h2>
+<p class="muted">행정표준코드관리시스템 출처. 동/읍/면 + 리 단위 전체.</p>
+<div class="row">
+<button id="btn-dong" onclick="loadDong()">로드 시작</button>
+<span id="dong-status" class="muted">대기 중</span>
+</div>
+<div class="bar-wrap"><div id="dong-bar" class="bar"></div></div>
+<div id="dong-log" class="log" style="display:none;margin-top:12px;"></div>
+</div>
+
+<div class="card">
+<h2>2️⃣ 아파트 단지 마스터 (약 18,000개)</h2>
+<p class="muted">⚠️ 1번 완료 후 진행하세요. 공공데이터포털 K-apt API를 동별로 호출합니다 (약 30~60분 소요).</p>
+<div class="row">
+<button id="btn-apt" onclick="loadApt()" disabled>1번 먼저 완료</button>
+<span id="apt-status" class="muted">대기 중</span>
+</div>
+<div class="bar-wrap"><div id="apt-bar" class="bar"></div></div>
+<div id="apt-log" class="log" style="display:none;margin-top:12px;"></div>
+</div>
+
+<p class="muted" style="text-align:center;margin-top:20px;">⚠️ 페이지를 닫지 마세요. 닫으면 진행이 멈춥니다 (다시 열면 이어서 진행됩니다).</p>
+</div>
+
+<script>
+const KEY = new URLSearchParams(location.search).get('key');
+let dongRunning = false, aptRunning = false;
+
+function setBar(id, percent) {
+  document.getElementById(id).style.width = percent + '%';
+}
+function logLine(id, text) {
+  const el = document.getElementById(id);
+  el.style.display = 'block';
+  el.textContent += text + '\\n';
+  el.scrollTop = el.scrollHeight;
+}
+
+async function loadDong() {
+  if (dongRunning) return;
+  dongRunning = true;
+  document.getElementById('btn-dong').disabled = true;
+  document.getElementById('dong-status').textContent = '진행 중...';
+  document.getElementById('dong-log').style.display = 'block';
+  document.getElementById('dong-log').textContent = '';
+
+  let offset = 0;
+  const size = 500;
+  let total = null;
+  while (true) {
+    const url = `/api/admin/load-legal-dong?key=${encodeURIComponent(KEY)}&offset=${offset}&size=${size}`;
+    let r;
+    try {
+      r = await fetch(url);
+    } catch (e) {
+      logLine('dong-log', '❌ 네트워크 오류: ' + e.message + ' (10초 후 재시도)');
+      await new Promise(res => setTimeout(res, 10000));
+      continue;
+    }
+    const j = await r.json();
+    if (j.error) {
+      logLine('dong-log', '❌ ' + j.error);
+      document.getElementById('dong-status').innerHTML = '<span class="warn">실패</span>';
+      dongRunning = false;
+      document.getElementById('btn-dong').disabled = false;
+      return;
+    }
+    total = j.total;
+    const inserted = j.inserted_so_far;
+    const pct = total > 0 ? Math.round(inserted / total * 100) : 0;
+    setBar('dong-bar', pct);
+    document.getElementById('dong-status').textContent = `${inserted} / ${total} (${pct}%)`;
+    logLine('dong-log', `✓ ${j.this_chunk}건 적재 (누적 ${inserted}/${total})`);
+    if (j.done) {
+      document.getElementById('dong-status').innerHTML = '<span class="ok">완료!</span>';
+      logLine('dong-log', '🎉 법정동 마스터 적재 완료!');
+      document.getElementById('btn-apt').disabled = false;
+      document.getElementById('btn-apt').textContent = '로드 시작';
+      dongRunning = false;
+      return;
+    }
+    offset += size;
+  }
+}
+
+async function loadApt() {
+  if (aptRunning) return;
+  aptRunning = true;
+  document.getElementById('btn-apt').disabled = true;
+  document.getElementById('apt-status').textContent = '진행 중...';
+  document.getElementById('apt-log').style.display = 'block';
+  document.getElementById('apt-log').textContent = '';
+
+  let offset = 0;
+  const size = 5;  // 5개 동씩 처리
+  while (true) {
+    const url = `/api/admin/load-apt-master?key=${encodeURIComponent(KEY)}&offset=${offset}&size=${size}`;
+    let r;
+    try {
+      r = await fetch(url);
+    } catch (e) {
+      logLine('apt-log', '❌ 네트워크 오류: ' + e.message + ' (15초 후 재시도)');
+      await new Promise(res => setTimeout(res, 15000));
+      continue;
+    }
+    const j = await r.json();
+    if (j.error) {
+      logLine('apt-log', '❌ ' + j.error);
+      document.getElementById('apt-status').innerHTML = '<span class="warn">실패</span>';
+      aptRunning = false;
+      document.getElementById('btn-apt').disabled = false;
+      return;
+    }
+    const total = j.total_dongs;
+    const processed = j.processed_dongs;
+    const inserted = j.inserted_apts_total;
+    const pct = total > 0 ? Math.round(processed / total * 100) : 0;
+    setBar('apt-bar', pct);
+    document.getElementById('apt-status').textContent =
+      `${processed} / ${total} 동 처리 (단지 ${inserted}개) (${pct}%)`;
+    if (j.this_inserted > 0) {
+      logLine('apt-log', `✓ 동 ${j.this_processed}개 처리: 단지 +${j.this_inserted} (누적 ${inserted}개)`);
+    }
+    if (j.done) {
+      document.getElementById('apt-status').innerHTML = '<span class="ok">완료!</span>';
+      logLine('apt-log', `🎉 단지 마스터 적재 완료! 총 ${inserted}개 단지.`);
+      aptRunning = false;
+      return;
+    }
+    offset += size;
+  }
+}
+</script>
+</body>
+</html>'''
+    return html
+
+
+@app.route('/api/admin/load-legal-dong')
+def admin_load_legal_dong():
+    """법정동 데이터를 청크 단위로 Supabase에 적재.
+    Query: key=ADMIN_SECRET, offset=N, size=500
+    """
+    ok, msg = _check_admin(request)
+    if not ok:
+        return jsonify({'error': msg}), 403
+    if not supabase:
+        return jsonify({'error': 'Supabase 미연결'}), 503
+
+    offset = request.args.get('offset', default=0, type=int)
+    size = min(request.args.get('size', default=500, type=int), 1000)
+
+    data = _load_legal_dong_file()
+    total = len(data)
+    if total == 0:
+        return jsonify({'error': '데이터 파일이 비어있거나 없음'}), 500
+
+    chunk = data[offset:offset + size]
+    if not chunk:
+        return jsonify({
+            'done': True,
+            'total': total,
+            'inserted_so_far': total,
+            'this_chunk': 0,
+        })
+
+    try:
+        # upsert (이미 있는 bjd_code는 업데이트)
+        supabase.table('legal_dong').upsert(chunk, on_conflict='bjd_code').execute()
+    except Exception as e:
+        return jsonify({'error': f'Supabase upsert 오류: {e}'}), 500
+
+    inserted_so_far = offset + len(chunk)
+    return jsonify({
+        'done': inserted_so_far >= total,
+        'total': total,
+        'inserted_so_far': inserted_so_far,
+        'this_chunk': len(chunk),
+        'next_offset': offset + size,
+    })
+
+
+@app.route('/api/admin/load-apt-master')
+def admin_load_apt_master():
+    """K-apt API로 동별 단지 목록을 가져와 Supabase에 적재.
+    Query: key=ADMIN_SECRET, offset=N (동 인덱스), size=5
+    """
+    ok, msg = _check_admin(request)
+    if not ok:
+        return jsonify({'error': msg}), 403
+    if not supabase:
+        return jsonify({'error': 'Supabase 미연결'}), 503
+    if not API_KEY:
+        return jsonify({'error': 'MOLIT_API_KEY 미설정'}), 500
+
+    offset = request.args.get('offset', default=0, type=int)
+    size = min(request.args.get('size', default=5, type=int), 10)
+
+    # 동 단위만 추출 (ri 제외, 활성)
+    try:
+        # legal_dong에서 dong-level만 select (ri가 빈 문자열이거나 NULL)
+        # Supabase Python client는 OR 조건이 까다로워서 두 번 쿼리해서 합쳐도 됨
+        # 일단 ri = '' 인 것만 동 단위로 간주
+        resp = (
+            supabase.table('legal_dong')
+            .select('bjd_code, sido, sigungu, dong')
+            .eq('is_active', True)
+            .eq('ri', '')
+            .order('bjd_code')
+            .range(offset, offset + size - 1)
+            .execute()
+        )
+        dongs = resp.data or []
+    except Exception as e:
+        return jsonify({'error': f'동 목록 조회 오류: {e}'}), 500
+
+    # 전체 동 개수 조회 (count)
+    try:
+        count_resp = (
+            supabase.table('legal_dong')
+            .select('bjd_code', count='exact')
+            .eq('is_active', True)
+            .eq('ri', '')
+            .execute()
+        )
+        total_dongs = count_resp.count or 0
+    except Exception:
+        total_dongs = 0
+
+    if not dongs:
+        # 진행 완료 또는 legal_dong 비어있음
+        # 단지 총 개수도 조회
+        try:
+            apt_count_resp = (
+                supabase.table('apt_master')
+                .select('kapt_code', count='exact')
+                .execute()
+            )
+            inserted_apts_total = apt_count_resp.count or 0
+        except Exception:
+            inserted_apts_total = 0
+        return jsonify({
+            'done': True,
+            'total_dongs': total_dongs,
+            'processed_dongs': total_dongs,
+            'this_processed': 0,
+            'this_inserted': 0,
+            'inserted_apts_total': inserted_apts_total,
+        })
+
+    # 각 동에 대해 K-apt API 호출
+    apts_to_insert = []
+    errors = []
+    for d in dongs:
+        bjd = d['bjd_code']
+        try:
+            xml_text = fetch_apt_list_by_dong_cached(bjd, cache_ts())
+            raw_items, err = parse_xml_items(xml_text)
+            if err:
+                # API 오류는 로그만, 다음 동으로 진행
+                errors.append(f'{bjd}: {err}')
+                continue
+            for x in raw_items:
+                kapt_code = safe_get(x, 'kaptCode')
+                kapt_name = safe_get(x, 'kaptName')
+                if not kapt_code or not kapt_name:
+                    continue
+                apts_to_insert.append({
+                    'kapt_code': kapt_code,
+                    'kapt_name': kapt_name,
+                    'kapt_name_normalized': kapt_name.replace(' ', '').lower(),
+                    'bjd_code': safe_get(x, 'bjdCode') or bjd,
+                    'sido': safe_get(x, 'as1') or d['sido'],
+                    'sigungu': safe_get(x, 'as2') or d['sigungu'],
+                    'dong': safe_get(x, 'as4') or safe_get(x, 'as3') or d['dong'],
+                })
+        except Exception as e:
+            errors.append(f'{bjd}: {e}')
+
+    # 중복 제거 (이번 청크 내)
+    unique_apts = {}
+    for a in apts_to_insert:
+        unique_apts[a['kapt_code']] = a
+    apts_list = list(unique_apts.values())
+
+    inserted_count = 0
+    if apts_list:
+        try:
+            supabase.table('apt_master').upsert(apts_list, on_conflict='kapt_code').execute()
+            inserted_count = len(apts_list)
+        except Exception as e:
+            return jsonify({'error': f'apt_master upsert 오류: {e}'}), 500
+
+    # 단지 총 개수 조회
+    try:
+        apt_count_resp = (
+            supabase.table('apt_master')
+            .select('kapt_code', count='exact')
+            .execute()
+        )
+        inserted_apts_total = apt_count_resp.count or 0
+    except Exception:
+        inserted_apts_total = 0
+
+    processed_dongs = offset + len(dongs)
+    return jsonify({
+        'done': processed_dongs >= total_dongs,
+        'total_dongs': total_dongs,
+        'processed_dongs': processed_dongs,
+        'this_processed': len(dongs),
+        'this_inserted': inserted_count,
+        'inserted_apts_total': inserted_apts_total,
+        'errors': errors[-3:] if errors else [],
+    })
+
+
+# ============================================================
 # 시작
 # ============================================================
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     print('=' * 60)
-    print('부동산 자산관리 백엔드 서버 (v2.1-supabase)')
+    print('부동산 자산관리 백엔드 서버 (v2.2-admin)')
     print('=' * 60)
     print(f'API 키 설정: {"O" if API_KEY else "X (.env 파일에 MOLIT_API_KEY 추가 필요)"}')
     print(f'Supabase 연결: {"O" if supabase else "X (선택사항 - 자동완성만 비활성화)"}')
