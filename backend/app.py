@@ -63,11 +63,12 @@ URL_RENT = 'https://apis.data.go.kr/1613000/RTMSDataSvcAptRent/getRTMSDataSvcApt
 URL_RH_TRADE = 'https://apis.data.go.kr/1613000/RTMSDataSvcRHTrade/getRTMSDataSvcRHTrade'  # 매매
 URL_RH_RENT = 'https://apis.data.go.kr/1613000/RTMSDataSvcRHRent/getRTMSDataSvcRHRent'  # 전월세
 
-# 공동주택 단지 정보 (K-apt)
-URL_APT_LIST_DONG = 'https://apis.data.go.kr/1611000/AptListService2/getLegaldongAptList'  # 법정동별 단지목록
-URL_APT_LIST_ROAD = 'https://apis.data.go.kr/1611000/AptListService2/getRoadnameAptList'  # 도로명별 단지목록
-URL_APT_BASIS = 'https://apis.data.go.kr/1611000/AptBasisInfoServiceV1/getAphusBassInfoV1'  # 단지 기본정보
-URL_APT_DETAIL = 'https://apis.data.go.kr/1611000/AptBasisInfoServiceV1/getAphusDtlInfoV1'  # 단지 상세정보
+# 공동주택 단지 정보 (K-apt) - V3 API (2025년 업그레이드)
+URL_APT_LIST_DONG = 'https://apis.data.go.kr/1613000/AptListService3/getLegaldongAptList3'  # 법정동별 단지목록
+URL_APT_LIST_ROAD = 'https://apis.data.go.kr/1613000/AptListService3/getRoadnameAptList3'  # 도로명별 단지목록
+URL_APT_LIST_TOTAL = 'https://apis.data.go.kr/1613000/AptListService3/getTotalAptList3'  # 전체 단지목록 (한번에 모두)
+URL_APT_BASIS = 'https://apis.data.go.kr/1613000/AptBasisInfoServiceV3/getAphusBassInfoV3'  # 단지 기본정보
+URL_APT_DETAIL = 'https://apis.data.go.kr/1613000/AptBasisInfoServiceV3/getAphusDtlInfoV3'  # 단지 상세정보
 
 # 건축물대장 (HUB)
 URL_BR_TITLE = 'https://apis.data.go.kr/1613000/BldRgstHubService/getBrTitleInfo'  # 표제부
@@ -297,7 +298,7 @@ def health():
             'url_set': bool(SUPABASE_URL),
             'key_set': bool(SUPABASE_KEY),
         },
-        'version': 'v2.2-admin',
+        'version': 'v2.3-v3api',
     })
 
 
@@ -1253,7 +1254,7 @@ button:disabled { background: #ccc; cursor: not-allowed; }
 
 <div class="card">
 <h2>2️⃣ 아파트 단지 마스터 (약 18,000개)</h2>
-<p class="muted">⚠️ 1번 완료 후 진행하세요. 공공데이터포털 K-apt API를 동별로 호출합니다 (약 30~60분 소요).</p>
+<p class="muted">⚠️ 1번 완료 후 진행하세요. K-apt V3 API getTotalAptList3로 페이지당 1000개씩 일괄 조회 (약 2~5분 소요).</p>
 <div class="row">
 <button id="btn-apt" onclick="loadApt()" disabled>1번 먼저 완료</button>
 <span id="apt-status" class="muted">대기 중</span>
@@ -1335,7 +1336,7 @@ async function loadApt() {
   document.getElementById('apt-log').textContent = '';
 
   let offset = 0;
-  const size = 5;  // 5개 동씩 처리
+  const size = 1;  // V3 API에서는 1페이지(1000개)씩 처리
   while (true) {
     const url = `/api/admin/load-apt-master?key=${encodeURIComponent(KEY)}&offset=${offset}&size=${size}`;
     let r;
@@ -1360,9 +1361,9 @@ async function loadApt() {
     const pct = total > 0 ? Math.round(processed / total * 100) : 0;
     setBar('apt-bar', pct);
     document.getElementById('apt-status').textContent =
-      `${processed} / ${total} 동 처리 (단지 ${inserted}개) (${pct}%)`;
-    if (j.this_inserted > 0) {
-      logLine('apt-log', `✓ 동 ${j.this_processed}개 처리: 단지 +${j.this_inserted} (누적 ${inserted}개)`);
+      `${processed} / ${total} 처리 (단지 ${inserted}개) (${pct}%)`;
+    if (j.this_inserted > 0 || j.this_processed > 0) {
+      logLine('apt-log', `✓ 페이지 ${j.this_processed}개 처리: 단지 +${j.this_inserted} (누적 ${inserted}개)`);
     }
     if (j.done) {
       document.getElementById('apt-status').innerHTML = '<span class="ok">완료!</span>';
@@ -1425,8 +1426,9 @@ def admin_load_legal_dong():
 
 @app.route('/api/admin/load-apt-master')
 def admin_load_apt_master():
-    """K-apt API로 동별 단지 목록을 가져와 Supabase에 적재.
-    Query: key=ADMIN_SECRET, offset=N (동 인덱스), size=5
+    """K-apt V3 API getTotalAptList3로 전국 단지 목록 일괄 적재.
+    페이징(numOfRows=1000)으로 한 번에 1000개씩, 약 18~20번 호출로 완료.
+    Query: key=ADMIN_SECRET, offset=N (페이지 번호 0부터), size=1 (한 번에 처리할 페이지 수)
     """
     ok, msg = _check_admin(request)
     if not ok:
@@ -1436,91 +1438,78 @@ def admin_load_apt_master():
     if not API_KEY:
         return jsonify({'error': 'MOLIT_API_KEY 미설정'}), 500
 
+    # offset = 처리한 페이지 수 (0부터 시작)
     offset = request.args.get('offset', default=0, type=int)
-    size = min(request.args.get('size', default=5, type=int), 10)
+    # size = 이번 요청에서 처리할 페이지 수 (1~3)
+    size = min(request.args.get('size', default=1, type=int), 3)
+    num_rows = 1000  # 페이지당 단지 수
 
-    # 동 단위만 추출 (ri 제외, 활성)
-    try:
-        # legal_dong에서 dong-level만 select (ri가 빈 문자열이거나 NULL)
-        # Supabase Python client는 OR 조건이 까다로워서 두 번 쿼리해서 합쳐도 됨
-        # 일단 ri = '' 인 것만 동 단위로 간주
-        resp = (
-            supabase.table('legal_dong')
-            .select('bjd_code, sido, sigungu, dong')
-            .eq('is_active', True)
-            .eq('ri', '')
-            .order('bjd_code')
-            .range(offset, offset + size - 1)
-            .execute()
-        )
-        dongs = resp.data or []
-    except Exception as e:
-        return jsonify({'error': f'동 목록 조회 오류: {e}'}), 500
-
-    # 전체 동 개수 조회 (count)
-    try:
-        count_resp = (
-            supabase.table('legal_dong')
-            .select('bjd_code', count='exact')
-            .eq('is_active', True)
-            .eq('ri', '')
-            .execute()
-        )
-        total_dongs = count_resp.count or 0
-    except Exception:
-        total_dongs = 0
-
-    if not dongs:
-        # 진행 완료 또는 legal_dong 비어있음
-        # 단지 총 개수도 조회
-        try:
-            apt_count_resp = (
-                supabase.table('apt_master')
-                .select('kapt_code', count='exact')
-                .execute()
-            )
-            inserted_apts_total = apt_count_resp.count or 0
-        except Exception:
-            inserted_apts_total = 0
-        return jsonify({
-            'done': True,
-            'total_dongs': total_dongs,
-            'processed_dongs': total_dongs,
-            'this_processed': 0,
-            'this_inserted': 0,
-            'inserted_apts_total': inserted_apts_total,
-        })
-
-    # 각 동에 대해 K-apt API 호출
+    # K-apt API에서 전체 단지를 페이지 단위로 가져옴
     apts_to_insert = []
+    total_count = 0
+    pages_processed = 0
     errors = []
-    for d in dongs:
-        bjd = d['bjd_code']
-        try:
-            xml_text = fetch_apt_list_by_dong_cached(bjd, cache_ts())
-            raw_items, err = parse_xml_items(xml_text)
-            if err:
-                # API 오류는 로그만, 다음 동으로 진행
-                errors.append(f'{bjd}: {err}')
-                continue
-            for x in raw_items:
-                kapt_code = safe_get(x, 'kaptCode')
-                kapt_name = safe_get(x, 'kaptName')
-                if not kapt_code or not kapt_name:
-                    continue
-                apts_to_insert.append({
-                    'kapt_code': kapt_code,
-                    'kapt_name': kapt_name,
-                    'kapt_name_normalized': kapt_name.replace(' ', '').lower(),
-                    'bjd_code': safe_get(x, 'bjdCode') or bjd,
-                    'sido': safe_get(x, 'as1') or d['sido'],
-                    'sigungu': safe_get(x, 'as2') or d['sigungu'],
-                    'dong': safe_get(x, 'as4') or safe_get(x, 'as3') or d['dong'],
-                })
-        except Exception as e:
-            errors.append(f'{bjd}: {e}')
 
-    # 중복 제거 (이번 청크 내)
+    for i in range(size):
+        page_no = offset + i + 1  # 1-based page number
+        params = {
+            'serviceKey': API_KEY,
+            'numOfRows': str(num_rows),
+            'pageNo': str(page_no),
+        }
+        try:
+            r = requests.get(URL_APT_LIST_TOTAL, params=params, timeout=60)
+            r.raise_for_status()
+            xml_text = r.text
+        except requests.exceptions.HTTPError as e:
+            errors.append(f'page {page_no} HTTP: {e}')
+            continue
+        except requests.exceptions.Timeout:
+            errors.append(f'page {page_no}: 타임아웃')
+            continue
+        except Exception as e:
+            errors.append(f'page {page_no}: {e}')
+            continue
+
+        # 응답 파싱
+        raw_items, err = parse_xml_items(xml_text)
+        if err:
+            errors.append(f'page {page_no}: {err}')
+            continue
+
+        # 첫 번째 호출에서 totalCount 추출
+        if i == 0:
+            try:
+                root = ET.fromstring(xml_text)
+                tc = root.findtext('.//totalCount')
+                if tc and tc.isdigit():
+                    total_count = int(tc)
+            except Exception:
+                pass
+
+        if not raw_items:
+            # 더 이상 데이터 없음
+            pages_processed = i  # 실제로 처리된 페이지 수
+            break
+
+        pages_processed = i + 1
+
+        for x in raw_items:
+            kapt_code = safe_get(x, 'kaptCode')
+            kapt_name = safe_get(x, 'kaptName')
+            if not kapt_code or not kapt_name:
+                continue
+            apts_to_insert.append({
+                'kapt_code': kapt_code,
+                'kapt_name': kapt_name,
+                'kapt_name_normalized': kapt_name.replace(' ', '').lower(),
+                'bjd_code': safe_get(x, 'bjdCode'),
+                'sido': safe_get(x, 'as1'),
+                'sigungu': safe_get(x, 'as2'),
+                'dong': safe_get(x, 'as4') or safe_get(x, 'as3'),
+            })
+
+    # 중복 제거 + upsert
     unique_apts = {}
     for a in apts_to_insert:
         unique_apts[a['kapt_code']] = a
@@ -1534,7 +1523,7 @@ def admin_load_apt_master():
         except Exception as e:
             return jsonify({'error': f'apt_master upsert 오류: {e}'}), 500
 
-    # 단지 총 개수 조회
+    # 단지 총 개수 조회 (이미 적재된 것 포함)
     try:
         apt_count_resp = (
             supabase.table('apt_master')
@@ -1545,14 +1534,38 @@ def admin_load_apt_master():
     except Exception:
         inserted_apts_total = 0
 
-    processed_dongs = offset + len(dongs)
+    # 다음 페이지 offset 계산
+    next_offset = offset + pages_processed
+
+    # 종료 조건: 이번에 가져온 행이 num_rows 미만이거나, totalCount 도달
+    is_done = False
+    if pages_processed == 0:  # 빈 응답 받음
+        is_done = True
+    elif total_count > 0 and next_offset * num_rows >= total_count:
+        is_done = True
+    elif len(apts_list) < num_rows * size:  # 마지막 페이지 (full size 안 됨)
+        # totalCount를 확인 못했어도 페이지가 비어있으면 종료
+        if pages_processed < size:
+            is_done = True
+
+    # 진행률 계산용 (loader UI 호환)
+    if total_count > 0:
+        # totalCount를 기반으로 진행률 산정
+        processed_dongs_for_ui = min(next_offset * num_rows, total_count)
+        total_dongs_for_ui = total_count
+    else:
+        # totalCount 못 받았으면 페이지 수 기반
+        processed_dongs_for_ui = next_offset
+        total_dongs_for_ui = 25  # 예상 페이지 수 (1만8천 / 1000 ≈ 18, 여유 25)
+
     return jsonify({
-        'done': processed_dongs >= total_dongs,
-        'total_dongs': total_dongs,
-        'processed_dongs': processed_dongs,
-        'this_processed': len(dongs),
+        'done': is_done,
+        'total_dongs': total_dongs_for_ui,
+        'processed_dongs': processed_dongs_for_ui,
+        'this_processed': pages_processed,
         'this_inserted': inserted_count,
         'inserted_apts_total': inserted_apts_total,
+        'total_apt_count_from_api': total_count,
         'errors': errors[-3:] if errors else [],
     })
 
@@ -1563,7 +1576,7 @@ def admin_load_apt_master():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     print('=' * 60)
-    print('부동산 자산관리 백엔드 서버 (v2.2-admin)')
+    print('부동산 자산관리 백엔드 서버 (v2.3-v3api)')
     print('=' * 60)
     print(f'API 키 설정: {"O" if API_KEY else "X (.env 파일에 MOLIT_API_KEY 추가 필요)"}')
     print(f'Supabase 연결: {"O" if supabase else "X (선택사항 - 자동완성만 비활성화)"}')
