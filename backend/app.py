@@ -374,7 +374,7 @@ def health():
             'url_set': bool(SUPABASE_URL),
             'key_set': bool(SUPABASE_KEY),
         },
-        'version': 'v2.7-fallback',
+        'version': 'v2.8-jibun',
     })
 
 
@@ -1849,6 +1849,14 @@ tbody tr.target-jibun:hover { background: #fff3c4; }
     <!-- 분석 결과 -->
     <div id="analysis" style="display:none;">
 
+      <!-- 지번 선택 박스 -->
+      <div id="jibun-selector-card" class="search-card" style="display:none; margin-bottom:16px; background:linear-gradient(135deg, #fff8e1 0%, #fffde7 100%); border-left:4px solid #ffb300;">
+        <h2 style="font-size:16px;">🎯 분석 대상 지번 선택</h2>
+        <p class="search-hint" style="margin-top:4px;">⚠️ 같은 단지명에 여러 지번이 있을 수 있어요. 사장님 부동산의 지번을 선택하면 <strong>해당 지번 거래만</strong> 분석합니다.</p>
+        <select id="jibun-selector" style="width:100%; padding:12px 14px; font-size:14px; border:2px solid #ffb300; border-radius:8px; margin-top:12px; background:white; font-weight:500; cursor:pointer; outline:none;"></select>
+        <div id="jibun-current" style="margin-top:8px; font-size:13px; color:#5d4037; font-weight:500;"></div>
+      </div>
+
       <!-- 요약 카드 4개 -->
       <div class="summary-grid">
         <div class="summary-card">
@@ -2213,10 +2221,85 @@ function showError(msg) {
 }
 
 // ============ 분석 ============
+let selectedJibunKey = 'ALL';  // 'ALL' 또는 '동|지번'
+
+function normalizeJibun(jibun) {
+  if (!jibun) return '';
+  // 하이픈 앞부분만 메인 번지로 (예: "274-1" → "274")
+  return String(jibun).split('-')[0].trim();
+}
+
 function analyzeAndRender() {
-  const trades = allItems.filter(x => x.type === '매매');
-  const jeonse = allItems.filter(x => x.type === '전세');
-  const wolse = allItems.filter(x => x.type === '월세');
+  setupJibunSelector();
+  renderAnalysis();
+}
+
+function setupJibunSelector() {
+  // 전체 거래에서 동+메인지번으로 그룹화
+  const groups = {};
+  allItems.forEach(x => {
+    const dong = x.dong || '(미상)';
+    const jibun = normalizeJibun(x.jibun) || '(미상)';
+    const key = `${dong}|${jibun}`;
+    if (!groups[key]) {
+      groups[key] = { dong, jibun, items: [], trade: 0, rent: 0 };
+    }
+    groups[key].items.push(x);
+    if (x.type === '매매') groups[key].trade++;
+    else groups[key].rent++;
+  });
+  
+  // 거래 많은 순으로 정렬
+  const sorted = Object.entries(groups)
+    .map(([k, v]) => ({ key: k, ...v }))
+    .sort((a, b) => b.items.length - a.items.length);
+  
+  const select = document.getElementById('jibun-selector');
+  let html = '';
+  sorted.forEach((g, i) => {
+    const star = (i === 0 && g.trade > 0) ? ' ⭐ 가장 활발' : '';
+    html += `<option value="${escapeHtml(g.key)}">${escapeHtml(g.dong)} ${escapeHtml(g.jibun)}번지${star} — 총 ${g.items.length}건 (매매 ${g.trade} / 전월세 ${g.rent})</option>`;
+  });
+  html += `<option value="ALL">─ 전체 보기 (${allItems.length}건, 다른 지번 단지 모두 포함) ─</option>`;
+  select.innerHTML = html;
+  
+  // 자동 추천: 가장 거래 많은 지번
+  if (sorted.length > 0 && sorted[0].items.length > 0) {
+    selectedJibunKey = sorted[0].key;
+    select.value = selectedJibunKey;
+  } else {
+    selectedJibunKey = 'ALL';
+    select.value = 'ALL';
+  }
+  
+  // 지번이 여러 개면 선택 박스 표시, 1개면 자동 적용만
+  document.getElementById('jibun-selector-card').style.display = 
+    sorted.length > 1 ? 'block' : 'none';
+  
+  // 이벤트
+  select.onchange = (e) => {
+    selectedJibunKey = e.target.value;
+    renderAnalysis();
+  };
+}
+
+function getFilteredItems() {
+  if (selectedJibunKey === 'ALL') return allItems.slice();
+  const [dong, jibun] = selectedJibunKey.split('|');
+  return allItems.filter(x => {
+    const d = x.dong || '(미상)';
+    const j = normalizeJibun(x.jibun) || '(미상)';
+    return d === dong && j === jibun;
+  });
+}
+
+function renderAnalysis() {
+  // 선택된 지번의 거래만 추출
+  const items = getFilteredItems();
+  
+  const trades = items.filter(x => x.type === '매매');
+  const jeonse = items.filter(x => x.type === '전세');
+  const wolse = items.filter(x => x.type === '월세');
   
   // 유효한 매매 (해제되지 않은 것)
   const validTrades = trades.filter(x => !x.memo || !x.memo.includes('해제'));
@@ -2236,12 +2319,21 @@ function analyzeAndRender() {
     ? (avgJeonse / avgTrade * 100) 
     : 0;
   
+  // 현재 선택 지번 정보 표시
+  const jibunInfo = document.getElementById('jibun-current');
+  if (selectedJibunKey === 'ALL') {
+    jibunInfo.innerHTML = `📍 <strong>전체 지번</strong> 분석 중 (총 ${items.length}건)`;
+  } else {
+    const [dong, jibun] = selectedJibunKey.split('|');
+    jibunInfo.innerHTML = `📍 <strong>${escapeHtml(dong)} ${escapeHtml(jibun)}번지</strong>만 분석 중 (${items.length}건)`;
+  }
+  
   // 요약 카드 업데이트
   document.getElementById('avg-trade').textContent = avgTrade > 0 ? formatPrice(avgTrade) : '-';
   document.getElementById('avg-trade-sub').textContent = `${validTrades.length}건 평균`;
   document.getElementById('avg-rent').textContent = avgJeonse > 0 ? formatPrice(avgJeonse) : '-';
   document.getElementById('avg-rent-sub').textContent = `${jeonse.length}건 평균`;
-  document.getElementById('total-count').textContent = allItems.length + '건';
+  document.getElementById('total-count').textContent = items.length + '건';
   document.getElementById('total-count-sub').textContent = 
     `매매 ${trades.length} / 전세 ${jeonse.length} / 월세 ${wolse.length}`;
   document.getElementById('rent-ratio').textContent = rentRatio > 0 ? rentRatio.toFixed(1) + '%' : '-';
@@ -2401,9 +2493,10 @@ function renderAreaAnalysis(trades) {
 
 // ============ 거래 내역 표 ============
 function renderTable() {
-  let items = allItems.slice();
+  // 지번 선택이 적용된 거래만 표에 표시
+  let items = getFilteredItems();
   
-  // 필터
+  // 필터 (매매/전세/월세 등)
   if (activeFilter === 'target' && jibunFilter) {
     items = items.filter(x => x.jibun === jibunFilter);
   } else if (activeFilter !== 'all' && activeFilter !== 'target') {
@@ -2544,7 +2637,7 @@ def admin_diag_kapt():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     print('=' * 60)
-    print('부동산 자산관리 백엔드 서버 (v2.7-fallback)')
+    print('부동산 자산관리 백엔드 서버 (v2.8-jibun)')
     print('=' * 60)
     print(f'API 키 설정: {"O" if API_KEY else "X (.env 파일에 MOLIT_API_KEY 추가 필요)"}')
     print(f'Supabase 연결: {"O" if supabase else "X (선택사항 - 자동완성만 비활성화)"}')
