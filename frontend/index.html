@@ -680,11 +680,12 @@ table { border-collapse: collapse; width: 100%; }
       <div class="nav-label">분석 모듈</div>
       <div class="nav-item active" data-view="overview"><span class="nav-item-num">01</span> 본건 정보</div>
       <div class="nav-item" data-view="comparables"><span class="nav-item-num">02</span> 거래사례 비교</div>
-      <div class="nav-item" data-view="auction"><span class="nav-item-num">03</span> 경공매 추적</div>
-      <div class="nav-item" data-view="valuation"><span class="nav-item-num">04</span> 시세 추정</div>
-      <div class="nav-item" data-view="rights"><span class="nav-item-num">05</span> 권리분석</div>
-      <div class="nav-item" data-view="returns"><span class="nav-item-num">06</span> 수익률·세금</div>
-      <div class="nav-item" data-view="report"><span class="nav-item-num">07</span> 리포트</div>
+      <div class="nav-item" data-view="listings"><span class="nav-item-num">03</span> 매물현황</div>
+      <div class="nav-item" data-view="auction"><span class="nav-item-num">04</span> 경공매 추적</div>
+      <div class="nav-item" data-view="valuation"><span class="nav-item-num">05</span> 시세 추정</div>
+      <div class="nav-item" data-view="rights"><span class="nav-item-num">06</span> 권리분석</div>
+      <div class="nav-item" data-view="returns"><span class="nav-item-num">07</span> 수익률·세금</div>
+      <div class="nav-item" data-view="report"><span class="nav-item-num">08</span> 리포트</div>
     </div>
 
     <div class="nav-section" style="padding-top: 8px;">
@@ -693,7 +694,7 @@ table { border-collapse: collapse; width: 100%; }
     <div class="property-list" id="propertyList"></div>
 
     <div class="sidebar-footer">
-      <button class="btn-add" onclick="openPropertyModal()">＋ 새 물건 등록</button>
+      <button class="btn-add" onclick="openPropertyModal()">🔍 물건 검색</button>
     </div>
   </aside>
 
@@ -1384,13 +1385,14 @@ function renderView() {
   const c = document.getElementById('viewContainer');
   const p = state.properties[state.currentPropertyId];
   if (!p && state.currentView !== 'overview') {
-    c.innerHTML = `<div class="empty"><div class="empty-title">등록된 물건이 없습니다</div><div class="empty-text">왼쪽 하단의 [＋ 새 물건 등록] 버튼으로 시작하세요.</div></div>`;
+    c.innerHTML = `<div class="empty"><div class="empty-title">등록된 물건이 없습니다</div><div class="empty-text">왼쪽 하단의 [🔍 물건 검색] 버튼으로 시작하세요.</div></div>`;
     return;
   }
 
   switch(state.currentView) {
     case 'overview': renderOverview(); break;
     case 'comparables': renderComparables(); break;
+    case 'listings': renderListings(); break;
     case 'auction': renderAuction(); break;
     case 'valuation': renderValuation(); break;
     case 'rights': renderRights(); break;
@@ -1414,7 +1416,7 @@ function renderOverview() {
       </div>
       <div class="empty">
         <div class="empty-title">물건을 등록하여 시작하세요</div>
-        <div class="empty-text">왼쪽 하단 [＋ 새 물건 등록] 버튼을 누르면 됩니다.</div>
+        <div class="empty-text">왼쪽 하단 [🔍 물건 검색] 버튼을 누르면 됩니다.</div>
       </div>
     `;
     return;
@@ -1592,8 +1594,6 @@ function renderComparables() {
     </div>
     ` : ''}
 
-    ${renderExternalPortalLinks(p)}
-
     <!-- ========== 평형별 시세 분석 (매매/전세/월세) ========== -->
     <div class="grid grid-3 mb-16">
       ${renderAreaAnalysisTable(validSales, '매매', false)}
@@ -1639,6 +1639,74 @@ function renderComparables() {
     </div>
   `;
   drawPriceChart(comps);
+}
+
+// ============================================================
+// VIEW: LISTINGS (매물현황 — 현재 시장 호가)
+// ============================================================
+function renderListings() {
+  const c = document.getElementById('viewContainer');
+  const p = state.properties[state.currentPropertyId];
+  const comps = (state.comparables[p.id] || []);
+  
+  // 거래사례 비교에서 NPL 분석 결과를 미리 보여주기 (요약)
+  const sales = comps.filter(x => x.type === '매매' && (!x.memo || !x.memo.includes('해제')));
+  const jeonse = comps.filter(x => x.type === '전세');
+  const wolse = comps.filter(x => x.type === '월세');
+  const avgAllSales = sales.length ? sales.reduce((s,x) => s+x.price, 0) / sales.length : 0;
+  const avgJeonse = jeonse.length ? jeonse.reduce((s,x) => s+x.price, 0) / jeonse.length : 0;
+  
+  c.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">매물현황 · CURRENT LISTINGS</div>
+      <h1 class="page-title">${p.name} · 현재 시장 매물</h1>
+      <div class="page-sub">네이버 부동산을 통해 현재 시장에 나와 있는 매물 호가를 확인하세요. 실거래가는 02 거래사례 비교 모듈에서 확인됩니다.</div>
+    </div>
+
+    <!-- 실거래가 요약 (매물현황 페이지에서도 빠른 참고용) -->
+    <div class="grid grid-3 mb-16">
+      <div class="stat-card">
+        <div class="stat-label">실거래 평균 매매가</div>
+        <div class="stat-value">${avgAllSales > 0 ? fmt.won(Math.round(avgAllSales)) : '-'}</div>
+        <div class="stat-trend">최근 ${sales.length}건 · 거래사례 모듈 참조</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">실거래 평균 전세가</div>
+        <div class="stat-value">${avgJeonse > 0 ? fmt.won(Math.round(avgJeonse)) : '-'}</div>
+        <div class="stat-trend">최근 ${jeonse.length}건 평균</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">전세·월세 거래</div>
+        <div class="stat-value">${jeonse.length}<span class="stat-unit">·</span>${wolse.length}<span class="stat-unit">건</span></div>
+        <div class="stat-trend">전세 / 월세</div>
+      </div>
+    </div>
+
+    ${renderExternalPortalLinks(p)}
+
+    <!-- 매물현황 활용 가이드 -->
+    <div class="card mb-16">
+      <div class="card-title">💡 매물현황 활용 가이드</div>
+      <div style="font-size: 13px; color: var(--ink-soft); line-height: 1.8;">
+        <div style="margin-bottom: 14px;">
+          <strong style="color: var(--kiwoom-navy); font-size: 14px;">📌 실거래가 vs 매물 호가</strong>
+          <ul style="margin: 8px 0 0 20px; padding: 0;">
+            <li style="margin-bottom: 4px;"><strong>실거래가</strong> (02 거래사례 비교): 이미 거래된 가격 — <span class="text-muted">정확한 시세, 과거 데이터</span></li>
+            <li><strong>매물 호가</strong> (03 매물현황, 이 페이지): 현재 시장에 나와 있는 가격 — <span class="text-muted">현재 시점, 협상 여지 있음</span></li>
+          </ul>
+        </div>
+        <div>
+          <strong style="color: var(--kiwoom-navy); font-size: 14px;">📌 NPL 업무에서의 활용</strong>
+          <ul style="margin: 8px 0 0 20px; padding: 0;">
+            <li style="margin-bottom: 4px;"><strong>NPL 회수 추정</strong>: 실거래가 기준 (02 모듈에서 자동 계산)</li>
+            <li style="margin-bottom: 4px;"><strong>처분 가능성 판단</strong>: 현재 매물 수 = 시장 활성도 (매물 많음 → 처분 용이)</li>
+            <li style="margin-bottom: 4px;"><strong>호가 ≒ 실거래</strong>: 활발한 시장 → 빠른 회수 가능</li>
+            <li><strong>호가 ≫ 실거래</strong>: 시장 침체 또는 매도자 욕심 → 협상 여지 큼</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 // ============================================================
