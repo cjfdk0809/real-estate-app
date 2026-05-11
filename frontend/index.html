@@ -1592,6 +1592,8 @@ function renderComparables() {
     </div>
     ` : ''}
 
+    ${renderExternalPortalLinks(p)}
+
     <!-- ========== 평형별 시세 분석 (매매/전세/월세) ========== -->
     <div class="grid grid-3 mb-16">
       ${renderAreaAnalysisTable(validSales, '매매', false)}
@@ -1637,6 +1639,101 @@ function renderComparables() {
     </div>
   `;
   drawPriceChart(comps);
+}
+
+// ============================================================
+// NPL 분석: 외부 부동산 포털 빠른 검색 링크
+// ============================================================
+function renderExternalPortalLinks(p) {
+  if (!p || !p.name) return '';
+  
+  // 검색어 후보 (단지명 기반)
+  const danjiName = (p.name || '').trim();
+  const q = encodeURIComponent(danjiName);
+  // 주소 기반 검색 (단지명 검색 실패 시)
+  const addrQuery = encodeURIComponent(
+    (p.addrRoad || p.addrLot || '').split(' ').slice(0, 3).join(' ')
+  );
+  
+  // 각 포털 정보
+  const portals = [
+    {
+      name: '네이버 부동산',
+      emoji: '🟢',
+      brand: '#03c75a',
+      url: `https://m.land.naver.com/search/result/${q}`,
+      desc: '실시간 매물 · 사진 풍부 · 시세 분석'
+    },
+    {
+      name: '호갱노노',
+      emoji: '🟠',
+      brand: '#ff7e36',
+      url: `https://hogangnono.com/search/${q}`,
+      desc: '시세 추이 · 학군 · 주변 분석'
+    },
+    {
+      name: '아실 (asil.kr)',
+      emoji: '🔵',
+      brand: '#0075c9',
+      url: `https://asil.kr/search/${q}`,
+      desc: '실거래 · 인구 · 재건축 분석'
+    },
+    {
+      name: '직방',
+      emoji: '🔷',
+      brand: '#ff8a00',
+      url: `https://www.zigbang.com/home/apartment/search?query=${q}`,
+      desc: '매물 · 시세 · 단지 정보'
+    },
+    {
+      name: 'KB부동산',
+      emoji: '🟡',
+      brand: '#ffd61d',
+      url: `https://kbland.kr/`,
+      desc: 'KB 시세 (사이트에서 직접 검색)'
+    },
+    {
+      name: '부동산플래닛',
+      emoji: '🟣',
+      brand: '#7c3aed',
+      url: `https://www.bdsplanet.com/map/search.ytp?searchword=${q}`,
+      desc: '경공매 + 시세 통합 분석'
+    }
+  ];
+  
+  return `
+    <div class="card mb-16 no-print">
+      <div class="card-title">🔗 외부 매물 사이트 빠른 검색 (현재 호가)
+        <span class="text-small text-muted" style="font-weight: 400; font-family: var(--sans);">"${danjiName}" 자동 검색</span>
+      </div>
+      <p class="text-small text-muted mb-12">
+        💡 실거래가는 위의 NPL 분석을 참고하시고, <strong>현재 매물 호가</strong>는 아래 포털에서 확인하세요. 클릭 시 새 창에서 단지 검색 결과가 표시됩니다.
+      </p>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px;">
+        ${portals.map(portal => `
+          <a href="${portal.url}" target="_blank" rel="noopener noreferrer" 
+             style="display: block; padding: 14px 16px; background: white; border: 1px solid var(--line); border-left: 4px solid ${portal.brand}; border-radius: 6px; text-decoration: none; transition: all 0.15s; color: var(--ink);"
+             onmouseover="this.style.background='var(--bg-subtle)'; this.style.borderColor='${portal.brand}'; this.style.transform='translateY(-1px)'; this.style.boxShadow='0 2px 8px rgba(1, 31, 142, 0.08)';"
+             onmouseout="this.style.background='white'; this.style.borderColor='var(--line)'; this.style.borderLeftColor='${portal.brand}'; this.style.transform='translateY(0)'; this.style.boxShadow='none';">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span style="font-size: 16px;">${portal.emoji}</span>
+              <span style="font-weight: 700; font-size: 14px; color: var(--ink);">${portal.name}</span>
+              <span style="margin-left: auto; font-size: 11px; color: var(--ink-muted); font-family: var(--mono);">↗</span>
+            </div>
+            <div class="text-small text-muted" style="margin-top: 6px; line-height: 1.4;">${portal.desc}</div>
+          </a>
+        `).join('')}
+      </div>
+      ${(p.addrRoad || p.addrLot) ? `
+        <div style="margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--line); font-size: 11px; color: var(--ink-muted);">
+          💡 단지명 검색 결과가 정확하지 않다면, 주소로 다시 검색: 
+          <a href="https://m.land.naver.com/search/result/${addrQuery}" target="_blank" rel="noopener noreferrer" style="color: var(--kiwoom-navy); font-weight: 600; text-decoration: underline;">네이버 (주소)</a>
+          · 
+          <a href="https://hogangnono.com/search/${addrQuery}" target="_blank" rel="noopener noreferrer" style="color: var(--kiwoom-navy); font-weight: 600; text-decoration: underline;">호갱노노 (주소)</a>
+        </div>
+      ` : ''}
+    </div>
+  `;
 }
 
 // ============================================================
