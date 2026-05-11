@@ -881,39 +881,32 @@ table { border-collapse: collapse; width: 100%; }
 
 <script>
 // ============================================================
-// PWA: Service Worker 등록 (즉시 업데이트 + 새 SW 자동 새로고침)
+// PWA: Service Worker 자동 해제 (캐시 문제 영구 해결)
 // ============================================================
+// PWA Service Worker가 너무 공격적으로 캐싱하는 문제로 인해
+// 모든 SW를 자동 해제하고 캐시를 비웁니다. 이러면 항상 최신 코드를 가져옵니다.
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js')
-      .then(reg => {
-        console.log('[PWA] Service Worker 등록됨:', reg.scope);
-        // 즉시 업데이트 체크
-        reg.update();
-        // 새 SW가 설치되면 즉시 활성화
-        reg.addEventListener('updatefound', () => {
-          const newSW = reg.installing;
-          if (newSW) {
-            newSW.addEventListener('statechange', () => {
-              if (newSW.state === 'installed' && navigator.serviceWorker.controller) {
-                console.log('[PWA] 새 Service Worker 발견 - 즉시 적용');
-                newSW.postMessage('SKIP_WAITING');
-              }
-            });
-          }
-        });
-      })
-      .catch(err => console.warn('[PWA] Service Worker 등록 실패:', err));
-    
-    // 새 SW가 활성화되면 페이지 한 번 새로고침 (자동 반영)
-    let _refreshing = false;
-    navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (_refreshing) return;
-      _refreshing = true;
-      console.log('[PWA] Controller 변경 - 페이지 새로고침');
-      window.location.reload();
-    });
-  });
+  // 1. 등록된 모든 Service Worker 해제
+  navigator.serviceWorker.getRegistrations().then(regs => {
+    if (regs.length > 0) {
+      console.log('[캐시 영구 해결] Service Worker ' + regs.length + '개 해제 중...');
+      Promise.all(regs.map(reg => reg.unregister())).then(() => {
+        console.log('[캐시 영구 해결] ✅ 모든 Service Worker 해제 완료');
+      });
+    }
+  }).catch(err => console.warn('[캐시 영구 해결] SW 해제 실패:', err));
+  
+  // 2. 모든 브라우저 캐시 자동 삭제
+  if (window.caches) {
+    caches.keys().then(keys => {
+      if (keys.length > 0) {
+        console.log('[캐시 영구 해결] 캐시 ' + keys.length + '개 삭제 중...');
+        return Promise.all(keys.map(key => caches.delete(key)));
+      }
+    }).then(() => {
+      if (window.caches) console.log('[캐시 영구 해결] ✅ 브라우저 캐시 삭제 완료');
+    }).catch(err => console.warn('[캐시 영구 해결] 캐시 삭제 실패:', err));
+  }
 }
 
 // ============================================================
