@@ -731,8 +731,8 @@ table { border-collapse: collapse; width: 100%; }
       <div id="kaptSuggestions" style="max-height: 280px; overflow-y: auto;"></div>
       
       <div style="margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--line);">
-        <div style="font-size: 10px; color: var(--ink-muted); margin-bottom: 4px;">또는 즐겨찾기 단지 (오프라인 DB)</div>
-        <input type="text" id="danjiSearch" placeholder="예: 반포힐스테이트, 감일한라비발디..."
+        <div style="font-size: 10px; color: var(--ink-muted); margin-bottom: 4px;">⚡ 단지명으로 직접 검색 (K-apt 전국 22,147개 단지 + 즐겨찾기)</div>
+        <input type="text" id="danjiSearch" placeholder="예: 산호베스티움, 디에이치아너힐즈, 감일한라비발디..."
           style="width: 100%; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 5px; font-size: 12px; background: white;"
           oninput="searchDanji(this.value)" onfocus="searchDanji(this.value)">
         <div id="danjiSuggestions" style="margin-top: 4px; max-height: 150px; overflow-y: auto;"></div>
@@ -2355,28 +2355,113 @@ function renderReport() {
 // ============================================================
 // 단지 자동입력 (Autofill from DANJI_DB)
 // ============================================================
-function searchDanji(query) {
+async function searchDanji(query) {
   const suggestionsBox = document.getElementById('danjiSuggestions');
   if (!query || query.trim().length === 0) {
-    // 빈 입력 시 전체 목록 표시
+    // 빈 입력 시 즐겨찾기 단지 전체 목록 표시
     const allKeys = Object.keys(DANJI_DB);
     suggestionsBox.innerHTML = allKeys.length === 0 ? '' : `
-      <div style="font-size: 10px; color: var(--ink-muted); padding: 6px 4px; letter-spacing: 0.05em;">전체 단지 (${allKeys.length}건)</div>
+      <div style="font-size: 10px; color: var(--ink-muted); padding: 6px 4px; letter-spacing: 0.05em;">즐겨찾기 단지 (${allKeys.length}건)</div>
       ${allKeys.map(key => renderDanjiSuggestion(key)).join('')}
     `;
     return;
   }
+  
   const q = query.toLowerCase().replace(/\s/g, '');
-  const matches = Object.keys(DANJI_DB).filter(key => {
+  
+  // 1. 오프라인 즐겨찾기 DB 검색 (즉시)
+  const localMatches = Object.keys(DANJI_DB).filter(key => {
     const danji = DANJI_DB[key];
     const haystack = (key + danji.name + (danji.addrRoad || '') + (danji.addrLot || '')).toLowerCase().replace(/\s/g, '');
     return haystack.includes(q);
   });
-  if (matches.length === 0) {
-    suggestionsBox.innerHTML = `<div style="padding: 12px; font-size: 12px; color: var(--ink-muted); text-align: center;">일치하는 단지가 없습니다. 직접 입력하시거나 코드의 DANJI_DB에 추가하세요.</div>`;
-  } else {
-    suggestionsBox.innerHTML = matches.map(key => renderDanjiSuggestion(key)).join('');
+  
+  // 먼저 오프라인 결과만 즉시 표시 (로딩 중 K-apt 결과 추가)
+  let html = '';
+  if (localMatches.length > 0) {
+    html += `<div style="font-size: 10px; color: var(--green); padding: 6px 4px; font-weight: 600;">📌 즐겨찾기 단지 (${localMatches.length}건)</div>`;
+    html += localMatches.map(key => renderDanjiSuggestion(key)).join('');
   }
+  html += `<div id="kaptSearchLoading" style="padding: 8px; font-size: 11px; color: var(--ink-muted); text-align: center;">⏳ K-apt 전국 22,147개 단지 검색 중...</div>`;
+  suggestionsBox.innerHTML = html;
+  
+  // 2. K-apt API 검색 (전국 단지)
+  if (query.length < 2) return;
+  
+  try {
+    const r = await fetch(`${BACKEND_URL}/api/search/apt?q=${encodeURIComponent(query)}&limit=10`);
+    const d = await r.json();
+    const kaptResults = (d && d.items) ? d.items.slice(0, 10) : [];
+    
+    let newHtml = '';
+    if (localMatches.length > 0) {
+      newHtml += `<div style="font-size: 10px; color: var(--green); padding: 6px 4px; font-weight: 600;">📌 즐겨찾기 단지 (${localMatches.length}건)</div>`;
+      newHtml += localMatches.map(key => renderDanjiSuggestion(key)).join('');
+    }
+    if (kaptResults.length > 0) {
+      newHtml += `<div style="font-size: 10px; color: var(--kiwoom-navy); padding: 8px 4px 6px; font-weight: 700; ${localMatches.length > 0 ? 'border-top: 1px dashed var(--line); margin-top: 6px;' : ''}">🏢 K-apt 전국 단지 (${kaptResults.length}건)</div>`;
+      newHtml += kaptResults.map(apt => renderKaptAptSuggestion(apt)).join('');
+    }
+    if (!newHtml || (localMatches.length === 0 && kaptResults.length === 0)) {
+      newHtml = `<div style="padding: 12px; font-size: 12px; color: var(--ink-muted); text-align: center;">일치하는 단지가 없습니다. 단지명을 다르게 입력해보세요. (예: '산호베스티움', '아너힐즈')</div>`;
+    }
+    suggestionsBox.innerHTML = newHtml;
+  } catch (e) {
+    // K-apt 검색 실패해도 로컬 결과는 유지
+    const loadingDiv = document.getElementById('kaptSearchLoading');
+    if (loadingDiv) {
+      loadingDiv.innerHTML = `<span style="color: var(--warn);">⚠️ K-apt 검색 실패 (인터넷 연결 확인)</span>`;
+    }
+  }
+}
+
+function renderKaptAptSuggestion(apt) {
+  const aptJson = JSON.stringify(apt).replace(/'/g, "\\'").replace(/"/g, '&quot;');
+  return `
+    <div onclick='fillFromKaptApt(${JSON.stringify(apt)})' style="padding: 10px 12px; border-radius: 5px; cursor: pointer; transition: all 0.1s; border: 1px solid transparent; margin: 2px 0;"
+      onmouseover="this.style.background='var(--kiwoom-navy-soft)'; this.style.borderColor='var(--kiwoom-navy)'"
+      onmouseout="this.style.background='transparent'; this.style.borderColor='transparent'">
+      <div style="display: flex; align-items: center; gap: 6px;">
+        <span style="background: var(--kiwoom-navy); color: white; padding: 2px 6px; border-radius: 3px; font-size: 9px; font-weight: 700; letter-spacing: 0.05em;">K-APT</span>
+        <span style="font-weight: 600; font-size: 13px; color: var(--ink);">${apt.name || ''}</span>
+      </div>
+      <div style="font-size: 11px; color: var(--ink-muted); margin-top: 4px;">
+        ${apt.sigungu || ''} ${apt.dong || ''}
+        ${apt.kapt_code ? `<span style="color: var(--ink-muted); font-family: var(--mono); margin-left: 6px;">[${apt.kapt_code}]</span>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+function fillFromKaptApt(apt) {
+  const form = document.getElementById('propertyForm');
+  // 단지명·주소 자동 입력
+  if (form.elements.name) form.elements.name.value = apt.name || '';
+  
+  // 지번주소: 시군구 + 동 (예: "경상남도 창원시 마산합포구 산호동")
+  const addrParts = [apt.sigungu, apt.dong].filter(x => x).join(' ');
+  if (form.elements.addrLot && addrParts) form.elements.addrLot.value = addrParts;
+  
+  // 메모에 K-apt 단지코드 기록
+  if (apt.kapt_code && form.elements.notes) {
+    const existingNote = form.elements.notes.value || '';
+    if (!existingNote.includes('K-apt:')) {
+      form.elements.notes.value = (existingNote ? existingNote + '\n' : '') + `K-apt 단지코드: ${apt.kapt_code}`;
+    }
+  }
+  
+  document.getElementById('danjiSearch').value = apt.name || '';
+  const suggestionsBox = document.getElementById('danjiSuggestions');
+  suggestionsBox.innerHTML = `
+    <div style="padding: 14px 16px; background: linear-gradient(135deg, #e6eaf5 0%, #c8d2ed 100%); border-radius: 8px; border-left: 4px solid var(--kiwoom-navy); margin-top: 8px;">
+      <div style="font-size: 13px; color: var(--kiwoom-navy); font-weight: 700; margin-bottom: 6px;">✅ ${apt.name} 자동 입력 완료!</div>
+      <div style="font-size: 11px; color: var(--ink-soft); line-height: 1.6;">
+        📍 <strong>주소</strong>: ${addrParts || '-'}<br>
+        ${apt.kapt_code ? `🏷️ <strong>K-apt 코드</strong>: ${apt.kapt_code}<br>` : ''}
+        💡 <strong>다음 입력</strong>: 도로명주소, 동·호, 전용면적, 해당 층, 준공일, 세대수 등은 등기부등본·건축물대장에서 확인하여 직접 입력해주세요.
+      </div>
+    </div>
+  `;
 }
 
 function renderDanjiSuggestion(key) {
