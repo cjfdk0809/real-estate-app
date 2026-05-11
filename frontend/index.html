@@ -1535,6 +1535,15 @@ function renderComparables() {
   const minSales = sameAreaSales.length ? Math.min(...sameAreaSales.map(x => x.price)) : 0;
   const maxSales = sameAreaSales.length ? Math.max(...sameAreaSales.map(x => x.price)) : 0;
 
+  // ============ NPL 분석 계산 (해제 거래 제외) ============
+  const validSales = sales.filter(x => !x.memo || !x.memo.includes('해제'));
+  const avgAllSales = validSales.length ? validSales.reduce((s,x) => s+x.price, 0) / validSales.length : 0;
+  const avgJeonse = jeonse.length ? jeonse.reduce((s,x) => s+x.price, 0) / jeonse.length : 0;
+  const rentRatio = (avgAllSales > 0 && avgJeonse > 0) ? (avgJeonse / avgAllSales * 100) : 0;
+  const nplLower = avgAllSales * 0.85;
+  const nplMedian = avgAllSales * 0.90;
+  const nplUpper = avgAllSales * 0.95;
+
   c.innerHTML = `
     <div class="page-head">
       <div class="page-eyebrow">거래사례 비교 · Comparable Sales</div>
@@ -1569,6 +1578,27 @@ function renderComparables() {
       <div style="height: 280px;"><canvas id="priceChart"></canvas></div>
     </div>
 
+    ${avgAllSales > 0 ? `
+    <!-- ========== NPL 회수 가능 금액 추정 ========== -->
+    <div style="background: linear-gradient(135deg, #fff8e1 0%, #ffecb3 100%); border: 1px solid #ffca28; border-left: 4px solid #f57c00; border-radius: 8px; padding: 22px 26px; margin-bottom: 16px;">
+      <div style="font-size: 11px; letter-spacing: 0.18em; color: #5d4037; text-transform: uppercase; font-weight: 700; margin-bottom: 8px;">💰 NPL 회수 가능 금액 추정 · NPL Recovery Estimate</div>
+      <div style="font-family: var(--mono); font-size: 30px; font-weight: 800; color: #5d4037; line-height: 1.2; letter-spacing: -0.02em;">${fmt.won(Math.round(nplMedian))}</div>
+      <div style="font-size: 13px; color: #6d4c41; margin-top: 6px; font-family: var(--mono);">회수 범위: ${fmt.won(Math.round(nplLower))} ~ ${fmt.won(Math.round(nplUpper))}</div>
+      <div style="font-size: 12px; color: #5d4037; margin-top: 14px; line-height: 1.7;">
+        📌 평균 매매가 <strong>${fmt.won(Math.round(avgAllSales))}</strong>의 85~95% 추정 (시장 변동성·처분비용 반영)<br>
+        ${avgJeonse > 0 ? `💵 전세 보증금 회수 시 약 <strong>${fmt.won(Math.round(avgJeonse))}</strong> 확보 가능 (전세가율 <strong>${rentRatio.toFixed(1)}%</strong>)<br>` : ''}
+        ${validSales.length < 5 ? `⚠️ 매매 거래 ${validSales.length}건으로 추정 신뢰도 낮음. 추가 사례 수집 권장.` : `✅ ${validSales.length}건 매매 거래 기반 추정 (신뢰도 양호)`}
+      </div>
+    </div>
+    ` : ''}
+
+    <!-- ========== 평형별 시세 분석 (매매/전세/월세) ========== -->
+    <div class="grid grid-3 mb-16">
+      ${renderAreaAnalysisTable(validSales, '매매', false)}
+      ${renderAreaAnalysisTable(jeonse, '전세', false)}
+      ${renderAreaAnalysisTable(wolse, '월세', true)}
+    </div>
+
     <div class="card">
       <div class="card-title">거래사례 목록 
         <div class="btn-row no-print">
@@ -1581,11 +1611,14 @@ function renderComparables() {
         <thead><tr>
           <th>거래일</th><th>유형</th><th>단지</th><th>동·호</th>
           <th class="text-right">전용면적</th><th class="text-right">층</th>
-          <th class="text-right">금액</th><th class="text-right">평당가</th><th>비고</th><th class="no-print"></th>
+          <th class="text-right">금액 / 월세</th><th class="text-right">평당가</th><th>비고</th><th class="no-print"></th>
         </tr></thead>
         <tbody>
           ${comps.map(x => {
             const pyongPrice = x.area ? Math.round(x.price / (x.area / 3.305785)) : null;
+            const priceCell = x.type === '월세' && x.monthly
+              ? `<div>보증 <strong>${fmt.won(x.price)}</strong></div><div class="text-small" style="color:#a8884a;">월 ${x.monthly.toLocaleString()}만</div>`
+              : `<strong>${fmt.won(x.price)}</strong>${x.monthly ? `<br><span class="text-small text-muted">월 ${x.monthly}만</span>` : ''}`;
             return `<tr>
               <td class="num">${fmt.date(x.date)}</td>
               <td><span class="badge badge-${x.type}">${x.type}</span></td>
@@ -1593,7 +1626,7 @@ function renderComparables() {
               <td class="text-small">${x.building || ''} ${x.unit || ''}</td>
               <td class="num">${x.area || '-'}㎡</td>
               <td class="num">${x.floor || '-'}</td>
-              <td class="price">${fmt.won(x.price)}${x.monthly ? `<br><span class="text-small text-muted">월 ${x.monthly}</span>` : ''}</td>
+              <td class="price">${priceCell}</td>
               <td class="num text-small">${pyongPrice ? pyongPrice.toLocaleString() + '만/평' : '-'}</td>
               <td class="text-small text-muted">${x.memo || ''}</td>
               <td class="no-print"><span class="tbl-action" onclick="editComparable('${x.id}')">편집</span><span class="tbl-action" onclick="deleteComparable('${x.id}')">삭제</span></td>
@@ -1604,6 +1637,69 @@ function renderComparables() {
     </div>
   `;
   drawPriceChart(comps);
+}
+
+// ============================================================
+// NPL 분석: 평형별 시세 분석 테이블
+// ============================================================
+function renderAreaAnalysisTable(items, label, isWolse) {
+  if (items.length === 0) {
+    return `<div class="card">
+      <div class="card-title" style="font-size: 13px;">📐 평형별 ${label}</div>
+      <div class="empty" style="padding: 30px 10px;"><div class="empty-text text-small">${label} 거래 없음</div></div>
+    </div>`;
+  }
+  
+  // 5㎡ 단위 그룹화
+  const groups = {};
+  items.forEach(t => {
+    if (!t.area) return;
+    const bucket = Math.floor(t.area / 5) * 5;
+    const key = `${bucket}~${bucket+5}㎡`;
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(t);
+  });
+  
+  const sortedKeys = Object.keys(groups).sort((a,b) => parseInt(a) - parseInt(b));
+  
+  return `<div class="card">
+    <div class="card-title" style="font-size: 13px;">📐 평형별 ${label}${isWolse ? ' (보증/월세)' : ''}</div>
+    <table class="tbl" style="font-size: 11px;">
+      <thead>
+        <tr>
+          <th>평형</th>
+          <th class="text-right">건수</th>
+          <th class="text-right">${isWolse ? '평균보증' : '평균가'}</th>
+          ${isWolse ? '<th class="text-right">평균월세</th>' : '<th class="text-right">최저~최고</th>'}
+        </tr>
+      </thead>
+      <tbody>
+        ${sortedKeys.map(k => {
+          const arr = groups[k];
+          const avgPrice = arr.reduce((s,x) => s+x.price, 0) / arr.length;
+          if (isWolse) {
+            const monthlyArr = arr.filter(x => x.monthly && x.monthly > 0);
+            const avgMonthly = monthlyArr.length ? monthlyArr.reduce((s,x) => s+x.monthly, 0) / monthlyArr.length : 0;
+            return `<tr>
+              <td><strong>${k}</strong></td>
+              <td class="num">${arr.length}</td>
+              <td class="price">${fmt.won(Math.round(avgPrice))}</td>
+              <td class="price" style="color:#a8884a;">${avgMonthly > 0 ? Math.round(avgMonthly).toLocaleString() + '만' : '-'}</td>
+            </tr>`;
+          } else {
+            const min = Math.min(...arr.map(x=>x.price));
+            const max = Math.max(...arr.map(x=>x.price));
+            return `<tr>
+              <td><strong>${k}</strong></td>
+              <td class="num">${arr.length}</td>
+              <td class="price">${fmt.won(Math.round(avgPrice))}</td>
+              <td class="num text-small text-muted">${fmt.won(min)}<br>~ ${fmt.won(max)}</td>
+            </tr>`;
+          }
+        }).join('')}
+      </tbody>
+    </table>
+  </div>`;
 }
 
 function drawPriceChart(comps) {
