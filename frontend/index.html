@@ -1334,11 +1334,35 @@ function renderPropertyList() {
     return;
   }
   list.innerHTML = props.map(p => `
-    <div class="property-item ${p.id === state.currentPropertyId ? 'active' : ''}" onclick="selectProperty('${p.id}')">
-      <div class="property-item-name">${p.name}</div>
-      <div class="property-item-addr">${p.building || ''} ${p.unit || ''} · ${p.addrLot || p.addrRoad || ''}</div>
+    <div class="property-item ${p.id === state.currentPropertyId ? 'active' : ''}" style="position: relative;">
+      <div onclick="selectProperty('${p.id}')" style="cursor: pointer; padding-right: 24px;">
+        <div class="property-item-name">${p.name}</div>
+        <div class="property-item-addr">${p.building || ''} ${p.unit || ''} · ${p.addrLot || p.addrRoad || ''}</div>
+      </div>
+      <button onclick="deletePropertyFromList(event, '${p.id}', '${(p.name || '').replace(/'/g, "\\'")}')"
+        title="이 물건 삭제"
+        style="position: absolute; top: 8px; right: 8px; width: 22px; height: 22px; border-radius: 4px; background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.65); border: none; cursor: pointer; font-size: 14px; line-height: 1; padding: 0; transition: all 0.15s;"
+        onmouseover="this.style.background='rgba(255,80,80,0.85)'; this.style.color='white';"
+        onmouseout="this.style.background='rgba(255,255,255,0.1)'; this.style.color='rgba(255,255,255,0.65)';">×</button>
     </div>
   `).join('');
+}
+
+async function deletePropertyFromList(event, id, name) {
+  event.stopPropagation();  // 클릭 이벤트가 selectProperty로 전달되지 않게
+  if (!confirm(`"${name}" 물건을 삭제하시겠습니까?\n\n⚠️ 이 물건의 거래사례·경매·권리 데이터가 모두 함께 삭제됩니다.`)) return;
+  delete state.properties[id];
+  delete state.comparables[id];
+  delete state.auctions[id];
+  delete state.rights[id];
+  if (state.pricing) delete state.pricing[id];
+  // 삭제된 게 현재 선택된 물건이면, 다른 물건으로 전환
+  if (state.currentPropertyId === id) {
+    state.currentPropertyId = Object.keys(state.properties)[0] || null;
+  }
+  await saveState();
+  renderPropertyList();
+  renderView();
 }
 
 function selectProperty(id) {
@@ -1436,7 +1460,6 @@ function renderOverview() {
         <div class="page-sub">${p.building || ''} ${p.unit || ''} · ${p.addrRoad || p.addrLot || ''}</div>
       </div>
       <div class="btn-row no-print">
-        <button class="btn btn-ghost" onclick="duplicateProperty('${p.id}')">＋ 복제</button>
         <button class="btn btn-primary" onclick="openPropertyModal('${p.id}')">✎ 본건 정보 편집</button>
       </div>
     </div>
@@ -1717,15 +1740,27 @@ function renderExternalPortalLinks(p) {
   
   // 검색어 후보
   const danjiName = (p.name || '').trim();
+  // K-apt 정식명일 가능성 있는 "아파트" 접미사 제거 (예: 산호베스티움아파트 → 산호베스티움)
+  const danjiCore = danjiName.replace(/아파트$/, '').trim();
+  // 공백 제거 버전 (네이버 부동산 검색용)
   const danjiNoSpace = danjiName.replace(/\s/g, '');
+  const danjiCoreNoSpace = danjiCore.replace(/\s/g, '');
+  
+  // URL 인코딩
   const q = encodeURIComponent(danjiName);
+  const qCore = encodeURIComponent(danjiCore);
   const qNoSpace = encodeURIComponent(danjiNoSpace);
+  const qCoreNoSpace = encodeURIComponent(danjiCoreNoSpace);
   
   // 주소 정보
   const addr = p.addrRoad || p.addrLot || '';
-  // 시도 + 시군구 + 동까지만 (예: "서울특별시 강남구 개포동")
-  const addrShort = addr.split(' ').slice(0, 3).join(' ');
-  const qAddrDanji = encodeURIComponent(`${addrShort} ${danjiName}`.trim());
+  // 시도+시군구만 추출 (예: "경상남도 창원시 마산합포구")
+  const addrParts = addr.split(' ');
+  const sigungu = addrParts.slice(0, 3).join(' ');  // 시도+시(군)+구
+  // 시군구의 마지막 단위 (예: "마산합포구" 또는 "강남구")
+  const sigunguShort = addrParts.find(p => /(구|시|군)$/.test(p)) || '';
+  const qDanjiSigungu = encodeURIComponent(`${sigunguShort} ${danjiCore}`.trim());
+  const qFullAddr = encodeURIComponent(`${sigungu} ${danjiCore}`.trim());
   
   return `
     <div class="card mb-16 no-print">
@@ -1737,7 +1772,7 @@ function renderExternalPortalLinks(p) {
         <span class="text-small text-muted" style="font-weight: 400; font-family: var(--sans);">"${danjiName}"</span>
       </div>
       <p class="text-small text-muted mb-12">
-        💡 실거래가는 위 NPL 분석을 참고, <strong>현재 매물 호가</strong>는 아래 네이버 검색으로 확인하세요. 단지명 검색이 부정확하면 <strong>주소 검색</strong>을 시도하세요.
+        💡 <strong>"검색 결과 없음"</strong>이 나오면 아래 다른 방식 버튼을 시도하세요. 같은 단지도 등록명이 다를 수 있어요.
       </p>
       
       <!-- 메인 추천 버튼: 네이버 통합검색 -->
@@ -1749,54 +1784,87 @@ function renderExternalPortalLinks(p) {
         <div style="display: flex; align-items: center; justify-content: space-between;">
           <div>
             <div style="font-size: 16px; font-weight: 700; margin-bottom: 4px;">🟢 네이버 통합검색 (가장 풍부한 정보) ⭐</div>
-            <div style="font-size: 12px; opacity: 0.95;">"${danjiName} 매물 호가" — 네이버 부동산 + 호갱노노 + 블로그 후기 + 뉴스 한번에</div>
+            <div style="font-size: 12px; opacity: 0.95;">"${danjiName} 매물 호가" — 네이버 부동산 + 블로그 후기 + 뉴스 한번에</div>
           </div>
           <span style="font-size: 18px;">↗</span>
         </div>
       </a>
       
-      <!-- 보조 옵션 2개 -->
-      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
-        
-        <!-- 네이버 부동산 직접 (단지명 클립보드 복사) -->
-        <a href="https://m.land.naver.com/" 
-           target="_blank" rel="noopener noreferrer"
-           onclick="navigator.clipboard.writeText('${danjiNoSpace}').then(()=>{this.querySelector('.copy-status').textContent='✓ 단지명 복사됨! 사이트에서 Ctrl+V';}).catch(()=>{});"
-           style="display: block; padding: 14px 16px; background: white; border: 2px solid #03c75a; border-radius: 8px; text-decoration: none; color: var(--ink); transition: all 0.15s;"
-           onmouseover="this.style.background='#f0fff4'; this.style.transform='translateY(-1px)';"
-           onmouseout="this.style.background='white'; this.style.transform='translateY(0)';">
-          <div style="display: flex; align-items: center; justify-content: space-between;">
-            <div style="font-weight: 700; font-size: 14px; color: #03c75a;">📋 네이버 부동산 (단지명 복사 + 이동)</div>
-            <span style="font-size: 12px; color: var(--ink-muted);">↗</span>
-          </div>
-          <div class="copy-status" style="font-size: 11px; color: var(--ink-muted); margin-top: 6px;">클릭 시 단지명 복사 → 검색창에 Ctrl+V</div>
-        </a>
-        
-        <!-- 네이버 지도 -->
-        <a href="https://map.naver.com/p/search/${q}" 
-           target="_blank" rel="noopener noreferrer"
-           style="display: block; padding: 14px 16px; background: white; border: 2px solid #03c75a; border-radius: 8px; text-decoration: none; color: var(--ink); transition: all 0.15s;"
-           onmouseover="this.style.background='#f0fff4'; this.style.transform='translateY(-1px)';"
-           onmouseout="this.style.background='white'; this.style.transform='translateY(0)';">
-          <div style="display: flex; align-items: center; justify-content: space-between;">
-            <div style="font-weight: 700; font-size: 14px; color: #03c75a;">🗺️ 네이버 지도 (위치 + 매물)</div>
-            <span style="font-size: 12px; color: var(--ink-muted);">↗</span>
-          </div>
-          <div style="font-size: 11px; color: var(--ink-muted); margin-top: 6px;">지도에서 정확한 위치 + 주변 매물 표시</div>
-        </a>
+      <!-- 네이버 부동산 직접 검색 (여러 방식 시도) -->
+      <div style="background: var(--bg-subtle); border-radius: 8px; padding: 12px 14px; margin-bottom: 12px;">
+        <div style="font-size: 11px; font-weight: 700; color: var(--ink-soft); margin-bottom: 8px; letter-spacing: 0.05em;">
+          🏢 네이버 부동산에서 단지 직접 검색 — 안 나오면 다음 옵션을 시도
+        </div>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px;">
+          
+          <!-- 시도 1: 정확한 단지명 (공백 제거) -->
+          <a href="https://m.land.naver.com/search/result/${qCoreNoSpace}" 
+             target="_blank" rel="noopener noreferrer"
+             style="display: block; padding: 10px 12px; background: white; border: 1px solid #03c75a; border-radius: 6px; text-decoration: none; color: var(--ink); transition: all 0.15s; text-align: center;"
+             onmouseover="this.style.background='#03c75a'; this.style.color='white';"
+             onmouseout="this.style.background='white'; this.style.color='var(--ink)';">
+            <div style="font-weight: 700; font-size: 12px;">방식 1: 단지명</div>
+            <div style="font-size: 10px; opacity: 0.8; margin-top: 3px;">${danjiCoreNoSpace}</div>
+          </a>
+          
+          ${sigunguShort ? `
+          <!-- 시도 2: 시군구 + 단지명 -->
+          <a href="https://m.land.naver.com/search/result/${qDanjiSigungu}" 
+             target="_blank" rel="noopener noreferrer"
+             style="display: block; padding: 10px 12px; background: white; border: 1px solid #03c75a; border-radius: 6px; text-decoration: none; color: var(--ink); transition: all 0.15s; text-align: center;"
+             onmouseover="this.style.background='#03c75a'; this.style.color='white';"
+             onmouseout="this.style.background='white'; this.style.color='var(--ink)';">
+            <div style="font-weight: 700; font-size: 12px;">방식 2: 시군구+단지</div>
+            <div style="font-size: 10px; opacity: 0.8; margin-top: 3px;">${sigunguShort} ${danjiCore}</div>
+          </a>
+          ` : ''}
+          
+          ${sigungu ? `
+          <!-- 시도 3: 전체 주소 + 단지명 -->
+          <a href="https://m.land.naver.com/search/result/${qFullAddr}" 
+             target="_blank" rel="noopener noreferrer"
+             style="display: block; padding: 10px 12px; background: white; border: 1px solid #03c75a; border-radius: 6px; text-decoration: none; color: var(--ink); transition: all 0.15s; text-align: center;"
+             onmouseover="this.style.background='#03c75a'; this.style.color='white';"
+             onmouseout="this.style.background='white'; this.style.color='var(--ink)';">
+            <div style="font-weight: 700; font-size: 12px;">방식 3: 전체주소+단지</div>
+            <div style="font-size: 10px; opacity: 0.8; margin-top: 3px;">${sigungu.slice(0, 15)}...</div>
+          </a>
+          ` : ''}
+          
+          <!-- 시도 4: 네이버 부동산 메인 + 단지명 클립보드 복사 -->
+          <a href="https://m.land.naver.com/" 
+             target="_blank" rel="noopener noreferrer"
+             onclick="navigator.clipboard.writeText('${danjiCoreNoSpace}').then(()=>{}).catch(()=>{});"
+             style="display: block; padding: 10px 12px; background: white; border: 1px solid #03c75a; border-radius: 6px; text-decoration: none; color: var(--ink); transition: all 0.15s; text-align: center;"
+             onmouseover="this.style.background='#03c75a'; this.style.color='white';"
+             onmouseout="this.style.background='white'; this.style.color='var(--ink)';">
+            <div style="font-weight: 700; font-size: 12px;">📋 메인+복사</div>
+            <div style="font-size: 10px; opacity: 0.8; margin-top: 3px;">단지명 복사→Ctrl+V</div>
+          </a>
+        </div>
       </div>
       
-      ${addrShort ? `
-      <!-- 주소로 검색 (대체 옵션) -->
-      <div style="margin-top: 12px; padding: 10px 14px; background: #f5f9f5; border-left: 3px solid #03c75a; border-radius: 6px; font-size: 12px; color: var(--ink-soft); line-height: 1.6;">
-        💡 단지명 검색 결과가 부정확하면 → 
-        <a href="https://search.naver.com/search.naver?query=${qAddrDanji}+아파트+매매" 
-           target="_blank" rel="noopener noreferrer" 
-           style="color: #03c75a; font-weight: 700; text-decoration: underline;">
-          📍 주소로 다시 검색 ("${addrShort}")
-        </a>
+      <!-- 보조 옵션: 네이버 지도 -->
+      <a href="https://map.naver.com/p/search/${qDanjiSigungu || q}" 
+         target="_blank" rel="noopener noreferrer"
+         style="display: block; padding: 12px 16px; background: white; border: 2px solid #03c75a; border-radius: 8px; text-decoration: none; color: var(--ink); transition: all 0.15s;"
+         onmouseover="this.style.background='#f0fff4'; this.style.transform='translateY(-1px)';"
+         onmouseout="this.style.background='white'; this.style.transform='translateY(0)';">
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+          <div>
+            <div style="font-weight: 700; font-size: 14px; color: #03c75a;">🗺️ 네이버 지도 (위치 + 매물)</div>
+            <div style="font-size: 11px; color: var(--ink-muted); margin-top: 4px;">"${sigunguShort} ${danjiCore}" — 지도에 단지 표시 + 매물 정보</div>
+          </div>
+          <span style="font-size: 14px; color: var(--ink-muted);">↗</span>
+        </div>
+      </a>
+      
+      <!-- 도움말 -->
+      <div style="margin-top: 12px; padding: 10px 12px; background: #fff8e1; border-radius: 6px; border-left: 3px solid #ffb300; font-size: 11px; color: #5d4037; line-height: 1.6;">
+        💡 <strong>네이버 부동산은 정확한 단지명만 인식</strong>합니다. 
+        K-apt 정식 명칭(예: "산호베스티움아파트")이나 약칭(예: "산호베스티움")을 시도하세요.
+        ${sigunguShort ? `<br>💡 결과 없으면 <strong>"${sigunguShort} ${danjiCore}"</strong> 방식으로 검색하면 더 정확합니다.` : ''}
       </div>
-      ` : ''}
     </div>
   `;
 }
