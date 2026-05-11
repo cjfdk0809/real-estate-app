@@ -374,7 +374,7 @@ def health():
             'url_set': bool(SUPABASE_URL),
             'key_set': bool(SUPABASE_KEY),
         },
-        'version': 'v2.8-jibun',
+        'version': 'v2.9-area',
     })
 
 
@@ -1899,8 +1899,18 @@ tbody tr.target-jibun:hover { background: #fff3c4; }
 
       <!-- 평형별 분석 -->
       <div class="table-card">
-        <h3>📐 평형별 시세 분석</h3>
-        <div id="area-grid" class="area-grid"></div>
+        <h3>📐 평형별 시세 분석 — 매매</h3>
+        <div id="area-grid-trade" class="area-grid"></div>
+      </div>
+
+      <div class="table-card">
+        <h3>📐 평형별 시세 분석 — 전세</h3>
+        <div id="area-grid-jeonse" class="area-grid"></div>
+      </div>
+
+      <div class="table-card">
+        <h3>📐 평형별 시세 분석 — 월세 <span style="font-size:12px; color:#6e6e73; font-weight:400;">(보증금 / 월세금액)</span></h3>
+        <div id="area-grid-wolse" class="area-grid"></div>
       </div>
 
       <!-- 거래 상세 내역 -->
@@ -1925,7 +1935,8 @@ tbody tr.target-jibun:hover { background: #fff3c4; }
                 <th data-sort="building">동</th>
                 <th data-sort="floor">층</th>
                 <th data-sort="area">면적(㎡)</th>
-                <th data-sort="price">가격(만원)</th>
+                <th data-sort="price">보증금/매매가<br>(만원)</th>
+                <th data-sort="monthly">월세<br>(만원)</th>
               </tr>
             </thead>
             <tbody id="trans-tbody"></tbody>
@@ -2359,11 +2370,11 @@ function renderAnalysis() {
     document.getElementById('npl-desc').textContent = '12개월간 유효한 매매 거래가 없어 회수 금액 추정이 불가합니다.';
   }
   
-  // 차트
+  // 차트 (매매만)
   renderChart(validTrades);
   
-  // 평형별 분석
-  renderAreaAnalysis(validTrades);
+  // 평형별 분석 (매매/전세/월세 모두)
+  renderAreaAnalysis(items);
   
   // 거래 내역 표
   renderTable();
@@ -2460,21 +2471,38 @@ function renderChart(trades) {
 }
 
 // ============ 평형별 분석 ============
-function renderAreaAnalysis(trades) {
-  // 평형 그룹 (5㎡ 단위)
+function renderAreaAnalysis(items) {
+  // 매매/전세/월세 분리
+  const trades = items.filter(x => x.type === '매매' && (!x.memo || !x.memo.includes('해제')));
+  const jeonse = items.filter(x => x.type === '전세');
+  const wolse = items.filter(x => x.type === '월세');
+  
+  renderAreaGridSimple('area-grid-trade', trades, '매매');
+  renderAreaGridSimple('area-grid-jeonse', jeonse, '전세');
+  renderAreaGridWolse('area-grid-wolse', wolse);
+}
+
+function groupByArea(items) {
+  // 5㎡ 단위 그룹화
   const groups = {};
-  trades.forEach(t => {
-    const bucket = Math.floor(t.area / 5) * 5;  // 5㎡ 단위
+  items.forEach(t => {
+    if (!t.area) return;
+    const bucket = Math.floor(t.area / 5) * 5;
     const key = `${bucket}~${bucket+5}㎡`;
     if (!groups[key]) groups[key] = [];
     groups[key].push(t);
   });
-  
+  return groups;
+}
+
+function renderAreaGridSimple(elemId, items, label) {
+  // 매매/전세용 - 단일 가격
+  const grid = document.getElementById(elemId);
+  const groups = groupByArea(items);
   const sortedKeys = Object.keys(groups).sort((a,b) => parseInt(a) - parseInt(b));
-  const grid = document.getElementById('area-grid');
   
   if (sortedKeys.length === 0) {
-    grid.innerHTML = '<div style="padding:20px; color:#6e6e73; text-align:center;">매매 거래 데이터가 없습니다.</div>';
+    grid.innerHTML = `<div style="padding:20px; color:#6e6e73; text-align:center; grid-column: 1 / -1;">${label} 거래 데이터가 없습니다.</div>`;
     return;
   }
   
@@ -2487,6 +2515,39 @@ function renderAreaAnalysis(trades) {
       <div class="area">${k}</div>
       <div class="price">${formatPrice(avg)}</div>
       <div class="meta">${arr.length}건 / 최저 ${formatPrice(min)} ~ 최고 ${formatPrice(max)}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderAreaGridWolse(elemId, items) {
+  // 월세용 - 보증금 + 월세금액 모두 표시
+  const grid = document.getElementById(elemId);
+  const groups = groupByArea(items);
+  const sortedKeys = Object.keys(groups).sort((a,b) => parseInt(a) - parseInt(b));
+  
+  if (sortedKeys.length === 0) {
+    grid.innerHTML = '<div style="padding:20px; color:#6e6e73; text-align:center; grid-column: 1 / -1;">월세 거래 데이터가 없습니다.</div>';
+    return;
+  }
+  
+  grid.innerHTML = sortedKeys.map(k => {
+    const arr = groups[k];
+    // 보증금 평균
+    const avgDeposit = arr.reduce((s,x) => s + (x.price || 0), 0) / arr.length;
+    // 월세금액 평균 (monthly > 0인 것만)
+    const monthlyArr = arr.filter(x => x.monthly && x.monthly > 0);
+    const avgMonthly = monthlyArr.length > 0 
+      ? monthlyArr.reduce((s,x) => s + x.monthly, 0) / monthlyArr.length 
+      : 0;
+    const minDeposit = Math.min(...arr.map(x => x.price || 0));
+    const maxDeposit = Math.max(...arr.map(x => x.price || 0));
+    return `<div class="area-card">
+      <div class="area">${k}</div>
+      <div class="price" style="font-size:16px;">
+        보증 ${formatPrice(avgDeposit)}
+        <div style="font-size:14px; color:#f57c00; margin-top:2px;">월 ${Math.round(avgMonthly).toLocaleString()}만</div>
+      </div>
+      <div class="meta">${arr.length}건 / 보증 ${formatPrice(minDeposit)} ~ ${formatPrice(maxDeposit)}</div>
     </div>`;
   }).join('');
 }
@@ -2535,6 +2596,10 @@ function renderTable() {
       ? `<span class="badge-rent">전세</span>`
       : `<span class="badge-monthly">${escapeHtml(x.type)}</span>`;
     const isTarget = jibunFilter && x.jibun === jibunFilter;
+    // 월세 컬럼: 월세 거래에만 값 표시
+    const monthlyCell = (x.type === '월세' && x.monthly != null && x.monthly > 0)
+      ? `<strong style="color:#f57c00;">${x.monthly.toLocaleString()}</strong>`
+      : '<span style="color:#c0c0c0;">-</span>';
     return `<tr class="${isTarget ? 'target-jibun' : ''}">
       <td>${escapeHtml(x.date || '-')}</td>
       <td>${typeBadge}</td>
@@ -2544,6 +2609,7 @@ function renderTable() {
       <td>${x.floor != null ? x.floor + '층' : '-'}</td>
       <td>${x.area != null ? x.area.toFixed(2) : '-'}</td>
       <td><strong>${x.price != null ? x.price.toLocaleString() : '-'}</strong></td>
+      <td>${monthlyCell}</td>
     </tr>`;
   }).join('');
   
@@ -2637,7 +2703,7 @@ def admin_diag_kapt():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     print('=' * 60)
-    print('부동산 자산관리 백엔드 서버 (v2.8-jibun)')
+    print('부동산 자산관리 백엔드 서버 (v2.9-area)')
     print('=' * 60)
     print(f'API 키 설정: {"O" if API_KEY else "X (.env 파일에 MOLIT_API_KEY 추가 필요)"}')
     print(f'Supabase 연결: {"O" if supabase else "X (선택사항 - 자동완성만 비활성화)"}')
