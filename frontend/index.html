@@ -463,6 +463,34 @@ table { border-collapse: collapse; width: 100%; }
   padding: 28px 32px; 
   border-top: 4px solid var(--kiwoom-navy);
   box-shadow: 0 20px 60px rgba(0, 22, 77, 0.3);
+  position: relative;
+}
+.modal-close {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--ink-muted);
+  cursor: pointer;
+  transition: all 0.15s;
+  padding: 0;
+  z-index: 10;
+}
+.modal-close:hover {
+  background: var(--bg-subtle);
+  color: var(--kiwoom-navy);
+}
+.modal-close:active {
+  transform: scale(0.92);
 }
 .modal-title { 
   font-family: var(--serif); 
@@ -470,6 +498,7 @@ table { border-collapse: collapse; width: 100%; }
   font-weight: 700; 
   margin-bottom: 6px; 
   color: var(--kiwoom-navy);
+  padding-right: 36px;
 }
 .modal-sub { font-size: 12px; color: var(--ink-muted); margin-bottom: 22px; }
 
@@ -707,7 +736,8 @@ table { border-collapse: collapse; width: 100%; }
 <!-- ========== MODAL: PROPERTY ========== -->
 <div class="modal-bg" id="propertyModal">
   <div class="modal">
-    <div class="modal-title" id="propertyModalTitle">물건 등록</div>
+    <button type="button" class="modal-close" onclick="closePropertyModal()" aria-label="닫기" title="닫기">×</button>
+    <div class="modal-title" id="propertyModalTitle">물건 검색</div>
     <div class="modal-sub">본건의 기본 정보를 입력하세요. 모든 항목은 나중에 수정할 수 있습니다.</div>
 
     <div class="autofill-box no-print" style="background: var(--bg-subtle); border: 1px solid var(--kiwoom-navy); border-left: 4px solid var(--kiwoom-navy); border-radius: 6px; padding: 14px 16px; margin-bottom: 22px;">
@@ -2478,17 +2508,17 @@ async function searchDanji(query) {
 
 function renderKaptAptSuggestion(apt) {
   const aptJson = JSON.stringify(apt).replace(/'/g, "\\'").replace(/"/g, '&quot;');
+  const fullAddr = [apt.sigungu, apt.dong].filter(x => x).join(' ');
   return `
     <div onclick='fillFromKaptApt(${JSON.stringify(apt)})' style="padding: 10px 12px; border-radius: 5px; cursor: pointer; transition: all 0.1s; border: 1px solid transparent; margin: 2px 0;"
       onmouseover="this.style.background='var(--kiwoom-navy-soft)'; this.style.borderColor='var(--kiwoom-navy)'"
       onmouseout="this.style.background='transparent'; this.style.borderColor='transparent'">
-      <div style="display: flex; align-items: center; gap: 6px;">
-        <span style="background: var(--kiwoom-navy); color: white; padding: 2px 6px; border-radius: 3px; font-size: 9px; font-weight: 700; letter-spacing: 0.05em;">K-APT</span>
-        <span style="font-weight: 600; font-size: 13px; color: var(--ink);">${apt.name || ''}</span>
+      <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+        <span style="font-weight: 600; font-size: 13px; color: var(--ink);">${apt.name || '(단지명 없음)'}</span>
+        <span style="background: var(--kiwoom-navy); color: white; padding: 1px 5px; border-radius: 3px; font-size: 9px; font-weight: 700; letter-spacing: 0.05em;">K-APT</span>
       </div>
-      <div style="font-size: 11px; color: var(--ink-muted); margin-top: 4px;">
-        ${apt.sigungu || ''} ${apt.dong || ''}
-        ${apt.kapt_code ? `<span style="color: var(--ink-muted); font-family: var(--mono); margin-left: 6px;">[${apt.kapt_code}]</span>` : ''}
+      <div style="font-size: 11px; color: var(--ink-muted); margin-top: 3px;">
+        ${fullAddr || '주소 정보 없음'}${apt.kapt_code ? ` <span style="font-family: var(--mono); opacity: 0.7;">· [${apt.kapt_code}]</span>` : ''}
       </div>
     </div>
   `;
@@ -2925,7 +2955,7 @@ function openPropertyModal(id) {
     document.getElementById('propertyModalTitle').textContent = '물건 수정';
     document.getElementById('deletePropertyBtn').classList.remove('hide');
   } else {
-    document.getElementById('propertyModalTitle').textContent = '물건 등록';
+    document.getElementById('propertyModalTitle').textContent = '물건 검색';
     document.getElementById('deletePropertyBtn').classList.add('hide');
   }
   document.getElementById('propertyModal').classList.add('show');
