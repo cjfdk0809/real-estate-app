@@ -9,7 +9,7 @@ services:
     plan: free
     rootDir: backend
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app --timeout 60 --workers 2
+    startCommand: gunicorn app:app --timeout 120 --workers 1 --threads 4
     envVars:
       - key: MOLIT_API_KEY
         sync: false  # 사용자가 Render 대시보드에서 직접 입력
