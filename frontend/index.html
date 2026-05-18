@@ -740,18 +740,18 @@ table { border-collapse: collapse; width: 100%; }
     <div class="modal-title" id="propertyModalTitle">물건 검색</div>
     <div class="modal-sub">본건의 기본 정보를 입력하세요. 모든 항목은 나중에 수정할 수 있습니다.</div>
 
-    <div class="autofill-box no-print" style="background: linear-gradient(135deg, #fff8e1 0%, #ffe082 100%); border: 1px solid #ffb300; border-left: 4px solid #f57c00; border-radius: 6px; padding: 14px 16px; margin-bottom: 14px;">
-      <div style="font-size: 11px; letter-spacing: 0.1em; color: #5d4037; text-transform: uppercase; font-weight: 700; margin-bottom: 6px;">📄 등기부 PDF로 자동 입력 (AI 분석) <span style="background: linear-gradient(135deg, #ff6b6b, #ee5a52); color: white; font-size: 9px; padding: 2px 5px; border-radius: 8px; margin-left: 6px; font-weight: 700;">NEW</span></div>
-      <div style="font-size: 12px; color: #5d4037; margin-bottom: 10px;">등기부등본 PDF를 업로드하면 AI가 단지명·주소·면적·소유자·권리관계를 자동으로 읽어 아래 필드에 채워줍니다. (30초~1분 소요)</div>
+    <div class="autofill-box no-print" style="background: var(--bg-subtle); border: 1px solid var(--kiwoom-navy); border-left: 4px solid var(--kiwoom-navy); border-radius: 6px; padding: 14px 16px; margin-bottom: 14px;">
+      <div style="font-size: 11px; letter-spacing: 0.1em; color: var(--kiwoom-navy); text-transform: uppercase; font-weight: 700; margin-bottom: 6px;">📄 등기부 PDF로 자동 입력 (AI 분석) <span style="background: linear-gradient(135deg, #ff6b6b, #ee5a52); color: white; font-size: 9px; padding: 2px 5px; border-radius: 8px; margin-left: 6px; font-weight: 700;">NEW</span></div>
+      <div style="font-size: 12px; color: var(--ink-soft); margin-bottom: 10px;">등기부등본 PDF를 업로드하면 AI가 단지명·주소·면적·소유자·권리관계를 자동으로 읽어 아래 필드에 채워줍니다. (30초~1분 소요)</div>
       
       <div id="modalRegistryUploadZone" 
-        style="border: 2px dashed #ffb300; border-radius: 8px; padding: 20px; text-align: center; cursor: pointer; transition: all 0.2s; background: white;"
+        style="border: 2px dashed var(--kiwoom-navy); border-radius: 8px; padding: 20px; text-align: center; cursor: pointer; transition: all 0.2s; background: white;"
         onclick="document.getElementById('modalRegistryFileInput').click();"
-        ondragover="event.preventDefault(); this.style.background='#fff8e1';"
+        ondragover="event.preventDefault(); this.style.background='var(--kiwoom-navy-soft)';"
         ondragleave="this.style.background='white';"
         ondrop="event.preventDefault(); this.style.background='white'; handleModalRegistryDrop(event);">
-        <div id="modalRegistryUploadTitle" style="font-size: 13px; font-weight: 700; color: #5d4037; margin-bottom: 4px;">📎 클릭 또는 끌어놓기로 PDF 업로드</div>
-        <div id="modalRegistryUploadDesc" style="font-size: 11px; color: #6d4c41;">집합건물 등기부 권장 · 최대 10MB</div>
+        <div id="modalRegistryUploadTitle" style="font-size: 13px; font-weight: 700; color: var(--kiwoom-navy); margin-bottom: 4px;">📎 클릭 또는 끌어놓기로 PDF 업로드</div>
+        <div id="modalRegistryUploadDesc" style="font-size: 11px; color: var(--ink-soft);">집합건물 등기부 권장 · 최대 10MB</div>
         <input type="file" id="modalRegistryFileInput" accept="application/pdf" style="display:none;" onchange="handleModalRegistryFileSelect(event)">
       </div>
       
@@ -2444,9 +2444,9 @@ async function handleModalRegistryFile(file) {
   document.getElementById('modalRegistryUploadDesc').textContent = '⏳ AI 분석 중... 30~60초 소요';
   
   statusEl.style.display = 'block';
-  statusEl.innerHTML = `<div style="padding: 10px 12px; background: white; border-radius: 6px; font-size: 12px; color: #5d4037;">
+  statusEl.innerHTML = `<div style="padding: 10px 12px; background: white; border-radius: 6px; font-size: 12px; color: var(--ink);">
     <div style="display: flex; align-items: center; gap: 10px;">
-      <div style="width: 18px; height: 18px; border: 3px solid #ffe082; border-top-color: #f57c00; border-radius: 50%; animation: modal-reg-spin 1s linear infinite;"></div>
+      <div style="width: 18px; height: 18px; border: 3px solid var(--kiwoom-navy-soft); border-top-color: var(--kiwoom-navy); border-radius: 50%; animation: modal-reg-spin 1s linear infinite;"></div>
       <div><strong>Claude AI가 등기부를 분석하고 있습니다...</strong><br><span style="font-size: 11px;">단지명·면적·권리관계·소유자 정보를 추출하는 중입니다.</span></div>
     </div>
   </div>
@@ -2497,7 +2497,7 @@ async function handleModalRegistryFile(file) {
     </div>`;
     document.getElementById('modalRegistryUploadDesc').textContent = '❌ 실패 - 다시 클릭하여 재시도';
     const zone = document.getElementById('modalRegistryUploadZone');
-    zone.style.borderColor = '#ffb300';
+    zone.style.borderColor = 'var(--kiwoom-navy)';
     zone.style.background = 'white';
   }
 }
@@ -3068,7 +3068,7 @@ function closePropertyModal() {
   // 모달 PDF 업로드 박스 초기화
   const zone = document.getElementById('modalRegistryUploadZone');
   if (zone) {
-    zone.style.borderColor = '#ffb300';
+    zone.style.borderColor = 'var(--kiwoom-navy)';
     zone.style.background = 'white';
     const title = document.getElementById('modalRegistryUploadTitle');
     const desc = document.getElementById('modalRegistryUploadDesc');
