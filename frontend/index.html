@@ -715,6 +715,7 @@ table { border-collapse: collapse; width: 100%; }
       <div class="nav-item" data-view="rights"><span class="nav-item-num">06</span> 권리분석</div>
       <div class="nav-item" data-view="returns"><span class="nav-item-num">07</span> 수익률·세금</div>
       <div class="nav-item" data-view="report"><span class="nav-item-num">08</span> 리포트</div>
+      <div class="nav-item" data-view="registry"><span class="nav-item-num">09</span> 등기부 분석 <span style="background: linear-gradient(135deg, #ff6b6b, #ee5a52); color: white; font-size: 9px; padding: 2px 5px; border-radius: 8px; margin-left: 6px; font-weight: 700;">NEW</span></div>
     </div>
 
     <div class="nav-section" style="padding-top: 8px;">
@@ -1445,6 +1446,7 @@ function renderView() {
     case 'rights': renderRights(); break;
     case 'returns': renderReturns(); break;
     case 'report': renderReport(); break;
+    case 'registry': renderRegistry(); break;  
   }
 }
 
@@ -2442,7 +2444,398 @@ function renderReport() {
     </div>
   `;
 }
+  
+// ============================================================
+// VIEW: REGISTRY ANALYSIS (등기부 자동 분석) 09 메뉴
+// ============================================================
+let _registryFile = null;
+let _registryResult = null;
 
+function renderRegistry() {
+  const c = document.getElementById('viewContainer');
+  const p = state.properties[state.currentPropertyId];
+
+  c.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">권리분석 · REGISTRY ANALYSIS</div>
+      <h1 class="page-title">09 등기부 분석</h1>
+      <div class="page-sub">등기부등본 PDF를 업로드하면 AI가 권리관계를 자동 분석하고 NPL 회수 시뮬레이션을 생성합니다.</div>
+    </div>
+
+    <div class="card mb-16">
+      <div class="card-title">📄 등기부등본 PDF 업로드</div>
+      <div id="registryUploadZone" 
+        style="border: 2px dashed var(--line-strong); border-radius: 10px; padding: 50px 30px; text-align: center; cursor: pointer; transition: all 0.2s; background: var(--bg-subtle);"
+        onclick="document.getElementById('registryFileInput').click();"
+        ondragover="event.preventDefault(); this.style.borderColor='var(--kiwoom-navy)'; this.style.background='var(--kiwoom-navy-soft)';"
+        ondragleave="this.style.borderColor='var(--line-strong)'; this.style.background='var(--bg-subtle)';"
+        ondrop="event.preventDefault(); this.style.borderColor='var(--line-strong)'; this.style.background='var(--bg-subtle)'; handleRegistryDrop(event);">
+        <div style="font-size: 48px; margin-bottom: 12px;">📄</div>
+        <div id="registryUploadTitle" style="font-size: 16px; font-weight: 700; color: var(--kiwoom-navy); margin-bottom: 6px;">등기사항전부증명서 PDF 업로드</div>
+        <div id="registryUploadDesc" style="font-size: 13px; color: var(--ink-soft); margin-bottom: 8px;">파일을 끌어다 놓거나, 클릭하여 선택하세요</div>
+        <div style="font-size: 11px; color: var(--ink-muted);">집합건물 등기부 권장 · 최대 10MB · 텍스트 PDF만 지원</div>
+        <input type="file" id="registryFileInput" accept="application/pdf" style="display:none;" onchange="handleRegistryFileSelect(event)">
+      </div>
+      
+      <div style="display: flex; gap: 16px; align-items: flex-end; margin-top: 16px; flex-wrap: wrap;">
+        <div class="field" style="flex: 1; min-width: 220px;">
+          <label>추정 시세 (원, NPL 시뮬레이션용 - 선택)</label>
+          <input type="number" id="registryMarketValue" placeholder="예: 1500000000 (15억)" step="10000000">
+          <div class="field-hint">비워두면 시뮬레이션 생략. 만원 아님, 원 단위 주의!</div>
+        </div>
+        <button class="btn btn-primary" id="registryAnalyzeBtn" onclick="startRegistryAnalysis()" disabled style="padding: 12px 24px;">🤖 AI 분석 시작</button>
+      </div>
+    </div>
+
+    <div class="card mb-16" id="registryProgress" style="display:none;">
+      <div style="display: flex; align-items: center; gap: 16px; padding: 8px;">
+        <div style="width: 36px; height: 36px; border: 4px solid var(--bg-subtle); border-top-color: var(--kiwoom-navy); border-radius: 50%; animation: registry-spin 1s linear infinite;"></div>
+        <div>
+          <div id="registryProgressTitle" style="font-weight: 700; color: var(--kiwoom-navy); font-size: 14px;">PDF 분석 중...</div>
+          <div id="registryProgressDesc" style="font-size: 12px; color: var(--ink-muted); margin-top: 4px;">잠시만 기다려주세요. 보통 10~30초 소요됩니다.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card mb-16" id="registryError" style="display:none; border: 2px solid #dc2626; background: #fee2e2;">
+      <div class="card-title" style="color: #991b1b;">❌ 분석 실패</div>
+      <div id="registryErrorMessage" style="font-size: 13px; color: #7f1d1d;"></div>
+    </div>
+
+    <div id="registryResults" style="display:none;"></div>
+
+    <style>
+      @keyframes registry-spin { to { transform: rotate(360deg); } }
+    </style>
+  `;
+}
+
+function handleRegistryDrop(event) {
+  if (event.dataTransfer.files.length > 0) {
+    handleRegistryFile(event.dataTransfer.files[0]);
+  }
+}
+
+function handleRegistryFileSelect(event) {
+  if (event.target.files.length > 0) {
+    handleRegistryFile(event.target.files[0]);
+  }
+}
+
+function handleRegistryFile(file) {
+  if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+    alert('PDF 파일만 업로드 가능합니다.');
+    return;
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    alert('파일 크기가 10MB를 초과합니다.');
+    return;
+  }
+  _registryFile = file;
+  const zone = document.getElementById('registryUploadZone');
+  zone.style.borderColor = 'var(--green)';
+  zone.style.background = '#ecfdf5';
+  document.getElementById('registryUploadTitle').textContent = '✓ ' + file.name;
+  document.getElementById('registryUploadDesc').textContent = '파일 크기: ' + (file.size / 1024).toFixed(1) + ' KB · 분석 시작 버튼을 누르세요';
+  document.getElementById('registryAnalyzeBtn').disabled = false;
+}
+
+async function startRegistryAnalysis() {
+  if (!_registryFile) return;
+  
+  const progressEl = document.getElementById('registryProgress');
+  const errorEl = document.getElementById('registryError');
+  const resultsEl = document.getElementById('registryResults');
+  const btn = document.getElementById('registryAnalyzeBtn');
+  
+  progressEl.style.display = 'block';
+  errorEl.style.display = 'none';
+  resultsEl.style.display = 'none';
+  btn.disabled = true;
+  
+  const marketValue = document.getElementById('registryMarketValue').value;
+  
+  try {
+    const formData = new FormData();
+    formData.append('pdf', _registryFile);
+    if (marketValue) formData.append('market_value', marketValue);
+    
+    document.getElementById('registryProgressTitle').textContent = 'PDF 텍스트 추출 중...';
+    document.getElementById('registryProgressDesc').textContent = '약 5초 정도 걸립니다.';
+    
+    const response = await fetch(`${BACKEND_URL}/api/analyze-registry`, {
+      method: 'POST',
+      body: formData
+    });
+    
+    document.getElementById('registryProgressTitle').textContent = 'Claude AI 권리분석 중...';
+    document.getElementById('registryProgressDesc').textContent = '말소기준권리 판정 및 NPL 시뮬레이션 진행 중입니다.';
+    
+    const data = await response.json();
+    
+    if (!data.success) {
+      throw new Error(data.error || '분석 실패');
+    }
+    
+    _registryResult = data;
+    renderRegistryResults();
+    progressEl.style.display = 'none';
+    resultsEl.style.display = 'block';
+    btn.disabled = false;
+    
+  } catch (err) {
+    console.error(err);
+    progressEl.style.display = 'none';
+    errorEl.style.display = 'block';
+    document.getElementById('registryErrorMessage').textContent = err.message;
+    btn.disabled = false;
+  }
+}
+
+function renderRegistryResults() {
+  const a = _registryResult.analysis;
+  const sim = _registryResult.npl_simulation;
+  const resultsEl = document.getElementById('registryResults');
+  
+  let html = '';
+  
+  if (a.property) {
+    html += `<div class="card mb-16">
+      <div class="card-title">📌 본건 식별</div>
+      <div class="form-grid">
+        <div class="info-row"><div class="info-label">단지명</div><div class="info-value">${a.property.complex_name || '-'}</div></div>
+        <div class="info-row"><div class="info-label">도로명주소</div><div class="info-value">${a.property.address_road || '-'}</div></div>
+        <div class="info-row"><div class="info-label">지번주소</div><div class="info-value">${a.property.address_lot || '-'}</div></div>
+        <div class="info-row"><div class="info-label">동·호</div><div class="info-value">${a.property.dong || '-'} ${a.property.ho || ''}</div></div>
+        <div class="info-row"><div class="info-label">층 / 총 층</div><div class="info-value mono">${a.property.floor || '-'} / ${a.property.total_floors || '-'} 층</div></div>
+        <div class="info-row"><div class="info-label">전용면적</div><div class="info-value mono">${a.property.exclusive_area_sqm || '-'} ㎡</div></div>
+        <div class="info-row"><div class="info-label">대지지분</div><div class="info-value mono">${a.property.land_share_sqm || '-'} ㎡</div></div>
+        <div class="info-row"><div class="info-label">건물구조</div><div class="info-value">${a.property.structure || '-'}</div></div>
+      </div>
+    </div>`;
+  }
+  
+  if (a.ownership) {
+    html += `<div class="card mb-16">
+      <div class="card-title">👤 소유권</div>
+      <div class="form-grid">
+        <div class="info-row"><div class="info-label">현재 소유자</div><div class="info-value">${a.ownership.current_owner || '-'}</div></div>
+        <div class="info-row"><div class="info-label">출생연도</div><div class="info-value mono">${a.ownership.owner_birth_year ? '19' + a.ownership.owner_birth_year + '년생' : '-'}</div></div>
+        <div class="info-row"><div class="info-label">취득일</div><div class="info-value mono">${a.ownership.acquisition_date || '-'}</div></div>
+        <div class="info-row"><div class="info-label">취득사유</div><div class="info-value">${a.ownership.acquisition_cause || '-'}</div></div>
+      </div>
+    </div>`;
+  }
+  
+  if (a.rights_timeline && a.rights_timeline.length > 0) {
+    const baselineSeq = a.analysis?.baseline_right?.seq;
+    html += `<div class="card mb-16">
+      <div class="card-title">📅 권리관계 시계열</div>
+      <table class="tbl">
+        <thead><tr><th>순위</th><th>구분</th><th>유형</th><th>일자</th><th>권리자</th><th class="text-right">금액</th><th>비고</th></tr></thead>
+        <tbody>
+          ${a.rights_timeline.map(r => `
+            <tr style="${r.is_cancelled ? 'text-decoration: line-through; color: #94a3b8;' : ''} ${r.seq === baselineSeq ? 'background: #fef3c7; font-weight: 700;' : ''}">
+              <td class="num">${r.seq}</td>
+              <td class="text-small">${r.section}</td>
+              <td class="text-small">${r.type}</td>
+              <td class="num text-small">${r.date || '-'}</td>
+              <td class="text-small">${r.creditor_or_holder || '-'}</td>
+              <td class="price">${r.amount ? fmt.won(Math.round(r.amount / 10000)) : '-'}</td>
+              <td class="text-small text-muted">${r.description || ''}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>`;
+  }
+  
+  if (a.analysis?.baseline_right) {
+    const b = a.analysis.baseline_right;
+    html += `<div class="card mb-16" style="border: 2px solid #f59e0b; background: #fffbeb;">
+      <div class="card-title">🎯 말소기준권리</div>
+      <div class="form-grid">
+        <div class="info-row"><div class="info-label">순위</div><div class="info-value mono">${b.seq || '-'}</div></div>
+        <div class="info-row"><div class="info-label">권리 유형</div><div class="info-value">${b.type || '-'}</div></div>
+        <div class="info-row"><div class="info-label">설정일자</div><div class="info-value mono">${b.date || '-'}</div></div>
+        <div class="info-row"><div class="info-label">권리자</div><div class="info-value">${b.holder || '-'}</div></div>
+      </div>
+      <div style="margin-top: 12px; padding: 12px; background: var(--bg-subtle); border-radius: 6px; font-size: 12px; line-height: 1.6;">
+        <strong>판단 근거:</strong> ${b.reasoning || '-'}
+      </div>
+    </div>`;
+  }
+  
+  if (a.analysis?.rights_classification && a.analysis.rights_classification.length > 0) {
+    html += `<div class="card mb-16">
+      <div class="card-title">⚖️ 인수/소멸 분류</div>
+      <table class="tbl">
+        <thead><tr><th>순위</th><th>권리</th><th>일자</th><th class="text-right">금액</th><th>분류</th><th>사유</th></tr></thead>
+        <tbody>
+          ${a.analysis.rights_classification.map(r => {
+            const cls = (r.classification || '').replace(/[^가-힣]/g, '');
+            const colors = {
+              '인수': 'background:#fee2e2;color:#991b1b;',
+              '소멸': 'background:#d1fae5;color:#065f46;',
+              '말소기준': 'background:#fef3c7;color:#92400e;',
+              '배당참여': 'background:#dbeafe;color:#1e40af;'
+            };
+            return `<tr>
+              <td class="num">${r.seq}</td>
+              <td class="text-small">${r.type} - ${r.holder}</td>
+              <td class="num text-small">${r.date || '-'}</td>
+              <td class="price">${r.amount ? fmt.won(Math.round(r.amount / 10000)) : '-'}</td>
+              <td><span class="badge" style="${colors[cls] || ''}">${r.classification}</span></td>
+              <td class="text-small text-muted">${r.reasoning || ''}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>`;
+  }
+  
+  if (a.analysis?.tenant_analysis?.has_tenant) {
+    const t = a.analysis.tenant_analysis;
+    html += `<div class="card mb-16">
+      <div class="card-title">🏠 임차인 권리분석</div>
+      <div class="form-grid">
+        <div class="info-row"><div class="info-label">임차인</div><div class="info-value">${t.tenant_name || '-'}</div></div>
+        <div class="info-row"><div class="info-label">보증금</div><div class="info-value price">${t.deposit ? fmt.won(Math.round(t.deposit / 10000)) : '-'}</div></div>
+        <div class="info-row"><div class="info-label">월차임</div><div class="info-value mono">${t.monthly_rent ? Math.round(t.monthly_rent / 10000).toLocaleString() + '만원' : '-'}</div></div>
+        <div class="info-row"><div class="info-label">임대차계약일</div><div class="info-value mono">${t.lease_contract_date || '-'}</div></div>
+        <div class="info-row"><div class="info-label">전입일</div><div class="info-value mono">${t.move_in_date || '-'}</div></div>
+        <div class="info-row"><div class="info-label">확정일자</div><div class="info-value mono">${t.fixed_date || '-'}</div></div>
+        <div class="info-row"><div class="info-label">대항력</div><div class="info-value">${t.has_opposing_power ? '✓ 있음' : '✗ 없음'}</div></div>
+        <div class="info-row"><div class="info-label">우선변제권</div><div class="info-value">${t.has_priority_payment_right ? '✓ 있음' : '✗ 없음'}</div></div>
+        <div class="info-row"><div class="info-label">낙찰자 인수</div><div class="info-value" style="color: ${t.is_accepted_by_buyer ? '#dc2626' : '#065f46'}; font-weight: 700;">${t.is_accepted_by_buyer ? '⚠ 인수' : '✓ 인수 없음'}</div></div>
+      </div>
+      <div style="margin-top: 12px; padding: 12px; background: var(--bg-subtle); border-radius: 6px; font-size: 12px; line-height: 1.7;">
+        <strong>대항력 판단:</strong> ${t.opposing_power_reasoning || '-'}<br>
+        <strong>인수 판단:</strong> ${t.buyer_acceptance_reasoning || '-'}
+      </div>
+    </div>`;
+  }
+  
+  if (a.analysis?.auction_status?.is_under_auction) {
+    const au = a.analysis.auction_status;
+    html += `<div class="card mb-16">
+      <div class="card-title">⚖️ 경매 진행 현황</div>
+      <div class="form-grid">
+        <div class="info-row"><div class="info-label">경매 유형</div><div class="info-value">${au.auction_type || '-'}</div></div>
+        <div class="info-row"><div class="info-label">사건번호</div><div class="info-value mono">${au.case_number || '-'}</div></div>
+        <div class="info-row"><div class="info-label">관할법원</div><div class="info-value">${au.court || '-'}</div></div>
+        <div class="info-row"><div class="info-label">개시결정일</div><div class="info-value mono">${au.auction_start_date || '-'}</div></div>
+        <div class="info-row"><div class="info-label">신청 채권자</div><div class="info-value">${au.creditor || '-'}</div></div>
+      </div>
+    </div>`;
+  }
+  
+  if (sim && sim.scenarios) {
+    html += `<div class="card mb-16">
+      <div class="card-title">💰 NPL 회수 시뮬레이션 (시세: ${fmt.won(Math.round(sim.estimated_market_value / 10000))})</div>`;
+    sim.scenarios.forEach(s => {
+      html += `<div style="border: 1px solid var(--line); border-radius: 8px; padding: 16px; margin-bottom: 12px; background: white;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--line);">
+          <div style="font-weight: 700; color: var(--kiwoom-navy);">${s.scenario_name} (낙찰가율 ${(s.bid_ratio * 100).toFixed(0)}%)</div>
+          <div style="font-size: 18px; font-weight: 700;">${fmt.won(Math.round(s.winning_bid / 10000))}</div>
+        </div>
+        ${s.distributions.map(d => `
+          <div style="display: grid; grid-template-columns: 30px 1fr 120px 120px; gap: 12px; padding: 6px 0; font-size: 12px; border-bottom: 1px dashed var(--line);">
+            <div class="text-mono">${d.priority || ''}</div>
+            <div>${d.name} ${d.date ? '<span class="text-small text-muted">' + d.date + '</span>' : ''}</div>
+            <div class="text-mono text-right">${fmt.won(Math.round((d.amount_claimed || 0) / 10000))}</div>
+            <div class="text-mono text-right"><strong>${fmt.won(Math.round((d.amount_distributed || 0) / 10000))}</strong></div>
+          </div>
+        `).join('')}
+        ${s.surplus > 0 ? `
+          <div style="display: grid; grid-template-columns: 30px 1fr 120px 120px; gap: 12px; padding: 8px; background: #ecfdf5; border-radius: 4px; font-weight: 700; margin-top: 6px;">
+            <div></div><div>잉여금 (소유자/후순위)</div>
+            <div></div>
+            <div class="text-mono text-right">${fmt.won(Math.round(s.surplus / 10000))}</div>
+          </div>` : ''}
+      </div>`;
+    });
+    html += `</div>`;
+  }
+  
+  if (a.analysis?.risk_factors && a.analysis.risk_factors.length > 0) {
+    html += `<div class="card mb-16">
+      <div class="card-title">⚠️ 리스크 진단</div>`;
+    a.analysis.risk_factors.forEach(r => {
+      const colors = { 'HIGH': '#fee2e2', 'MEDIUM': '#fef3c7', 'LOW': '#dbeafe' };
+      const borders = { 'HIGH': '#dc2626', 'MEDIUM': '#f59e0b', 'LOW': '#3b82f6' };
+      html += `<div style="padding: 12px; margin-bottom: 8px; border-radius: 6px; background: ${colors[r.level] || '#f5f5f7'}; border-left: 4px solid ${borders[r.level] || '#94a3b8'};">
+        <div style="font-weight: 700; margin-bottom: 4px;">[${r.level}] ${r.title}</div>
+        <div style="font-size: 12px;">${r.description}</div>
+      </div>`;
+    });
+    html += `</div>`;
+  }
+  
+  html += `<div class="card mb-16" style="text-align: center; padding: 24px;">
+    <button class="btn btn-primary" style="padding: 14px 32px; font-size: 14px;" onclick="window.print()">📥 권리분석 리포트 PDF 출력</button>
+    <button class="btn btn-ghost" style="margin-left: 12px;" onclick="applyRegistryToProperty()">→ 01 본건정보에 자동 입력</button>
+  </div>`;
+  
+  resultsEl.innerHTML = html;
+}
+
+async function applyRegistryToProperty() {
+  if (!_registryResult || !_registryResult.analysis) return;
+  const a = _registryResult.analysis;
+  
+  let id = state.currentPropertyId;
+  if (!id || !state.properties[id]) {
+    id = uid();
+    state.properties[id] = { id };
+  }
+  const p = state.properties[id];
+  
+  if (a.property) {
+    if (a.property.complex_name) p.name = a.property.complex_name;
+    if (a.property.address_road) p.addrRoad = a.property.address_road;
+    if (a.property.address_lot) p.addrLot = a.property.address_lot;
+    if (a.property.dong) p.building = a.property.dong;
+    if (a.property.ho) p.unit = a.property.ho;
+    if (a.property.exclusive_area_sqm) p.exclusiveArea = a.property.exclusive_area_sqm;
+    if (a.property.land_share_sqm) p.landShare = a.property.land_share_sqm;
+    if (a.property.floor) p.floor = a.property.floor;
+    if (a.property.total_floors) p.totalFloors = a.property.total_floors;
+    if (a.property.registration_date) p.completionDate = a.property.registration_date;
+    if (a.property.main_use) p.usage = a.property.main_use;
+  }
+  
+  if (a.ownership) {
+    if (a.ownership.current_owner) p.owner = a.ownership.current_owner;
+    if (a.ownership.acquisition_date) p.acquisitionDate = a.ownership.acquisition_date;
+  }
+  
+  if (a.rights_timeline && a.rights_timeline.length > 0) {
+    if (!state.rights[id]) state.rights[id] = [];
+    const newRights = a.rights_timeline
+      .filter(r => !r.is_cancelled && r.amount)
+      .map(r => ({
+        id: uid(),
+        type: r.type.includes('근저당') ? '근저당권' : r.type.includes('가압류') ? '가압류' : r.type.includes('임차') ? '임차권' : r.type,
+        date: r.date,
+        holder: r.creditor_or_holder,
+        amount: Math.round(r.amount / 10000),
+        assumed: 'false',
+        memo: r.description || ''
+      }));
+    state.rights[id].push(...newRights);
+  }
+  
+  state.currentPropertyId = id;
+  await saveState();
+  renderPropertyList();
+  alert('✅ 01 본건정보 + 06 권리분석에 자동 입력되었습니다.\n확인 후 필요시 수정해주세요.');
+  
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.querySelector('[data-view="overview"]').classList.add('active');
+  state.currentView = 'overview';
+  renderView();
+}
 // ============================================================
 // 단지 자동입력 (Autofill from DANJI_DB)
 // ============================================================
