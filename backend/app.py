@@ -22,6 +22,7 @@ import requests
 from dotenv import load_dotenv
 
 from lawd_codes import LAWD_CODES, find_lawd_code
+from registry_analyzer import registry_bp  # 🆕 등기부 분석 모듈
 
 # Supabase 클라이언트 (선택적 - 미설치/미설정 시에도 기존 기능은 정상 작동)
 try:
@@ -77,6 +78,7 @@ URL_BR_PRICE = 'https://apis.data.go.kr/1613000/BldRgstHubService/getBrHsprcInfo
 
 app = Flask(__name__, static_folder='../frontend', static_url_path='')
 CORS(app)
+app.register_blueprint(registry_bp)  # 🆕 등기부 분석 Blueprint 등록
 
 
 # ============================================================
