@@ -763,31 +763,40 @@ table { border-collapse: collapse; width: 100%; }
 
     <div class="autofill-box no-print" style="background: var(--bg-subtle); border: 1px solid var(--kiwoom-navy); border-left: 4px solid var(--kiwoom-navy); border-radius: 6px; padding: 14px 16px; margin-bottom: 22px;">
       <div style="font-size: 11px; letter-spacing: 0.1em; color: var(--kiwoom-navy); text-transform: uppercase; font-weight: 700; margin-bottom: 6px;">⚡ 단지 자동입력 (K-apt 전국)</div>
-      <div style="font-size: 12px; color: var(--ink-soft); margin-bottom: 10px;">시군구 → 동을 선택하면 해당 동의 모든 아파트 단지 목록이 표시됩니다. 클릭 시 주소·세대수·준공일·시공사 등이 자동 입력됩니다.</div>
+      <div style="font-size: 12px; color: var(--ink-soft); margin-bottom: 10px;">단지명을 입력하면 K-apt 전국 22,147개 단지 + 즐겨찾기에서 검색합니다. 클릭 시 단지명·주소가 자동 입력됩니다.</div>
       
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
-        <div>
-          <label style="font-size: 10px; color: var(--ink-muted); text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600;">시군구</label>
-          <input type="text" id="kaptSigungu" placeholder="예: 서초구, 하남시" autocomplete="off"
-            style="width: 100%; padding: 8px 10px; margin-top: 3px; border: 1px solid var(--line-strong); border-radius: 5px; font-size: 12px; background: white;"
-            oninput="searchSigungu(this.value)" onfocus="searchSigungu(this.value)">
-        </div>
-        <div>
-          <label style="font-size: 10px; color: var(--ink-muted); text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600;">읍면동</label>
-          <input type="text" id="kaptDong" placeholder="시군구 선택 후" autocomplete="off" disabled
-            style="width: 100%; padding: 8px 10px; margin-top: 3px; border: 1px solid var(--line-strong); border-radius: 5px; font-size: 12px; background: white;"
-            oninput="searchDongInSigungu(this.value)" onfocus="searchDongInSigungu(this.value)">
-        </div>
-      </div>
-      <div id="kaptSuggestions" style="max-height: 280px; overflow-y: auto;"></div>
-      
-      <div style="margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--line);">
-        <div style="font-size: 10px; color: var(--ink-muted); margin-bottom: 4px;">⚡ 단지명으로 직접 검색 (K-apt 전국 22,147개 단지 + 즐겨찾기)</div>
-        <input type="text" id="danjiSearch" placeholder="예: 산호베스티움, 디에이치아너힐즈, 감일한라비발디..."
-          style="width: 100%; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 5px; font-size: 12px; background: white;"
+      <!-- 메인: 단지명 직접 검색 -->
+      <div>
+        <label style="font-size: 10px; color: var(--ink-muted); text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600;">단지명 검색</label>
+        <input type="text" id="danjiSearch" placeholder="예: 산호베스티움, 강남구 래미안, 감일 한라비발디..."
+          style="width: 100%; padding: 10px 12px; margin-top: 3px; border: 1px solid var(--line-strong); border-radius: 5px; font-size: 13px; background: white;"
           oninput="searchDanji(this.value)" onfocus="searchDanji(this.value)">
-        <div id="danjiSuggestions" style="margin-top: 4px; max-height: 150px; overflow-y: auto;"></div>
+        <div id="danjiSuggestions" style="margin-top: 4px; max-height: 350px; overflow-y: auto;"></div>
       </div>
+      
+      <!-- 보조: 시군구 → 동 단계별 검색 (접힘 처리) -->
+      <details style="margin-top: 14px; padding-top: 10px; border-top: 1px dashed var(--line);">
+        <summary style="cursor: pointer; font-size: 11px; color: var(--ink-muted); font-weight: 600; padding: 2px 0; outline: none;">
+          📍 시군구 → 동 단계별로 찾기 (단지명을 모를 때)
+        </summary>
+        <div style="margin-top: 10px;">
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
+            <div>
+              <label style="font-size: 10px; color: var(--ink-muted); text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600;">시군구</label>
+              <input type="text" id="kaptSigungu" placeholder="예: 서초구, 하남시" autocomplete="off"
+                style="width: 100%; padding: 8px 10px; margin-top: 3px; border: 1px solid var(--line-strong); border-radius: 5px; font-size: 12px; background: white;"
+                oninput="searchSigungu(this.value)" onfocus="searchSigungu(this.value)">
+            </div>
+            <div>
+              <label style="font-size: 10px; color: var(--ink-muted); text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600;">읍면동</label>
+              <input type="text" id="kaptDong" placeholder="시군구 선택 후" autocomplete="off" disabled
+                style="width: 100%; padding: 8px 10px; margin-top: 3px; border: 1px solid var(--line-strong); border-radius: 5px; font-size: 12px; background: white;"
+                oninput="searchDongInSigungu(this.value)" onfocus="searchDongInSigungu(this.value)">
+            </div>
+          </div>
+          <div id="kaptSuggestions" style="max-height: 200px; overflow-y: auto;"></div>
+        </div>
+      </details>
     </div>
 
     <form id="propertyForm">
@@ -2699,13 +2708,15 @@ async function searchDanji(query) {
       });
     }
     
-    // 매칭 점수로 정렬
+    // 매칭 점수로 정렬 (K-apt API가 이미 검색해서 반환한 결과는 모두 표시)
+    // 점수가 0이라도 K-apt가 매칭한 것이므로 최소 점수(20) 부여
     const kaptScored = kaptItems.map(apt => {
       const fullAddr = (apt.sigungu || '') + ' ' + (apt.dong || '');
-      const score = _matchScore(query, apt.name || '', fullAddr);
+      let score = _matchScore(query, apt.name || '', fullAddr);
+      // K-apt API가 반환한 결과는 어떤 식으로든 매칭된 것이므로 기본 점수 부여
+      if (score === 0) score = 20;
       return { apt, score };
-    }).filter(x => x.score > 0)
-      .sort((a, b) => b.score - a.score)
+    }).sort((a, b) => b.score - a.score)
       .slice(0, 10);
     
     let newHtml = '';
