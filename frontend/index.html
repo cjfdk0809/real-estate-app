@@ -2700,6 +2700,12 @@ async function searchDanji(query) {
     const d = await r.json();
     let kaptItems = (d && d.items) ? d.items : [];
     
+    // 백엔드 응답 필드명 정규화: kapt_name → name (API 응답 호환성)
+    kaptItems = kaptItems.map(apt => ({
+      ...apt,
+      name: apt.name || apt.kapt_name || ''
+    }));
+    
     // 시군구 필터 적용
     if (sigunguFilter) {
       kaptItems = kaptItems.filter(apt => {
