@@ -40,6 +40,9 @@
   --kiwoom-navy-light: #2A4FBE;  /* 밝은 네이비 */
   --kiwoom-navy-soft: #E6EAF5;   /* 연한 네이비 (배경) */
   --kiwoom-grey: #E7EBF0;        /* CI 그레이 */
+  --kiwoom-pink: #FF00FF;        /* CI 분홍 (강조용) */
+  --kiwoom-pink-soft: #FFE6FF;   /* CI 분홍 연한 배경 */
+  --kiwoom-pink-deep: #CC00CC;   /* CI 분홍 진한 버전 (그라디언트) */
   
   /* ========== 시스템 컬러 ========== */
   --bg: #f5f7fb;                 /* 차분한 블루-화이트 배경 */
@@ -741,7 +744,7 @@ table { border-collapse: collapse; width: 100%; }
     <div class="modal-sub">본건의 기본 정보를 입력하세요. 모든 항목은 나중에 수정할 수 있습니다.</div>
 
     <div class="autofill-box no-print" style="background: var(--bg-subtle); border: 1px solid var(--kiwoom-navy); border-left: 4px solid var(--kiwoom-navy); border-radius: 6px; padding: 14px 16px; margin-bottom: 14px;">
-      <div style="font-size: 11px; letter-spacing: 0.1em; color: var(--kiwoom-navy); text-transform: uppercase; font-weight: 700; margin-bottom: 6px;">📄 등기부 PDF로 자동 입력 (AI 분석) <span style="background: linear-gradient(135deg, #ff6b6b, #ee5a52); color: white; font-size: 9px; padding: 2px 5px; border-radius: 8px; margin-left: 6px; font-weight: 700;">NEW</span></div>
+      <div style="font-size: 11px; letter-spacing: 0.1em; color: var(--kiwoom-navy); text-transform: uppercase; font-weight: 700; margin-bottom: 6px;">📄 등기부 PDF로 자동 입력 (AI 분석) <span style="background: linear-gradient(135deg, var(--kiwoom-pink), var(--kiwoom-pink-deep)); color: white; font-size: 9px; padding: 2px 5px; border-radius: 8px; margin-left: 6px; font-weight: 700;">NEW</span></div>
       <div style="font-size: 12px; color: var(--ink-soft); margin-bottom: 10px;">등기부등본 PDF를 업로드하면 AI가 단지명·주소·면적·소유자·권리관계를 자동으로 읽어 아래 필드에 채워줍니다. (30초~1분 소요)</div>
       
       <div id="modalRegistryUploadZone" 
@@ -1646,11 +1649,11 @@ function renderComparables() {
 
     ${avgAllSales > 0 ? `
     <!-- ========== NPL 회수 가능 금액 추정 ========== -->
-    <div style="background: linear-gradient(135deg, #fff8e1 0%, #ffecb3 100%); border: 1px solid #ffca28; border-left: 4px solid #f57c00; border-radius: 8px; padding: 22px 26px; margin-bottom: 16px;">
-      <div style="font-size: 11px; letter-spacing: 0.18em; color: #5d4037; text-transform: uppercase; font-weight: 700; margin-bottom: 8px;">💰 NPL 회수 가능 금액 추정 · NPL Recovery Estimate</div>
-      <div style="font-family: var(--mono); font-size: 30px; font-weight: 800; color: #5d4037; line-height: 1.2; letter-spacing: -0.02em;">${fmt.won(Math.round(nplMedian))}</div>
-      <div style="font-size: 13px; color: #6d4c41; margin-top: 6px; font-family: var(--mono);">회수 범위: ${fmt.won(Math.round(nplLower))} ~ ${fmt.won(Math.round(nplUpper))}</div>
-      <div style="font-size: 12px; color: #5d4037; margin-top: 14px; line-height: 1.7;">
+    <div style="background: linear-gradient(135deg, var(--kiwoom-navy-soft) 0%, #d4dcf0 100%); border: 1px solid var(--kiwoom-navy-light); border-left: 4px solid var(--kiwoom-navy); border-radius: 8px; padding: 22px 26px; margin-bottom: 16px;">
+      <div style="font-size: 11px; letter-spacing: 0.18em; color: var(--kiwoom-navy); text-transform: uppercase; font-weight: 700; margin-bottom: 8px;">💰 NPL 회수 가능 금액 추정 · NPL Recovery Estimate</div>
+      <div style="font-family: var(--mono); font-size: 30px; font-weight: 800; color: var(--kiwoom-navy-deep); line-height: 1.2; letter-spacing: -0.02em;">${fmt.won(Math.round(nplMedian))}</div>
+      <div style="font-size: 13px; color: var(--ink-soft); margin-top: 6px; font-family: var(--mono);">회수 범위: ${fmt.won(Math.round(nplLower))} ~ ${fmt.won(Math.round(nplUpper))}</div>
+      <div style="font-size: 12px; color: var(--ink-soft); margin-top: 14px; line-height: 1.7;">
         📌 평균 매매가 <strong>${fmt.won(Math.round(avgAllSales))}</strong>의 85~95% 추정 (시장 변동성·처분비용 반영)<br>
         ${avgJeonse > 0 ? `💵 전세 보증금 회수 시 약 <strong>${fmt.won(Math.round(avgJeonse))}</strong> 확보 가능 (전세가율 <strong>${rentRatio.toFixed(1)}%</strong>)<br>` : ''}
         ${validSales.length < 5 ? `⚠️ 매매 거래 ${validSales.length}건으로 추정 신뢰도 낮음. 추가 사례 수집 권장.` : `✅ ${validSales.length}건 매매 거래 기반 추정 (신뢰도 양호)`}
@@ -1807,7 +1810,7 @@ function renderExternalPortalLinks(p) {
     <div class="card mb-16 no-print">
       <div class="card-title">
         <span style="display: inline-flex; align-items: center; gap: 8px;">
-          <span style="color: #03c75a;">🟢</span>
+          <span style="color: var(--kiwoom-navy);">🔷</span>
           네이버 부동산 빠른 검색 (현재 호가)
         </span>
         <span class="text-small text-muted" style="font-weight: 400; font-family: var(--sans);">"${danjiName}"</span>
@@ -1819,9 +1822,9 @@ function renderExternalPortalLinks(p) {
       <!-- 메인 추천 버튼: 네이버 통합검색 -->
       <a href="https://search.naver.com/search.naver?query=${q}" 
          target="_blank" rel="noopener noreferrer"
-         style="display: block; padding: 18px 22px; background: linear-gradient(135deg, #03c75a 0%, #02a048 100%); border-radius: 10px; text-decoration: none; color: white; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(3, 199, 90, 0.25); transition: all 0.15s;"
-         onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 12px rgba(3, 199, 90, 0.35)';"
-         onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 2px 8px rgba(3, 199, 90, 0.25)';">
+         style="display: block; padding: 18px 22px; background: linear-gradient(135deg, var(--kiwoom-navy) 0%, var(--kiwoom-navy-deep) 100%); border-radius: 10px; text-decoration: none; color: white; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(1, 31, 142, 0.25); transition: all 0.15s;"
+         onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 12px rgba(1, 31, 142, 0.35)';"
+         onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 2px 8px rgba(1, 31, 142, 0.25)';">
         <div style="display: flex; align-items: center; justify-content: space-between;">
           <div>
             <div style="font-size: 16px; font-weight: 700; margin-bottom: 4px;">🟢 네이버 통합검색 (가장 풍부한 정보) ⭐</div>
@@ -1835,13 +1838,13 @@ function renderExternalPortalLinks(p) {
       <a href="https://land.naver.com/" 
          target="_blank" rel="noopener noreferrer"
          onclick="navigator.clipboard && navigator.clipboard.writeText('${danjiName}').catch(()=>{});"
-         style="display: block; padding: 14px 18px; background: white; border: 2px solid #03c75a; border-radius: 8px; text-decoration: none; color: var(--ink); margin-bottom: 10px; transition: all 0.15s;"
-         onmouseover="this.style.background='#f0fff4'; this.style.transform='translateY(-1px)';"
+         style="display: block; padding: 14px 18px; background: white; border: 2px solid var(--kiwoom-navy); border-radius: 8px; text-decoration: none; color: var(--ink); margin-bottom: 10px; transition: all 0.15s;"
+         onmouseover="this.style.background='var(--kiwoom-navy-soft)'; this.style.transform='translateY(-1px)';"
          onmouseout="this.style.background='white'; this.style.transform='translateY(0)';">
         <div style="display: flex; align-items: center; justify-content: space-between;">
           <div>
-            <div style="font-weight: 700; font-size: 14px; color: #03c75a;">🏢 네이버 부동산 (단지 상세 + 매물 시세) ⭐</div>
-            <div style="font-size: 11px; color: var(--ink-muted); margin-top: 4px;">실시간 매물 수, 평형별 시세, 시세 그래프, 실거래가 — NPL 회수가 산정용 <span style="color: #03c75a; font-weight: 600;">(클릭 시 단지명 자동복사)</span></div>
+            <div style="font-weight: 700; font-size: 14px; color: var(--kiwoom-navy);">🏢 네이버 부동산 (단지 상세 + 매물 시세) ⭐</div>
+            <div style="font-size: 11px; color: var(--ink-muted); margin-top: 4px;">실시간 매물 수, 평형별 시세, 시세 그래프, 실거래가 — NPL 회수가 산정용 <span style="color: var(--kiwoom-navy); font-weight: 600;">(클릭 시 단지명 자동복사)</span></div>
           </div>
           <span style="font-size: 14px; color: var(--ink-muted);">↗</span>
         </div>
@@ -1863,7 +1866,7 @@ function renderExternalPortalLinks(p) {
       </a>
       
       <!-- 도움말 -->
-      <div style="margin-top: 12px; padding: 10px 12px; background: #fff8e1; border-radius: 6px; border-left: 3px solid #ffb300; font-size: 11px; color: #5d4037; line-height: 1.6;">
+      <div style="margin-top: 12px; padding: 10px 12px; background: var(--kiwoom-navy-soft); border-radius: 6px; border-left: 3px solid var(--kiwoom-navy); font-size: 11px; color: var(--kiwoom-navy-deep); line-height: 1.6;">
         💡 <strong>네이버 부동산</strong> 클릭 시 단지명이 자동으로 클립보드에 복사됩니다. 메인 페이지에서 <strong>Ctrl+V</strong>로 검색창에 붙여넣으세요.
         ${sigunguShort ? `<br>💡 결과 없으면 <strong>"${sigunguShort} ${danjiCore}"</strong> 방식으로 검색하면 더 정확합니다.` : ''}
       </div>
