@@ -721,6 +721,14 @@ table { border-collapse: collapse; width: 100%; }
     </div>
 
     <div class="nav-section" style="padding-top: 8px;">
+      <div class="nav-label">분석 도구</div>
+      <a href="/npl" target="_blank" rel="noopener noreferrer" class="nav-item" style="text-decoration: none; color: inherit; display: flex; align-items: center; justify-content: space-between;">
+        <span><span class="nav-item-num">🔍</span> NPL 자산 분석</span>
+        <span style="font-size: 10px; color: var(--ink-muted); opacity: 0.7;">↗</span>
+      </a>
+    </div>
+
+    <div class="nav-section" style="padding-top: 8px;">
       <div class="nav-label">물건 목록</div>
     </div>
     <div class="property-list" id="propertyList"></div>
@@ -835,6 +843,34 @@ table { border-collapse: collapse; width: 100%; }
         <div class="field"><label>취득일</label><input name="acquisitionDate" type="date"></div>
         <div class="field"><label>공시가격 (원)</label><input name="publicPrice" type="number"></div>
         <div class="field"><label>개별공시지가 (원/㎡)</label><input name="landPrice" type="number"></div>
+      </div>
+      
+      <!-- 부동산공시가격알리미 빠른 조회 -->
+      <div class="no-print" style="background: var(--bg-subtle); border: 1px solid var(--kiwoom-navy); border-left: 4px solid var(--kiwoom-navy); border-radius: 6px; padding: 12px 14px; margin-top: -10px; margin-bottom: 22px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+          <div style="flex: 1; min-width: 200px;">
+            <div style="font-size: 11px; letter-spacing: 0.1em; color: var(--kiwoom-navy); text-transform: uppercase; font-weight: 700; margin-bottom: 4px;">🏛️ 부동산공시가격알리미 빠른 조회</div>
+            <div style="font-size: 11px; color: var(--ink-soft);">국토부 공식 공시가격·공시지가를 조회해서 위 필드에 입력하세요. (호별 가격은 단지·동·호 입력 필요)</div>
+          </div>
+          <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+            <a href="https://www.realtyprice.kr/notice/main/mainBody.htm" target="_blank" rel="noopener noreferrer"
+               onclick="(function(){const f=document.getElementById('propertyForm');const nm=f.elements.name && f.elements.name.value;if(nm && navigator.clipboard){navigator.clipboard.writeText(nm).catch(()=>{});}})()"
+               style="display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; background: white; border: 1px solid var(--kiwoom-navy); border-radius: 5px; text-decoration: none; color: var(--kiwoom-navy); font-size: 12px; font-weight: 600; transition: all 0.15s;"
+               onmouseover="this.style.background='var(--kiwoom-navy-soft)'"
+               onmouseout="this.style.background='white'">
+              🏢 공동주택 공시가격 조회 <span style="font-size: 11px; opacity: 0.7;">↗</span>
+            </a>
+            <a href="https://www.realtyprice.kr/notice/town/landPriceOpenSite.htm" target="_blank" rel="noopener noreferrer"
+               style="display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; background: white; border: 1px solid var(--kiwoom-navy); border-radius: 5px; text-decoration: none; color: var(--kiwoom-navy); font-size: 12px; font-weight: 600; transition: all 0.15s;"
+               onmouseover="this.style.background='var(--kiwoom-navy-soft)'"
+               onmouseout="this.style.background='white'">
+              📍 개별공시지가 조회 <span style="font-size: 11px; opacity: 0.7;">↗</span>
+            </a>
+          </div>
+        </div>
+        <div style="margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); font-size: 10px; color: var(--ink-muted);">
+          💡 공동주택 공시가격 클릭 시 단지명이 자동 복사됩니다. 사이트 검색창에 <strong>Ctrl+V</strong>로 붙여넣으세요. <span style="color: var(--kiwoom-pink); font-weight: 600;">곧 자동입력 기능 추가 예정 (공공데이터 API 연동)</span>
+        </div>
       </div>
 
       <div class="section-h">메모</div>
@@ -2842,9 +2878,9 @@ function renderKaptAptSuggestion(apt, score, query) {
   `;
 }
 
-function fillFromKaptApt(apt) {
+async function fillFromKaptApt(apt) {
   const form = document.getElementById('propertyForm');
-  // 단지명·주소 자동 입력
+  // 단지명·주소 자동 입력 (즉시)
   if (form.elements.name) form.elements.name.value = apt.name || '';
   
   // 지번주소: 시군구 + 동 (예: "경상남도 창원시 마산합포구 산호동")
@@ -2870,16 +2906,127 @@ function fillFromKaptApt(apt) {
   
   document.getElementById('danjiSearch').value = apt.name || '';
   const suggestionsBox = document.getElementById('danjiSuggestions');
+  
+  // 1차 표시: 즉시 (단지명·주소 자동입력 완료) + 추가 정보 로딩 중
   suggestionsBox.innerHTML = `
     <div style="padding: 14px 16px; background: linear-gradient(135deg, #e6eaf5 0%, #c8d2ed 100%); border-radius: 8px; border-left: 4px solid var(--kiwoom-navy); margin-top: 8px;">
       <div style="font-size: 13px; color: var(--kiwoom-navy); font-weight: 700; margin-bottom: 6px;">✅ ${apt.name} 자동 입력 완료!</div>
       <div style="font-size: 11px; color: var(--ink-soft); line-height: 1.6;">
         📍 <strong>주소</strong>: ${addrParts || '-'}<br>
         ${apt.kapt_code ? `🏷️ <strong>K-apt 코드</strong>: ${apt.kapt_code}<br>` : ''}
-        💡 <strong>다음 입력</strong>: 도로명주소, 동·호, 전용면적, 해당 층, 준공일, 세대수 등은 등기부등본·건축물대장에서 확인하여 직접 입력해주세요.
+        <div id="kaptDetailLoading" style="margin-top: 8px; padding: 8px 10px; background: white; border-radius: 4px;">
+          <span style="display: inline-block; width: 12px; height: 12px; border: 2px solid var(--kiwoom-navy-soft); border-top-color: var(--kiwoom-navy); border-radius: 50%; animation: modal-reg-spin 1s linear infinite; vertical-align: middle; margin-right: 6px;"></span>
+          <span style="color: var(--kiwoom-navy); font-weight: 600;">단지 상세정보 자동 조회 중...</span> <span style="color: var(--ink-muted);">(세대수, 시공사, 준공일 등)</span>
+        </div>
       </div>
     </div>
   `;
+  
+  // 2차: K-apt 코드 있으면 단지 상세정보 자동 호출 (신규! 백엔드 /api/danji/info 활용)
+  if (apt.kapt_code) {
+    try {
+      const r = await fetch(`${BACKEND_URL}/api/danji/info/${apt.kapt_code}`);
+      const d = await r.json();
+      
+      if (d && !d.error) {
+        // 자동입력할 필드 정의
+        const fieldsToFill = [];
+        
+        // 도로명주소
+        if (d.addrRoad && form.elements.addrRoad && !form.elements.addrRoad.value) {
+          form.elements.addrRoad.value = d.addrRoad;
+          fieldsToFill.push(`📍 도로명주소: ${d.addrRoad}`);
+        }
+        // 지번주소 (백엔드가 주는 게 더 정확하면 덮어쓰기)
+        if (d.addrLot && form.elements.addrLot) {
+          form.elements.addrLot.value = d.addrLot;
+        }
+        // 세대수
+        if (d.totalUnits && form.elements.totalUnits && !form.elements.totalUnits.value) {
+          form.elements.totalUnits.value = d.totalUnits;
+          fieldsToFill.push(`🏢 세대수: ${Number(d.totalUnits).toLocaleString()}세대`);
+        }
+        // 준공일
+        if (d.completionDate && form.elements.completionDate && !form.elements.completionDate.value) {
+          form.elements.completionDate.value = d.completionDate;
+          fieldsToFill.push(`📅 준공일: ${d.completionDate}`);
+        }
+        // 시공사
+        if (d.contractor && form.elements.contractor && !form.elements.contractor.value) {
+          form.elements.contractor.value = d.contractor;
+          fieldsToFill.push(`🏗️ 시공사: ${d.contractor}`);
+        }
+        // 시행사
+        if (d.developer && form.elements.developer && !form.elements.developer.value) {
+          form.elements.developer.value = d.developer;
+          fieldsToFill.push(`📋 시행사: ${d.developer}`);
+        }
+        // 주용도
+        if (d.usage && form.elements.usage && !form.elements.usage.value) {
+          form.elements.usage.value = d.usage;
+          fieldsToFill.push(`🏠 주용도: ${d.usage}`);
+        }
+        
+        // 메모에 추가 정보 기록 (관리사무소 전화, 동수 등)
+        if (form.elements.notes) {
+          const additionalInfo = [];
+          if (d.totalDongs) additionalInfo.push(`${d.totalDongs}개동`);
+          if (d.heatingType) additionalInfo.push(`난방: ${d.heatingType}`);
+          if (d.parking && d.parking.total) additionalInfo.push(`주차: ${d.parking.total}대`);
+          if (d.tel) additionalInfo.push(`관리사무소: ${d.tel}`);
+          if (additionalInfo.length > 0) {
+            const note = form.elements.notes.value || '';
+            const newInfo = additionalInfo.join(' · ');
+            if (!note.includes(newInfo)) {
+              form.elements.notes.value = (note ? note + '\n' : '') + newInfo;
+            }
+          }
+        }
+        
+        // 성공 메시지 업데이트
+        const loadingDiv = document.getElementById('kaptDetailLoading');
+        if (loadingDiv) {
+          if (fieldsToFill.length > 0) {
+            loadingDiv.innerHTML = `
+              <div style="color: var(--kiwoom-navy); font-weight: 700; margin-bottom: 6px;">✨ 단지 상세정보 ${fieldsToFill.length}개 추가 자동입력!</div>
+              <div style="font-size: 11px; color: var(--ink-soft); line-height: 1.7;">
+                ${fieldsToFill.join('<br>')}
+              </div>
+            `;
+            loadingDiv.style.background = '#f0fff4';
+            loadingDiv.style.borderLeft = '3px solid #03c75a';
+            loadingDiv.style.padding = '10px 12px';
+          } else {
+            loadingDiv.innerHTML = `
+              <div style="color: var(--ink-muted); font-size: 11px;">
+                ℹ️ 단지 상세정보 조회 완료 (자동입력할 추가 정보 없음)
+              </div>
+            `;
+          }
+        }
+      } else {
+        // API 오류 또는 데이터 없음
+        const loadingDiv = document.getElementById('kaptDetailLoading');
+        if (loadingDiv) {
+          loadingDiv.innerHTML = `
+            <div style="color: var(--warn); font-size: 11px;">
+              ⚠️ 단지 상세정보 조회 실패 (${d.error || '데이터 없음'}). 수동 입력해주세요.
+            </div>
+          `;
+        }
+      }
+    } catch (e) {
+      // 네트워크 오류
+      const loadingDiv = document.getElementById('kaptDetailLoading');
+      if (loadingDiv) {
+        loadingDiv.innerHTML = `
+          <div style="color: var(--warn); font-size: 11px;">
+            ⚠️ 네트워크 오류로 단지 상세정보 조회 실패. 수동 입력해주세요.
+          </div>
+        `;
+      }
+    }
+  }
 }
 
 function renderDanjiSuggestion(key, score) {
