@@ -1726,7 +1726,7 @@ function renderListings() {
   c.innerHTML = `
     <div class="page-head">
       <div class="page-eyebrow">매물현황 · CURRENT LISTINGS</div>
-      <h1 class="page-title">${p.name} · 현재 시장 매물</h1>
+      <h1 class="page-title">${p.name}</h1>
       <div class="page-sub">네이버 부동산을 통해 현재 시장에 나와 있는 매물 호가를 확인하세요. 실거래가는 02 거래사례 비교 모듈에서 확인됩니다.</div>
     </div>
 
@@ -1819,22 +1819,22 @@ function renderExternalPortalLinks(p) {
         💡 <strong>"검색 결과 없음"</strong>이 나오면 다른 버튼도 함께 활용하세요. 같은 단지도 등록명이 다를 수 있어요.
       </p>
       
-      <!-- 메인 추천 버튼: 네이버 통합검색 -->
+      <!-- 옵션 1: 네이버 통합검색 -->
       <a href="https://search.naver.com/search.naver?query=${q}" 
          target="_blank" rel="noopener noreferrer"
-         style="display: block; padding: 18px 22px; background: linear-gradient(135deg, var(--kiwoom-navy) 0%, var(--kiwoom-navy-deep) 100%); border-radius: 10px; text-decoration: none; color: white; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(1, 31, 142, 0.25); transition: all 0.15s;"
-         onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 12px rgba(1, 31, 142, 0.35)';"
-         onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 2px 8px rgba(1, 31, 142, 0.25)';">
+         style="display: block; padding: 14px 18px; background: white; border: 2px solid var(--kiwoom-navy); border-radius: 8px; text-decoration: none; color: var(--ink); margin-bottom: 10px; transition: all 0.15s;"
+         onmouseover="this.style.background='var(--kiwoom-navy-soft)'; this.style.transform='translateY(-1px)';"
+         onmouseout="this.style.background='white'; this.style.transform='translateY(0)';">
         <div style="display: flex; align-items: center; justify-content: space-between;">
           <div>
-            <div style="font-size: 16px; font-weight: 700; margin-bottom: 4px;">🟢 네이버 통합검색 (가장 풍부한 정보) ⭐</div>
-            <div style="font-size: 12px; opacity: 0.95;">"${danjiName}" — 단지 정보 + 부동산 + 블로그 후기 + 뉴스 + 지도 + 지식인 한번에</div>
+            <div style="font-weight: 700; font-size: 14px; color: var(--kiwoom-navy);">🔍 네이버 통합검색 (가장 풍부한 정보) ⭐</div>
+            <div style="font-size: 11px; color: var(--ink-muted); margin-top: 4px;">"${danjiName}" — 단지 정보 + 부동산 + 블로그 후기 + 뉴스 + 지도 + 지식인 한번에</div>
           </div>
-          <span style="font-size: 18px;">↗</span>
+          <span style="font-size: 14px; color: var(--ink-muted);">↗</span>
         </div>
       </a>
       
-      <!-- 보조 옵션 1: 네이버 부동산 (단지 상세 + 매물 시세) -->
+      <!-- 옵션 2: 네이버 부동산 (단지 상세 + 매물 시세) -->
       <a href="https://land.naver.com/" 
          target="_blank" rel="noopener noreferrer"
          onclick="navigator.clipboard && navigator.clipboard.writeText('${danjiName}').catch(()=>{});"
@@ -1850,15 +1850,15 @@ function renderExternalPortalLinks(p) {
         </div>
       </a>
       
-      <!-- 보조 옵션 2: 네이버 지도 -->
+      <!-- 옵션 3: 네이버 지도 -->
       <a href="https://map.naver.com/p/search/${qDanjiSigungu || q}" 
          target="_blank" rel="noopener noreferrer"
-         style="display: block; padding: 14px 18px; background: white; border: 2px solid var(--line-strong); border-radius: 8px; text-decoration: none; color: var(--ink); transition: all 0.15s;"
-         onmouseover="this.style.background='var(--bg-subtle)'; this.style.transform='translateY(-1px)';"
+         style="display: block; padding: 14px 18px; background: white; border: 2px solid var(--kiwoom-navy); border-radius: 8px; text-decoration: none; color: var(--ink); margin-bottom: 10px; transition: all 0.15s;"
+         onmouseover="this.style.background='var(--kiwoom-navy-soft)'; this.style.transform='translateY(-1px)';"
          onmouseout="this.style.background='white'; this.style.transform='translateY(0)';">
         <div style="display: flex; align-items: center; justify-content: space-between;">
           <div>
-            <div style="font-weight: 700; font-size: 14px; color: var(--ink);">🗺️ 네이버 지도 (위치 + 주변 시설)</div>
+            <div style="font-weight: 700; font-size: 14px; color: var(--kiwoom-navy);">🗺️ 네이버 지도 (위치 + 주변 시설) ⭐</div>
             <div style="font-size: 11px; color: var(--ink-muted); margin-top: 4px;">"${sigunguShort} ${danjiCore}" — 단지 위치, 학교·지하철·편의시설 빠르게 확인</div>
           </div>
           <span style="font-size: 14px; color: var(--ink-muted);">↗</span>
