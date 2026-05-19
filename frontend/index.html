@@ -2565,32 +2565,103 @@ function applyRegistryToModalForm(a) {
 // ============================================================
 // 단지 자동입력 (Autofill from DANJI_DB)
 // ============================================================
+// 검색어 정규화 (띄어쓰기·특수문자 제거, 소문자화)
+function _normalizeQuery(s) {
+  return (s || '').toLowerCase().replace(/[\s\-_·,()\.]/g, '');
+}
+
+// 검색어와 후보의 매칭 점수 계산 (0~100점)
+// - 정확 일치: 100점
+// - 시작 일치: 80~95점 (길이 차이 작을수록 높음)
+// - 포함: 50~75점 (매칭 위치가 앞쪽일수록 높음)
+// - 시군구 보너스: +10점 (검색어에 시군구가 포함되고 후보 주소와 일치)
+function _matchScore(rawQuery, name, addr) {
+  const q = _normalizeQuery(rawQuery);
+  const nName = _normalizeQuery(name);
+  const nAddr = _normalizeQuery(addr || '');
+  if (!q || !nName) return 0;
+  
+  let score = 0;
+  
+  // 정확 일치
+  if (nName === q) score = 100;
+  // 시작 일치
+  else if (nName.startsWith(q)) {
+    // 길이 비율 (단지명이 짧을수록 정확도 높음)
+    score = 80 + Math.floor(15 * (q.length / nName.length));
+  }
+  // 단지명에 포함
+  else if (nName.includes(q)) {
+    const pos = nName.indexOf(q);
+    // 매칭 위치가 앞일수록 점수 높음
+    score = 75 - Math.min(20, pos * 3);
+  }
+  // 주소에만 포함 (낮은 점수)
+  else if (nAddr.includes(q)) {
+    score = 30;
+  }
+  // 부분 매칭: 검색어를 단어 단위로 분리해서 각 단어가 포함되는지 확인
+  // (예: "감일 한라" → "감일" + "한라" 둘 다 포함되면 점수)
+  else {
+    const tokens = rawQuery.toLowerCase().split(/[\s\-_·,()\.]+/).filter(t => t.length > 0);
+    if (tokens.length >= 2) {
+      let matched = 0;
+      for (const t of tokens) {
+        const nt = _normalizeQuery(t);
+        if (nt && (nName.includes(nt) || nAddr.includes(nt))) matched++;
+      }
+      if (matched === tokens.length) score = 55;  // 모든 토큰 매칭
+      else if (matched > 0) score = 30 + matched * 8;  // 일부만 매칭
+    }
+  }
+  
+  // 시군구 보너스: 검색어에 후보 주소의 시군구가 포함되면 추가 점수
+  if (score > 0 && nAddr) {
+    // 주소에서 시군구 추출 (예: "경기 하남시 감이동" → "하남시")
+    const sigunguMatch = (addr || '').match(/[가-힣]+(시|군|구)/g);
+    if (sigunguMatch) {
+      for (const s of sigunguMatch) {
+        if (rawQuery.includes(s)) { score += 10; break; }
+      }
+    }
+  }
+  
+  return Math.min(100, score);
+}
+
 async function searchDanji(query) {
   const suggestionsBox = document.getElementById('danjiSuggestions');
   if (!query || query.trim().length === 0) {
-    // 빈 입력 시 즐겨찾기 단지 전체 목록 표시
+    // 빈 입력 시 즐겨찾기 + 최근 사용 단지 표시
     const allKeys = Object.keys(DANJI_DB);
-    suggestionsBox.innerHTML = allKeys.length === 0 ? '' : `
-      <div style="font-size: 10px; color: var(--ink-muted); padding: 6px 4px; letter-spacing: 0.05em;">즐겨찾기 단지 (${allKeys.length}건)</div>
-      ${allKeys.map(key => renderDanjiSuggestion(key)).join('')}
-    `;
+    const recent = _getRecentDanjis();
+    let html = '';
+    if (recent.length > 0) {
+      html += `<div style="font-size: 10px; color: var(--kiwoom-navy); padding: 6px 4px; letter-spacing: 0.05em; font-weight: 700;">⏱️ 최근 사용 단지 (${recent.length}건)</div>`;
+      html += recent.map(item => renderRecentDanjiSuggestion(item)).join('');
+    }
+    if (allKeys.length > 0) {
+      html += `<div style="font-size: 10px; color: var(--ink-muted); padding: 6px 4px; letter-spacing: 0.05em; ${recent.length > 0 ? 'border-top: 1px dashed var(--line); margin-top: 6px;' : ''}">즐겨찾기 단지 (${allKeys.length}건)</div>`;
+      html += allKeys.map(key => renderDanjiSuggestion(key)).join('');
+    }
+    suggestionsBox.innerHTML = html || '<div style="padding: 10px; font-size: 11px; color: var(--ink-muted); text-align: center;">단지명을 입력하세요</div>';
     return;
   }
   
-  const q = query.toLowerCase().replace(/\s/g, '');
-  
-  // 1. 오프라인 즐겨찾기 DB 검색 (즉시)
-  const localMatches = Object.keys(DANJI_DB).filter(key => {
+  // 1. 오프라인 즐겨찾기 DB 검색 (점수 매기기)
+  const localScored = Object.keys(DANJI_DB).map(key => {
     const danji = DANJI_DB[key];
-    const haystack = (key + danji.name + (danji.addrRoad || '') + (danji.addrLot || '')).toLowerCase().replace(/\s/g, '');
-    return haystack.includes(q);
-  });
+    const addr = (danji.addrRoad || '') + ' ' + (danji.addrLot || '');
+    const score = _matchScore(query, danji.name, addr);
+    return { key, danji, score };
+  }).filter(x => x.score > 0)
+    .sort((a, b) => b.score - a.score);
   
   // 먼저 오프라인 결과만 즉시 표시 (로딩 중 K-apt 결과 추가)
   let html = '';
-  if (localMatches.length > 0) {
-    html += `<div style="font-size: 10px; color: var(--green); padding: 6px 4px; font-weight: 600;">📌 즐겨찾기 단지 (${localMatches.length}건)</div>`;
-    html += localMatches.map(key => renderDanjiSuggestion(key)).join('');
+  if (localScored.length > 0) {
+    html += `<div style="font-size: 10px; color: var(--kiwoom-navy); padding: 6px 4px; font-weight: 700;">📌 즐겨찾기 단지 (${localScored.length}건)</div>`;
+    html += localScored.map(x => renderDanjiSuggestion(x.key, x.score)).join('');
   }
   html += `<div id="kaptSearchLoading" style="padding: 8px; font-size: 11px; color: var(--ink-muted); text-align: center;">⏳ K-apt 전국 22,147개 단지 검색 중...</div>`;
   suggestionsBox.innerHTML = html;
@@ -2599,21 +2670,63 @@ async function searchDanji(query) {
   if (query.length < 2) return;
   
   try {
-    const r = await fetch(`${BACKEND_URL}/api/search/apt?q=${encodeURIComponent(query)}&limit=10`);
+    // 검색어를 시군구 토큰과 단지명 토큰으로 분리해서 검색
+    // (예: "강남구 래미안" → 단지명만 "래미안"으로 검색하고 시군구로 필터링)
+    const tokens = query.trim().split(/\s+/);
+    let danjiQuery = query;
+    let sigunguFilter = '';
+    
+    // 마지막이 아닌 토큰 중에 시·군·구로 끝나는 게 있으면 분리
+    if (tokens.length >= 2) {
+      for (let i = 0; i < tokens.length - 1; i++) {
+        if (/(시|군|구)$/.test(tokens[i])) {
+          sigunguFilter = tokens[i];
+          danjiQuery = tokens.slice(0, i).concat(tokens.slice(i + 1)).join(' ').trim() || tokens[tokens.length - 1];
+          break;
+        }
+      }
+    }
+    
+    const r = await fetch(`${BACKEND_URL}/api/search/apt?q=${encodeURIComponent(danjiQuery)}&limit=30`);
     const d = await r.json();
-    const kaptResults = (d && d.items) ? d.items.slice(0, 10) : [];
+    let kaptItems = (d && d.items) ? d.items : [];
+    
+    // 시군구 필터 적용
+    if (sigunguFilter) {
+      kaptItems = kaptItems.filter(apt => {
+        const fullAddr = (apt.sigungu || '') + ' ' + (apt.dong || '');
+        return fullAddr.includes(sigunguFilter);
+      });
+    }
+    
+    // 매칭 점수로 정렬
+    const kaptScored = kaptItems.map(apt => {
+      const fullAddr = (apt.sigungu || '') + ' ' + (apt.dong || '');
+      const score = _matchScore(query, apt.name || '', fullAddr);
+      return { apt, score };
+    }).filter(x => x.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10);
     
     let newHtml = '';
-    if (localMatches.length > 0) {
-      newHtml += `<div style="font-size: 10px; color: var(--green); padding: 6px 4px; font-weight: 600;">📌 즐겨찾기 단지 (${localMatches.length}건)</div>`;
-      newHtml += localMatches.map(key => renderDanjiSuggestion(key)).join('');
+    if (localScored.length > 0) {
+      newHtml += `<div style="font-size: 10px; color: var(--kiwoom-navy); padding: 6px 4px; font-weight: 700;">📌 즐겨찾기 단지 (${localScored.length}건)</div>`;
+      newHtml += localScored.map(x => renderDanjiSuggestion(x.key, x.score)).join('');
     }
-    if (kaptResults.length > 0) {
-      newHtml += `<div style="font-size: 10px; color: var(--kiwoom-navy); padding: 8px 4px 6px; font-weight: 700; ${localMatches.length > 0 ? 'border-top: 1px dashed var(--line); margin-top: 6px;' : ''}">🏢 K-apt 전국 단지 (${kaptResults.length}건)</div>`;
-      newHtml += kaptResults.map(apt => renderKaptAptSuggestion(apt)).join('');
+    if (kaptScored.length > 0) {
+      newHtml += `<div style="font-size: 10px; color: var(--kiwoom-navy); padding: 8px 4px 6px; font-weight: 700; ${localScored.length > 0 ? 'border-top: 1px dashed var(--line); margin-top: 6px;' : ''}">🏢 K-apt 전국 단지 (${kaptScored.length}건${sigunguFilter ? ` · ${sigunguFilter} 필터` : ''})</div>`;
+      newHtml += kaptScored.map(x => renderKaptAptSuggestion(x.apt, x.score, query)).join('');
     }
-    if (!newHtml || (localMatches.length === 0 && kaptResults.length === 0)) {
-      newHtml = `<div style="padding: 12px; font-size: 12px; color: var(--ink-muted); text-align: center;">일치하는 단지가 없습니다. 단지명을 다르게 입력해보세요. (예: '산호베스티움', '아너힐즈')</div>`;
+    if (!newHtml || (localScored.length === 0 && kaptScored.length === 0)) {
+      newHtml = `
+        <div style="padding: 14px; font-size: 12px; color: var(--ink-soft); text-align: center; background: var(--bg-subtle); border-radius: 6px;">
+          <div style="margin-bottom: 6px;">🔎 일치하는 단지가 없습니다</div>
+          <div style="font-size: 11px; color: var(--ink-muted); line-height: 1.6;">
+            💡 <strong>띄어쓰기</strong>를 빼거나 추가해보세요<br>
+            💡 약칭 사용: <strong>"산호베스티움"</strong> ↔ <strong>"산호베스티움아파트"</strong><br>
+            💡 시군구 추가: <strong>"강남구 래미안"</strong>처럼 결합 검색
+          </div>
+        </div>`;
     }
     suggestionsBox.innerHTML = newHtml;
   } catch (e) {
@@ -2625,19 +2738,88 @@ async function searchDanji(query) {
   }
 }
 
-function renderKaptAptSuggestion(apt) {
-  const aptJson = JSON.stringify(apt).replace(/'/g, "\\'").replace(/"/g, '&quot;');
+// ============================================================
+// 최근 사용 단지 (개선 5)
+// ============================================================
+function _getRecentDanjis() {
+  try {
+    const raw = localStorage.getItem('rea_recent_danjis');
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr.slice(0, 5) : [];
+  } catch (e) { return []; }
+}
+
+function _addRecentDanji(item) {
+  // item: { source: 'kapt'|'fav', name, sigungu, dong, kapt_code, key }
+  try {
+    let arr = _getRecentDanjis();
+    // 중복 제거 (이름·시군구 기준)
+    arr = arr.filter(x => !(x.name === item.name && (x.sigungu || '') === (item.sigungu || '')));
+    arr.unshift({ ...item, ts: Date.now() });
+    arr = arr.slice(0, 5);  // 최근 5개만 유지
+    localStorage.setItem('rea_recent_danjis', JSON.stringify(arr));
+  } catch (e) {}
+}
+
+function renderRecentDanjiSuggestion(item) {
+  const itemJson = JSON.stringify(item).replace(/'/g, "\\'").replace(/"/g, '&quot;');
+  const fullAddr = [item.sigungu, item.dong].filter(x => x).join(' ');
+  const isKapt = item.source === 'kapt';
+  return `
+    <div onclick='fillFromRecentDanji(${JSON.stringify(item)})' style="padding: 10px 12px; border-radius: 5px; cursor: pointer; transition: all 0.1s; border: 1px solid transparent; margin: 2px 0; background: var(--kiwoom-navy-soft);"
+      onmouseover="this.style.background='#d4dcf0'; this.style.borderColor='var(--kiwoom-navy)'"
+      onmouseout="this.style.background='var(--kiwoom-navy-soft)'; this.style.borderColor='transparent'">
+      <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+        <span style="font-weight: 600; font-size: 13px; color: var(--ink);">${item.name || '(단지명 없음)'}</span>
+        <span style="background: var(--kiwoom-navy); color: white; padding: 1px 5px; border-radius: 3px; font-size: 9px; font-weight: 700; letter-spacing: 0.05em;">${isKapt ? 'K-APT' : '즐겨찾기'}</span>
+        <span style="background: var(--kiwoom-pink); color: white; padding: 1px 5px; border-radius: 3px; font-size: 9px; font-weight: 700;">최근</span>
+      </div>
+      <div style="font-size: 11px; color: var(--ink-muted); margin-top: 3px;">${fullAddr || '주소 정보 없음'}</div>
+    </div>
+  `;
+}
+
+function fillFromRecentDanji(item) {
+  if (item.source === 'fav' && item.key) {
+    fillFromDanji(item.key);
+  } else if (item.source === 'kapt') {
+    // K-apt 단지: 원본 객체 재구성해서 fillFromKaptApt에 전달
+    fillFromKaptApt({
+      name: item.name,
+      sigungu: item.sigungu,
+      dong: item.dong,
+      kapt_code: item.kapt_code
+    });
+  }
+}
+
+function renderKaptAptSuggestion(apt, score, query) {
   const fullAddr = [apt.sigungu, apt.dong].filter(x => x).join(' ');
+  // 매칭 점수 배지
+  let scoreBadge = '';
+  if (typeof score === 'number') {
+    if (score >= 90) scoreBadge = `<span style="background: var(--kiwoom-pink); color: white; padding: 1px 5px; border-radius: 3px; font-size: 9px; font-weight: 700;">정확</span>`;
+    else if (score >= 70) scoreBadge = `<span style="background: var(--kiwoom-navy-light); color: white; padding: 1px 5px; border-radius: 3px; font-size: 9px; font-weight: 700;">우수</span>`;
+  }
+  // 시군구 강조: 검색어에 시군구가 포함되면 굵게
+  let addrHtml = fullAddr || '주소 정보 없음';
+  if (query && fullAddr) {
+    const sigunguMatch = fullAddr.match(/[가-힣]+(시|군|구)/);
+    if (sigunguMatch && query.includes(sigunguMatch[0])) {
+      addrHtml = fullAddr.replace(sigunguMatch[0], `<strong style="color: var(--kiwoom-navy);">${sigunguMatch[0]}</strong>`);
+    }
+  }
   return `
     <div onclick='fillFromKaptApt(${JSON.stringify(apt)})' style="padding: 10px 12px; border-radius: 5px; cursor: pointer; transition: all 0.1s; border: 1px solid transparent; margin: 2px 0;"
       onmouseover="this.style.background='var(--kiwoom-navy-soft)'; this.style.borderColor='var(--kiwoom-navy)'"
       onmouseout="this.style.background='transparent'; this.style.borderColor='transparent'">
       <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
         <span style="font-weight: 600; font-size: 13px; color: var(--ink);">${apt.name || '(단지명 없음)'}</span>
-        <span style="background: var(--kiwoom-navy); color: white; padding: 1px 5px; border-radius: 3px; font-size: 9px; font-weight: 700; letter-spacing: 0.05em;">K-APT</span>
+        <span style="background: var(--kiwoom-navy); color: white; padding: 1px 5px; border-radius: 3px; font-size: 9px; font-weight: 700; letter-spacing: 0.05em;">K-APT</span>${scoreBadge}
       </div>
       <div style="font-size: 11px; color: var(--ink-muted); margin-top: 3px;">
-        ${fullAddr || '주소 정보 없음'}${apt.kapt_code ? ` <span style="font-family: var(--mono); opacity: 0.7;">· [${apt.kapt_code}]</span>` : ''}
+        ${addrHtml}${apt.kapt_code ? ` <span style="font-family: var(--mono); opacity: 0.7;">· [${apt.kapt_code}]</span>` : ''}
       </div>
     </div>
   `;
@@ -2660,6 +2842,15 @@ function fillFromKaptApt(apt) {
     }
   }
   
+  // 최근 사용 단지 기록 (개선 5)
+  _addRecentDanji({
+    source: 'kapt',
+    name: apt.name,
+    sigungu: apt.sigungu,
+    dong: apt.dong,
+    kapt_code: apt.kapt_code
+  });
+  
   document.getElementById('danjiSearch').value = apt.name || '';
   const suggestionsBox = document.getElementById('danjiSuggestions');
   suggestionsBox.innerHTML = `
@@ -2674,13 +2865,21 @@ function fillFromKaptApt(apt) {
   `;
 }
 
-function renderDanjiSuggestion(key) {
+function renderDanjiSuggestion(key, score) {
   const d = DANJI_DB[key];
+  // 매칭 점수 배지 (90+ 정확 / 70+ 우수 / 그 외 일반)
+  let scoreBadge = '';
+  if (typeof score === 'number') {
+    if (score >= 90) scoreBadge = `<span style="background: var(--kiwoom-pink); color: white; padding: 1px 5px; border-radius: 3px; font-size: 9px; font-weight: 700;">정확</span>`;
+    else if (score >= 70) scoreBadge = `<span style="background: var(--kiwoom-navy); color: white; padding: 1px 5px; border-radius: 3px; font-size: 9px; font-weight: 700;">우수</span>`;
+  }
   return `
     <div onclick="fillFromDanji('${key}')" style="padding: 10px 12px; border-radius: 5px; cursor: pointer; transition: background 0.1s; border: 1px solid transparent;"
       onmouseover="this.style.background='var(--bg-card)'; this.style.borderColor='var(--line)'"
       onmouseout="this.style.background='transparent'; this.style.borderColor='transparent'">
-      <div style="font-weight: 600; font-size: 13px; color: var(--ink);">${d.name}</div>
+      <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+        <span style="font-weight: 600; font-size: 13px; color: var(--ink);">${d.name}</span>${scoreBadge}
+      </div>
       <div style="font-size: 11px; color: var(--ink-muted); margin-top: 2px;">
         ${d.addrRoad || d.addrLot} · ${d.totalUnits}세대 · ${d.completionDate ? d.completionDate.slice(0,4) + '년' : ''} 준공
       </div>
@@ -2692,6 +2891,16 @@ function fillFromDanji(key) {
   const d = DANJI_DB[key];
   if (!d) return;
   const form = document.getElementById('propertyForm');
+  
+  // 최근 사용 단지 기록 (개선 5)
+  _addRecentDanji({
+    source: 'fav',
+    key: key,
+    name: d.name,
+    sigungu: '',  // 즐겨찾기 단지는 상세 주소 분해 안 함
+    dong: d.addrLot || d.addrRoad || ''
+  });
+  
   // 단지-레벨 필드만 채움 (동·호·면적·소유자는 사용자가 직접)
   const fillFields = ['name', 'addrRoad', 'addrLot', 'totalUnits', 'totalFloors',
     'completionDate', 'zoning', 'usage', 'contractor', 'developer', 'notes'];
