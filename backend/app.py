@@ -128,10 +128,10 @@ def parse_xml_items(xml_text):
 
 
 def parse_kapt_response(response_text):
-    """K-apt  API 응답을 파싱 (XML/JSON 자동 감지).
+    """K-apt API 응답을 파싱 (XML/JSON 자동 감지, V3/V4 양쪽 지원).
     
-     API는 _type 파라미터에 따라 XML 또는 JSON으로 응답하며,
-    파라미터 미지정 시 기본 형식이 XML과 다를 수 있음. 양쪽 모두 처리.
+    V3 (K-apt): response.body.items.item (items wrapper + item 리스트)
+    V4 (신규): body.item (단수형, 객체 직접) ← 본 함수에서 새로 지원
     
     Returns: (items_list, error_message_or_None)
     """
@@ -140,33 +140,39 @@ def parse_kapt_response(response_text):
     if not text:
         return [], 'API 응답이 비어있음'
     
-    # JSON 시도 (에서 기본일 가능성 큼)
+    # JSON 시도 (V4 디폴트 형식)
     if text[0] in ('{', '['):
         try:
             data = _json.loads(text)
-            # K-apt JSON 구조: { "response": { "header": {...}, "body": { "items": {...} } } }
             response_node = data.get('response', data) if isinstance(data, dict) else {}
             
-            # resultCode 확인
             header = response_node.get('header', {}) if isinstance(response_node, dict) else {}
             result_code = str(header.get('resultCode', '')).strip()
             result_msg = str(header.get('resultMsg', '')).strip()
             if result_code and result_code not in ('00', '000'):
                 return [], f'API 오류 [{result_code}]: {result_msg}'
             
-            # items 추출
             body = response_node.get('body', {}) if isinstance(response_node, dict) else {}
-            items_wrapper = body.get('items') if isinstance(body, dict) else None
+            items_wrapper = None
+            if isinstance(body, dict):
+                items_wrapper = body.get('items')
+                # V4 호환: items가 없으면 item (단수형) 시도
+                if items_wrapper is None or items_wrapper == '':
+                    _item_direct = body.get('item')
+                    if isinstance(_item_direct, dict):
+                        items_wrapper = [_item_direct]
+                    elif isinstance(_item_direct, list):
+                        items_wrapper = _item_direct
             
             if items_wrapper is None or items_wrapper == '':
-                return [], None  # 데이터 없음 (오류 아님)
+                return [], None
             
             if isinstance(items_wrapper, list):
                 items = items_wrapper
             elif isinstance(items_wrapper, dict):
                 inner = items_wrapper.get('item', [])
                 if isinstance(inner, dict):
-                    items = [inner]  # 단일 아이템
+                    items = [inner]
                 elif isinstance(inner, list):
                     items = inner
                 else:
@@ -174,7 +180,6 @@ def parse_kapt_response(response_text):
             else:
                 items = []
             
-            # 모든 값을 string으로 변환 (XML 파싱과 호환)
             normalized = []
             for it in items:
                 if isinstance(it, dict):
@@ -183,7 +188,6 @@ def parse_kapt_response(response_text):
         except _json.JSONDecodeError as e:
             return [], f'JSON 파싱 실패: {e}. 응답 앞부분: {text[:150]}'
     
-    # XML 시도 (V2 형식 호환)
     if text[0] == '<':
         try:
             root = ET.fromstring(text)
@@ -199,7 +203,6 @@ def parse_kapt_response(response_text):
         except ET.ParseError as e:
             return [], f'XML 파싱 실패: {e}. 응답 앞부분: {text[:150]}'
     
-    # 둘 다 아닌 경우 (HTML 에러 페이지 등)
     return [], f'알 수 없는 응답 형식. 응답 앞부분: {text[:200]}'
 
 
