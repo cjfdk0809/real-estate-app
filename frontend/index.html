@@ -918,6 +918,71 @@ table { border-collapse: collapse; width: 100%; }
     right: 12px !important;
   }
 }
+/* ============================================
+   STICKY HEADER v8 - X 버튼 + 안내문구 최종 해결 (2026-05-20)
+   ============================================ */
+
+/* 1. modal-title z-index 낮춤 (X 버튼이 확실히 위로) */
+.modal-title {
+  position: sticky !important;
+  top: 0 !important;
+  margin: -28px -32px 0 !important;
+  padding: 22px 60px 4px 32px !important;
+  background: var(--bg-card) !important;
+  z-index: 1 !important;  /* 5 → 1 */
+  border-bottom: none !important;
+  isolation: auto !important;
+}
+
+/* 2. modal-sub 위치 조정 (modal-title 끝에 정확히 맞춤) */
+.modal-sub {
+  position: sticky !important;
+  top: 60px !important;  /* 50 → 60 (잘림 방지) */
+  margin: 0 -32px 22px !important;
+  padding: 4px 32px 14px !important;
+  background: var(--bg-card) !important;
+  z-index: 2 !important;  /* 4 → 2 */
+  border-bottom: none !important;
+}
+
+/* 3. X 버튼 강력 표시 (자체 배경 + 새 stacking context) */
+.modal-close {
+  position: absolute !important;
+  top: 14px !important;
+  right: 16px !important;
+  z-index: 9999 !important;
+  background: var(--bg-card) !important;  /* 자체 흰 배경 */
+  isolation: isolate !important;
+  transform: translateZ(0) !important;  /* GPU 레이어 강제 */
+  width: 32px !important;
+  height: 32px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: 6px !important;
+  font-size: 22px !important;
+  line-height: 1 !important;
+  color: var(--ink-muted) !important;
+  border: none !important;
+  cursor: pointer !important;
+}
+.modal-close:hover {
+  background: var(--bg-subtle) !important;
+  color: var(--kiwoom-navy) !important;
+}
+
+/* 모바일 */
+@media (max-width: 900px) {
+  .modal-sub {
+    top: 50px !important;
+    margin: 0 -16px 16px !important;
+    padding: 4px 16px 12px !important;
+  }
+  .modal-close {
+    top: 10px !important;
+    right: 12px !important;
+  }
+}
 </style>
 </head>
 <body>
