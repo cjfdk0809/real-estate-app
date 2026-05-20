@@ -846,6 +846,18 @@ table { border-collapse: collapse; width: 100%; }
     height: 110px !important;  /* 100 → 110 */
   }
 }
+/* ============================================
+   STICKY HEADER v4 - X 버튼 강제 표시 (2026-05-20)
+   ============================================ */
+
+/* X 닫기 버튼을 sticky 헤더 위에 강제로 띄우기 */
+.modal-close {
+  position: absolute !important;
+  top: 14px !important;
+  right: 16px !important;
+  z-index: 9999 !important;
+  isolation: isolate !important;  /* 새 stacking context 강제 생성 */
+}
 </style>
 </head>
 <body>
