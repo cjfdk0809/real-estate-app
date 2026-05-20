@@ -858,6 +858,66 @@ table { border-collapse: collapse; width: 100%; }
   z-index: 9999 !important;
   isolation: isolate !important;  /* 새 stacking context 강제 생성 */
 }
+/* ============================================
+   STICKY HEADER v6 - 모달 상단 빈틈 제거 (2026-05-20)
+   ============================================ */
+
+/* 1. 모달 padding-top 제거 → modal-title이 직접 상단부터 차지 */
+.modal {
+  padding-top: 0 !important;
+}
+
+/* 2. modal-title이 modal 상단부터 시작 + sticky */
+.modal-title {
+  position: sticky !important;
+  top: 0 !important;
+  margin: 0 -32px 0 !important;
+  padding: 28px 60px 4px 32px !important;
+  background: var(--bg-card) !important;
+  z-index: 5 !important;
+  border-bottom: none !important;
+  isolation: isolate !important;
+}
+
+/* 3. modal-sub sticky 위치 재조정 */
+.modal-sub {
+  position: sticky !important;
+  top: 56px !important;
+  margin: 0 -32px 22px !important;
+  padding: 0 32px 14px !important;
+  background: var(--bg-card) !important;
+  z-index: 4 !important;
+  border-bottom: none !important;
+}
+
+/* 4. X 버튼 위치 조정 (modal padding 변경 반영) */
+.modal-close {
+  position: absolute !important;
+  top: 14px !important;
+  right: 16px !important;
+  z-index: 9999 !important;
+  isolation: isolate !important;
+}
+
+/* 5. 모바일 대응 */
+@media (max-width: 900px) {
+  .modal {
+    padding-top: 0 !important;
+  }
+  .modal-title {
+    margin: 0 -16px 0 !important;
+    padding: 20px 50px 4px 16px !important;
+  }
+  .modal-sub {
+    top: 48px !important;
+    margin: 0 -16px 16px !important;
+    padding: 0 16px 12px !important;
+  }
+  .modal-close {
+    top: 10px !important;
+    right: 12px !important;
+  }
+}
 </style>
 </head>
 <body>
