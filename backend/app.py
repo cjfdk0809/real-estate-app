@@ -12,6 +12,7 @@
     SUPABASE_KEY=Supabase service_role(secret) 키 (sb_secret_... 또는 eyJ...)
 """
 import os
+import re
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from functools import lru_cache
@@ -35,6 +36,28 @@ except ImportError:
 # 환경설정
 # ============================================================
 load_dotenv()
+# ============================================================
+# 🔒 보안: 에러 메시지 마스킹 함수 (v2.10-sec)
+# ============================================================
+def mask_sensitive_info(text):
+    """에러 메시지에서 인증키 등 민감 정보 자동 마스킹."""
+    if not text:
+        return text
+    text = str(text)
+    text = re.sub(r'serviceKey=[^&\s\'"]+', 'serviceKey=***MASKED***', text)
+    text = re.sub(r'api[-_]?key[=:]\s*[^&\s\'"]+', 'api-key=***MASKED***', text, flags=re.IGNORECASE)
+    text = re.sub(r'authorization[:=]\s*[^\s,\'"]+', 'authorization: ***MASKED***', text, flags=re.IGNORECASE)
+    text = re.sub(r'Bearer\s+[^\s,\'"]+', 'Bearer ***MASKED***', text)
+    if 'http' in text and len(text) > 300:
+        text = re.sub(r'(https?://[^\s]{50})[^\s]{50,}', r'\1...[URL_TRUNCATED]', text)
+    return text
+
+
+def safe_error(msg, e=None):
+    """안전한 에러 응답 생성. 모든 오류 메시지에 마스킹 적용."""
+    if e is not None:
+        return mask_sensitive_info(f'{msg}: {e}')
+    return mask_sensitive_info(msg)
 API_KEY = os.environ.get('MOLIT_API_KEY', '').strip()
 
 # Supabase 연결 (자동완성 DB) - 환경변수 미설정 시 None으로 두고 기존 기능은 그대로
@@ -444,7 +467,7 @@ def get_transactions():
             },
         })
     except requests.exceptions.HTTPError as e:
-        return jsonify({'error': f'국토부 API HTTP 오류: {e}'}), 502
+        return jsonify({'error': safe_error('국토부 API HTTP 오류', e)}), 502
     except requests.exceptions.Timeout:
         return jsonify({'error': '국토부 API 응답 시간 초과 (30초)'}), 504
     except Exception as e:
@@ -755,9 +778,9 @@ def get_danji_info(kapt_code):
         
         return jsonify(result)
     except requests.exceptions.HTTPError as e:
-        return jsonify({'error': f'국토부 API HTTP 오류: {e}'}), 502
+        return jsonify({'error': safe_error('국토부 API HTTP 오류', e)}), 502
     except Exception as e:
-        return jsonify({'error': f'서버 오류: {e}'}), 500
+        return jsonify({'error': safe_error('서버 오류', e)}), 500
 
 
 # ============================================================
