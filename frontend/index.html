@@ -773,6 +773,62 @@ table { border-collapse: collapse; width: 100%; }
     padding: 16px 50px 6px 16px;
   }
 }  
+/* ============================================
+   STICKY HEADER v3 - 최종 조정 (2026-05-20)
+   ============================================ */
+
+/* 1. 키움 CI 영역 - page-head 높이에 맞춤 + 세로 중앙 정렬 */
+.brand-ci-wrap {
+  height: 128px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 16px 20px !important;
+  box-sizing: border-box !important;
+}
+
+/* 2. 모달 제목 sticky 최종 (이전 v1 잔여 override) */
+.modal-title {
+  position: sticky !important;
+  top: 0 !important;
+  background: var(--bg-card) !important;
+  margin: -28px -32px 0 !important;
+  padding: 22px 60px 4px 32px !important;
+  z-index: 5 !important;
+  border-bottom: none !important;
+}
+
+/* 3. 모달 안내문구 sticky (경계선 삭제) */
+.modal-sub {
+  position: sticky !important;
+  top: 50px !important;
+  background: var(--bg-card) !important;
+  margin: 0 -32px 22px !important;
+  padding: 4px 32px 14px !important;
+  z-index: 4 !important;
+  border-bottom: none !important;
+}
+
+/* 4. X 버튼 항상 sticky 헤더 위에 보이게 */
+.modal-close {
+  z-index: 1001 !important;
+}
+
+/* 5. 모바일 대응 */
+@media (max-width: 900px) {
+  .brand-ci-wrap {
+    height: 100px !important;
+  }
+  .modal-title {
+    margin: -20px -16px 0 !important;
+    padding: 16px 50px 4px 16px !important;
+  }
+  .modal-sub {
+    top: 42px !important;
+    margin: 0 -16px 16px !important;
+    padding: 4px 16px 12px !important;
+  }
+}
 </style>
 </head>
 <body>
