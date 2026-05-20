@@ -686,6 +686,43 @@ table { border-collapse: collapse; width: 100%; }
     padding-bottom: env(safe-area-inset-bottom);
   }
 }
+/* ============================================
+   STICKY HEADER (틀고정) - Day 4 추가 (2026-05-20)
+   ============================================ */
+
+/* 1. 메인 페이지 모듈 헤더 (01~08 모든 화면) */
+.page-head {
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 50;
+  margin: -32px -48px 28px;
+  padding: 32px 48px 16px;
+}
+
+/* 2. 물건 검색 모달 헤더 (X 버튼은 absolute로 이미 고정됨) */
+.modal-title {
+  position: sticky;
+  top: -28px;
+  background: var(--bg-card);
+  margin: -28px -32px 6px;
+  padding: 22px 60px 8px 32px;
+  z-index: 5;
+  border-bottom: 1px solid var(--line);
+}
+
+/* 3. 모바일 대응 (900px 이하) */
+@media (max-width: 900px) {
+  .page-head {
+    margin: -64px -16px 20px;
+    padding: 64px 16px 12px;
+  }
+  .modal-title {
+    top: -20px;
+    margin: -20px -16px 6px;
+    padding: 16px 50px 6px 16px;
+  }
+}  
 </style>
 </head>
 <body>
