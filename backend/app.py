@@ -87,12 +87,12 @@ URL_RENT = 'https://apis.data.go.kr/1613000/RTMSDataSvcAptRent/getRTMSDataSvcApt
 URL_RH_TRADE = 'https://apis.data.go.kr/1613000/RTMSDataSvcRHTrade/getRTMSDataSvcRHTrade'  # 매매
 URL_RH_RENT = 'https://apis.data.go.kr/1613000/RTMSDataSvcRHRent/getRTMSDataSvcRHRent'  # 전월세
 
-# 공동주택 단지 정보 (K-apt) - V3 API (2025년 업그레이드)
+# 공동주택 단지 정보 (K-apt) -  API (2025년 업그레이드)
 URL_APT_LIST_DONG = 'https://apis.data.go.kr/1613000/AptListService3/getLegaldongAptList3'  # 법정동별 단지목록
 URL_APT_LIST_ROAD = 'https://apis.data.go.kr/1613000/AptListService3/getRoadnameAptList3'  # 도로명별 단지목록
 URL_APT_LIST_TOTAL = 'https://apis.data.go.kr/1613000/AptListService3/getTotalAptList3'  # 전체 단지목록 (한번에 모두)
-URL_APT_BASIS = 'https://apis.data.go.kr/1613000/AptBasisInfoServiceV3/getAphusBassInfoV3'  # 단지 기본정보
-URL_APT_DETAIL = 'https://apis.data.go.kr/1613000/AptBasisInfoServiceV3/getAphusDtlInfoV3'  # 단지 상세정보
+URL_APT_BASIS = 'https://apis.data.go.kr/1613000/AptBasisInfoServiceV4/getAphusBassInfoV4'  # 단지 기본정보
+URL_APT_DETAIL = 'https://apis.data.go.kr/1613000/AptBasisInfoServiceV4/getAphusDtlInfoV4'  # 단지 상세정보
 
 # 건축물대장 (HUB)
 URL_BR_TITLE = 'https://apis.data.go.kr/1613000/BldRgstHubService/getBrTitleInfo'  # 표제부
@@ -128,9 +128,9 @@ def parse_xml_items(xml_text):
 
 
 def parse_kapt_response(response_text):
-    """K-apt V3 API 응답을 파싱 (XML/JSON 자동 감지).
+    """K-apt  API 응답을 파싱 (XML/JSON 자동 감지).
     
-    V3 API는 _type 파라미터에 따라 XML 또는 JSON으로 응답하며,
+     API는 _type 파라미터에 따라 XML 또는 JSON으로 응답하며,
     파라미터 미지정 시 기본 형식이 XML과 다를 수 있음. 양쪽 모두 처리.
     
     Returns: (items_list, error_message_or_None)
@@ -140,7 +140,7 @@ def parse_kapt_response(response_text):
     if not text:
         return [], 'API 응답이 비어있음'
     
-    # JSON 시도 (V3에서 기본일 가능성 큼)
+    # JSON 시도 (에서 기본일 가능성 큼)
     if text[0] in ('{', '['):
         try:
             data = _json.loads(text)
@@ -1371,7 +1371,7 @@ button:disabled { background: #ccc; cursor: not-allowed; }
 
 <div class="card">
 <h2>2️⃣ 아파트 단지 마스터 (약 18,000개)</h2>
-<p class="muted">⚠️ 1번 완료 후 진행하세요. K-apt V3 API getTotalAptList3로 페이지당 1000개씩 일괄 조회 (약 2~5분 소요).</p>
+<p class="muted">⚠️ 1번 완료 후 진행하세요. K-apt  API getTotalAptList3로 페이지당 1000개씩 일괄 조회 (약 2~5분 소요).</p>
 <div class="row">
 <button id="btn-apt" onclick="loadApt()" disabled>1번 먼저 완료</button>
 <span id="apt-status" class="muted">대기 중</span>
@@ -1453,7 +1453,7 @@ async function loadApt() {
   document.getElementById('apt-log').textContent = '';
 
   let offset = 0;
-  const size = 1;  // V3 API에서는 1페이지(1000개)씩 처리
+  const size = 1;  //  API에서는 1페이지(1000개)씩 처리
   while (true) {
     const url = `/api/admin/load-apt-master?key=${encodeURIComponent(KEY)}&offset=${offset}&size=${size}`;
     let r;
@@ -1543,7 +1543,7 @@ def admin_load_legal_dong():
 
 @app.route('/api/admin/load-apt-master')
 def admin_load_apt_master():
-    """K-apt V3 API getTotalAptList3로 전국 단지 목록 일괄 적재.
+    """K-apt  API getTotalAptList3로 전국 단지 목록 일괄 적재.
     페이징(numOfRows=1000)으로 한 번에 1000개씩, 약 18~20번 호출로 완료.
     Query: key=ADMIN_SECRET, offset=N (페이지 번호 0부터), size=1 (한 번에 처리할 페이지 수)
     """
@@ -1588,7 +1588,7 @@ def admin_load_apt_master():
             errors.append(f'page {page_no}: {e}')
             continue
 
-        # 응답 파싱 (V3 API: XML/JSON 자동 감지)
+        # 응답 파싱 ( API: XML/JSON 자동 감지)
         raw_items, err = parse_kapt_response(xml_text)
         if err:
             errors.append(f'page {page_no}: {err}')
@@ -2681,7 +2681,7 @@ document.querySelectorAll('thead th[data-sort]').forEach(th => {
 
 @app.route('/api/admin/diag-kapt')
 def admin_diag_kapt():
-    """K-apt V3 API 응답을 raw 그대로 반환 (진단용).
+    """K-apt  API 응답을 raw 그대로 반환 (진단용).
     Query: key=ADMIN_SECRET, bjd_code=4113510300 (선택, 기본 분당 정자동)
     """
     ok, msg = _check_admin(request)
