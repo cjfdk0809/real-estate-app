@@ -829,6 +829,23 @@ table { border-collapse: collapse; width: 100%; }
     padding: 4px 16px 12px !important;
   }
 }
+/* ============================================
+   STICKY HEADER v5 - 키움 CI 높이 미세 조정 (2026-05-20)
+   ============================================ */
+.brand-ci-wrap {
+  height: 137px !important;  /* 128 → 137 (page-head 실제 높이에 맞춤) */
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 16px 20px !important;
+  box-sizing: border-box !important;
+}
+
+@media (max-width: 900px) {
+  .brand-ci-wrap {
+    height: 110px !important;  /* 100 → 110 */
+  }
+}
 </style>
 </head>
 <body>
