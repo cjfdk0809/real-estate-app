@@ -687,8 +687,14 @@ table { border-collapse: collapse; width: 100%; }
   }
 }
 /* ============================================
-   STICKY HEADER (틀고정) - Day 4 추가 (2026-05-20)
+   STICKY HEADER (틀고정) v2 - Day 4 수정 (2026-05-20)
    ============================================ */
+
+/* ⭐ main의 overflow가 sticky를 방해하는 문제 수정 (핵심!) */
+.main {
+  overflow-x: visible !important;
+  overflow-y: visible !important;
+}
 
 /* 1. 메인 페이지 모듈 헤더 (01~08 모든 화면) */
 .page-head {
@@ -698,6 +704,50 @@ table { border-collapse: collapse; width: 100%; }
   z-index: 50;
   margin: -32px -48px 28px;
   padding: 32px 48px 16px;
+  border-bottom: none !important;
+}
+
+/* 2. 물건 검색 모달 - 제목 sticky */
+.modal-title {
+  position: sticky;
+  top: 0;
+  background: var(--bg-card);
+  margin: -28px -32px 0;
+  padding: 22px 60px 4px 32px;
+  z-index: 5;
+}
+
+/* 3. 물건 검색 모달 - 안내문구도 함께 sticky */
+.modal-sub {
+  position: sticky;
+  top: 48px;
+  background: var(--bg-card);
+  margin: 0 -32px 22px;
+  padding: 0 32px 12px;
+  z-index: 4;
+  border-bottom: 1px solid var(--line);
+}
+
+/* 4. 닫기 버튼 항상 위에 보이게 (z-index 강화) */
+.modal-close {
+  z-index: 1000 !important;
+}
+
+/* 5. 모바일 대응 (900px 이하) */
+@media (max-width: 900px) {
+  .page-head {
+    margin: -64px -16px 20px;
+    padding: 64px 16px 12px;
+  }
+  .modal-title {
+    margin: -20px -16px 0;
+    padding: 16px 50px 4px 16px;
+  }
+  .modal-sub {
+    top: 40px;
+    margin: 0 -16px 16px;
+    padding: 0 16px 10px;
+  }
 }
 
 /* 2. 물건 검색 모달 헤더 (X 버튼은 absolute로 이미 고정됨) */
