@@ -949,6 +949,210 @@ def lookup_building():
         result['errors'].append(f'공시가격: {e}')
     
     return jsonify(result)
+# ============================================================
+# 신규: 건축물대장 통합 자동조회 (단지코드 + 동·호수만으로)
+# Phase 1: 2단계 작업 (동·호수 입력 시 건축물대장 자동조회)
+# ============================================================
+
+@app.route('/api/building/auto-lookup')
+def auto_lookup_building():
+    """단지코드 + 동·호수만으로 건축물대장 자동조회.
+    
+    내부적으로 단지 정보를 조회하여 시군구코드/법정동코드/본번/부번을 자동 추출하고,
+    건축물대장(표제부+전유공용면적+공시가격)을 통합 조회합니다.
+    
+    Query params:
+        kapt_code: 단지코드 (필수, A로 시작)
+        dong_nm: 동 이름 (필수, 예: "101" 또는 "101동")
+        ho_nm: 호수 (필수, 예: "201" 또는 "201호")
+    
+    Returns: {
+        unit: { dongNm, hoNm, excluArea, pubArea, supplyArea, floor, struct },
+        title: { totalFloors, undergroundFloors, totalArea, completionDate, mainPurps, struct },
+        price: { value, stdDay },
+        errors: [...],
+        lookup_params: {...}  # 디버그용
+    }
+    """
+    if not API_KEY:
+        return jsonify({'error': 'API 키 미설정'}), 500
+    
+    kapt_code = request.args.get('kapt_code', '').strip()
+    dong_nm = request.args.get('dong_nm', '').strip()
+    ho_nm = request.args.get('ho_nm', '').strip()
+    
+    if not kapt_code or not kapt_code.startswith('A'):
+        return jsonify({'error': '유효한 kapt_code 필요 (A로 시작)'}), 400
+    if not dong_nm or not ho_nm:
+        return jsonify({'error': 'dong_nm, ho_nm 모두 필수'}), 400
+    
+    try:
+        # 1. 단지 기본정보 조회 (V4 API)
+        basis_xml = fetch_apt_basis_cached(kapt_code, cache_ts())
+        basis_items, err = parse_kapt_response(basis_xml)
+        if err:
+            return jsonify({'error': safe_error('단지정보 조회 실패', err)}), 502
+        if not basis_items:
+            return jsonify({'error': '단지 정보를 찾을 수 없습니다'}), 404
+        b = basis_items[0]
+        
+        # 2. bjdCode → 시군구코드(5자리), 법정동코드(5자리) 추출
+        bjd_code = safe_get(b, 'bjdCode')
+        if len(bjd_code) != 10:
+            return jsonify({'error': f'법정동코드 형식 오류: {bjd_code}'}), 502
+        sigungu_cd = bjd_code[:5]
+        bjdong_cd = bjd_code[5:]
+        
+        # 3. 지번주소 → 본번/부번 파싱 (예: "서울 동대문구 이문동 559" → bun=559)
+        addr_lot = safe_get(b, 'kaptAddr')
+        m = re.search(r'(\d+)(?:-(\d+))?(?:\s|$)', addr_lot)
+        if not m:
+            return jsonify({'error': f'지번 파싱 실패: {addr_lot}'}), 502
+        bun = m.group(1)
+        ji = m.group(2) or '0'
+        plat_gb_cd = '0'  # 대지
+        
+        # 매칭 유틸: "101동"="101", "201호"="201" 등 모두 정규화
+        def norm_dong(s):
+            return str(s).replace(' ', '').replace('동', '')
+        def norm_ho(s):
+            return str(s).replace(' ', '').replace('호', '')
+        
+        dong_target = norm_dong(dong_nm)
+        ho_target = norm_ho(ho_nm)
+        
+        result = {
+            'unit': None,
+            'title': None,
+            'price': None,
+            'errors': [],
+            'lookup_params': {
+                'kapt_code': kapt_code,
+                'sigungu_cd': sigungu_cd,
+                'bjdong_cd': bjdong_cd,
+                'bun': bun,
+                'ji': ji,
+                'dong_nm': dong_nm,
+                'ho_nm': ho_nm,
+                'kapt_addr': addr_lot,
+            }
+        }
+        
+        # 4. 표제부 조회
+        try:
+            xml_text = fetch_br_title_cached(sigungu_cd, bjdong_cd, plat_gb_cd, bun, ji, cache_ts())
+            items, err = parse_xml_items(xml_text)
+            if not err and items:
+                # dong 매칭, 없으면 첫 번째
+                matched = None
+                for x in items:
+                    d = norm_dong(safe_get(x, 'dongNm'))
+                    if d == dong_target:
+                        matched = x
+                        break
+                if not matched:
+                    matched = items[0]
+                result['title'] = {
+                    'dongNm': safe_get(matched, 'dongNm'),
+                    'totalFloors': safe_get(matched, 'grndFlrCnt'),
+                    'undergroundFloors': safe_get(matched, 'ugrndFlrCnt'),
+                    'totalArea': safe_get(matched, 'totArea'),
+                    'platArea': safe_get(matched, 'platArea'),
+                    'archArea': safe_get(matched, 'archArea'),
+                    'completionDate': safe_get(matched, 'useAprDay'),
+                    'mainPurps': safe_get(matched, 'mainPurpsCdNm'),
+                    'struct': safe_get(matched, 'strctCdNm'),
+                    'hhldCnt': safe_get(matched, 'hhldCnt'),
+                }
+            elif err:
+                result['errors'].append(f'표제부: {err}')
+        except Exception as e:
+            result['errors'].append(safe_error('표제부 조회 오류', e))
+        
+        # 5. 전유공용면적 (호별 면적) 조회
+        try:
+            xml_text = fetch_br_expose_cached(sigungu_cd, bjdong_cd, plat_gb_cd, bun, ji, cache_ts())
+            items, err = parse_xml_items(xml_text)
+            if not err and items:
+                exclu_area = None
+                pub_area = 0.0
+                floor = None
+                struct = None
+                pub_count = 0
+                
+                for x in items:
+                    d = norm_dong(safe_get(x, 'dongNm'))
+                    h = norm_ho(safe_get(x, 'hoNm'))
+                    if d != dong_target or h != ho_target:
+                        continue
+                    gb = safe_get(x, 'exposPubuseGbCdNm')  # 전유/공용
+                    main = safe_get(x, 'mainAtchGbCdNm')   # 주/부속
+                    area = safe_get(x, 'area')
+                    
+                    if gb == '전유' and main == '주':
+                        try:
+                            exclu_area = float(area)
+                        except (ValueError, TypeError):
+                            pass
+                        if not floor:
+                            floor = safe_get(x, 'flrNoNm')
+                        if not struct:
+                            struct = safe_get(x, 'strctCdNm')
+                    elif gb == '공용' and main == '주':
+                        try:
+                            pub_area += float(area)
+                            pub_count += 1
+                        except (ValueError, TypeError):
+                            pass
+                
+                if exclu_area is not None:
+                    result['unit'] = {
+                        'dongNm': dong_nm,
+                        'hoNm': ho_nm,
+                        'excluArea': round(exclu_area, 2),
+                        'pubArea': round(pub_area, 2) if pub_count > 0 else None,
+                        'supplyArea': round(exclu_area + pub_area, 2) if pub_count > 0 else None,
+                        'floor': floor,
+                        'struct': struct,
+                    }
+            elif err:
+                result['errors'].append(f'전유공용면적: {err}')
+        except Exception as e:
+            result['errors'].append(safe_error('전유공용면적 조회 오류', e))
+        
+        # 6. 공시가격 (가장 최근 기준일 기준)
+        try:
+            xml_text = fetch_br_price_cached(sigungu_cd, bjdong_cd, plat_gb_cd, bun, ji, cache_ts())
+            items, err = parse_xml_items(xml_text)
+            if not err and items:
+                matched_prices = []
+                for x in items:
+                    d = norm_dong(safe_get(x, 'dongNm'))
+                    h = norm_ho(safe_get(x, 'hoNm'))
+                    if d != dong_target or h != ho_target:
+                        continue
+                    matched_prices.append(x)
+                matched_prices.sort(key=lambda x: safe_get(x, 'bldRgstStdDay'), reverse=True)
+                
+                if matched_prices:
+                    p = matched_prices[0]
+                    result['price'] = {
+                        'value': safe_get(p, 'bldRgstPc'),
+                        'stdDay': safe_get(p, 'bldRgstStdDay'),
+                    }
+            elif err:
+                result['errors'].append(f'공시가격: {err}')
+        except Exception as e:
+            result['errors'].append(safe_error('공시가격 조회 오류', e))
+        
+        return jsonify(result)
+    
+    except requests.exceptions.HTTPError as e:
+        return jsonify({'error': safe_error('국토부 API HTTP 오류', e)}), 502
+    except Exception as e:
+        return jsonify({'error': safe_error('서버 오류', e)}), 500
+
+
 
 
 # ============================================================
