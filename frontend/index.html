@@ -776,6 +776,33 @@ table { border-collapse: collapse; width: 100%; }
     right: 12px;
   }
 }
+ /* ============================================
+   Step 3 추가 - modal-close를 modal-title 안에 통합
+   (HTML 구조 변경 보완용)
+   ============================================ */
+
+/* modal-title을 flex 컨테이너로 → 텍스트 왼쪽, X 버튼 오른쪽 */
+.modal-title {
+  display: flex !important;
+  align-items: flex-start !important;
+  justify-content: space-between !important;
+  gap: 12px !important;
+  padding-right: 32px !important;
+}
+
+/* 제목 텍스트는 남는 공간 전부 차지 */
+#propertyModalTitleText {
+  flex: 1;
+  min-width: 0;
+}
+
+/* X 버튼: absolute 제거 → flex 자식으로 자연스럽게 */
+.modal-close {
+  position: static !important;
+  flex-shrink: 0 !important;
+  margin-top: -4px !important;
+  z-index: 1 !important;
+} 
 </style>
 </head>
 <body>
@@ -837,8 +864,10 @@ table { border-collapse: collapse; width: 100%; }
 <!-- ========== MODAL: PROPERTY ========== -->
 <div class="modal-bg" id="propertyModal">
   <div class="modal">
-    <button type="button" class="modal-close" onclick="closePropertyModal()" aria-label="닫기" title="닫기">×</button>
-    <div class="modal-title" id="propertyModalTitle">물건 검색</div>
+   <div class="modal-title" id="propertyModalTitle">
+      <span id="propertyModalTitleText">물건 검색</span>
+      <button type="button" class="modal-close" onclick="closePropertyModal()" aria-label="닫기" title="닫기">×</button>
+    </div>
     <div class="modal-sub">본건의 기본 정보를 입력하세요. 모든 항목은 나중에 수정할 수 있습니다.</div>
 
     <div class="autofill-box no-print" style="background: var(--bg-subtle); border: 1px solid var(--kiwoom-navy); border-left: 4px solid var(--kiwoom-navy); border-radius: 6px; padding: 14px 16px; margin-bottom: 14px;">
@@ -3534,10 +3563,10 @@ function openPropertyModal(id) {
       const el = form.elements[k];
       if (el) el.value = p[k] ?? '';
     });
-    document.getElementById('propertyModalTitle').textContent = '물건 수정';
+    document.getElementById('propertyModalTitleText').textContent = '물건 수정';
     document.getElementById('deletePropertyBtn').classList.remove('hide');
   } else {
-    document.getElementById('propertyModalTitle').textContent = '물건 검색';
+    document.getElementById('propertyModalTitleText').textContent = '물건 검색';
     document.getElementById('deletePropertyBtn').classList.add('hide');
   }
   document.getElementById('propertyModal').classList.add('show');
