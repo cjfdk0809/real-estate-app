@@ -2724,6 +2724,7 @@ function applyRegistryToModalForm(a) {
 // Phase 2: 동·호수 자동 조회 (표제부 + 공시가격)
 // ============================================================
 let _currentKaptCode = null;  // 현재 선택된 단지의 K-apt 코드
+let _currentLawdCd = null;    // Phase 3: 거래사례 자동수집용 시군구 코드 (5자리)
 let _autoLookupTimer = null;  // 디바운스 타이머
 
 function _onBuildingInputChange() {
@@ -2765,6 +2766,12 @@ async function autoLookupBuildingInfo() {
     const d = await r.json();
 
     console.log('[Phase 2] 백엔드 응답:', d);  // 응답 구조 확인용
+
+    // Phase 3: 거래사례 자동수집용 시군구 코드 저장
+    if (d.lookup_params && d.lookup_params.sigungu_cd) {
+      _currentLawdCd = d.lookup_params.sigungu_cd;
+      console.log('[Phase 3] 시군구 코드 저장:', _currentLawdCd);
+    }
 
     const fieldsFilled = [];
     const setIf = (k, v) => {
@@ -2817,6 +2824,122 @@ async function autoLookupBuildingInfo() {
     statusDiv.style.color = '#dc2626';
     statusDiv.innerHTML = `❌ 네트워크 오류: ${e.message}`;
   }
+}
+
+// ============================================================
+// Phase 3: 거래사례 자동수집 (저장 시 트리거)
+// ============================================================
+// 같은 단지 + 전용면적 ±1% + 최근 12개월 매매 거래를 자동으로 수집
+async function autoFetchComparables(propertyId, propertyData) {
+  // 필수 정보 체크
+  if (!_currentLawdCd) {
+    console.log('[Phase 3] 시군구 코드 없음 - 거래사례 자동수집 skip');
+    return { skipped: true, reason: '시군구 코드 없음 (K-apt 자동입력 미사용 물건)' };
+  }
+  if (!propertyData.name || !propertyData.exclusiveArea) {
+    console.log('[Phase 3] 단지명/전용면적 없음 - 거래사례 자동수집 skip');
+    return { skipped: true, reason: '단지명/전용면적 정보 부족' };
+  }
+
+  // 전용면적 ±1% 범위 계산 (NPL 보수적 평가)
+  const area = Number(propertyData.exclusiveArea);
+  const minArea = Math.floor(area * 0.99 * 100) / 100;
+  const maxArea = Math.ceil(area * 1.01 * 100) / 100;
+
+  const params = new URLSearchParams({
+    lawd_cd: _currentLawdCd,
+    months: '12',
+    danji_name: propertyData.name,
+    min_area: String(minArea),
+    max_area: String(maxArea),
+    include_rent: 'false',  // 매매만
+  });
+  const url = `${BACKEND_URL}/api/transactions/bulk?${params.toString()}`;
+  console.log('[Phase 3] 거래사례 자동수집 URL:', url);
+
+  try {
+    const r = await fetch(url);
+    const d = await r.json();
+
+    if (d.error) {
+      console.error('[Phase 3] API 오류:', d.error);
+      return { error: d.error };
+    }
+
+    const items = d.items || [];
+    console.log(`[Phase 3] API 응답: 전체 ${items.length}건`);
+
+    // 중복 방지: 기존 거래의 키 set
+    if (!state.comparables[propertyId]) state.comparables[propertyId] = [];
+    const existingKeys = new Set(
+      state.comparables[propertyId].map(c => `${c.date}_${c.area}_${c.floor}_${c.price}`)
+    );
+
+    // 새 거래만 추가 (date 내림차순 정렬용 임시 배열)
+    const newItems = [];
+    items.forEach(item => {
+      const key = `${item.date}_${item.area}_${item.floor}_${item.price}`;
+      if (existingKeys.has(key)) return;
+      newItems.push({
+        id: uid(),
+        date: item.date,
+        type: item.type || '매매',
+        name: item.name,
+        area: item.area,
+        floor: item.floor,
+        price: item.price,
+        memo: '자동수집',
+      });
+    });
+
+    // 날짜 내림차순 정렬 후 추가
+    newItems.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    state.comparables[propertyId].push(...newItems);
+
+    await saveState();
+    return {
+      added: newItems.length,
+      total: items.length,
+      areaRange: { min: minArea, max: maxArea },
+    };
+  } catch (e) {
+    console.error('[Phase 3] 네트워크 오류:', e);
+    return { error: e.message };
+  }
+}
+
+// 화면 우측 하단 토스트 알림
+function showToast(message, type, duration) {
+  const colors = {
+    success: '#10b981',
+    info: '#1e3a5f',
+    warn: '#f59e0b',
+    error: '#dc2626',
+  };
+  const color = colors[type || 'info'] || colors.info;
+  const toast = document.createElement('div');
+  toast.style.cssText = `
+    position: fixed;
+    bottom: 30px;
+    right: 30px;
+    padding: 14px 20px;
+    background: ${color};
+    color: white;
+    border-radius: 8px;
+    z-index: 10000;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+    font-size: 13px;
+    max-width: 360px;
+    line-height: 1.5;
+  `;
+  toast.innerHTML = message;
+  document.body.appendChild(toast);
+  setTimeout(() => {
+    toast.style.transition = 'opacity 0.3s, transform 0.3s';
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateX(20px)';
+    setTimeout(() => toast.remove(), 300);
+  }, duration || 4000);
 }
 
 // ============================================================
@@ -3721,6 +3844,36 @@ document.getElementById('propertyForm').addEventListener('submit', async (e) => 
   closePropertyModal();
   renderPropertyList();
   renderView();
+
+  // Phase 3: 거래사례 자동수집 (백그라운드, 사용자 대기 없이)
+  autoFetchComparables(id, state.properties[id]).then(result => {
+    if (result.skipped) {
+      console.log('[Phase 3] 자동수집 건너뜀:', result.reason);
+      return;
+    }
+    if (result.error) {
+      showToast(`⚠️ 거래사례 자동수집 실패: ${result.error}`, 'warn', 5000);
+      return;
+    }
+    if (result.added > 0) {
+      const { min, max } = result.areaRange;
+      showToast(
+        `✅ <strong>거래사례 ${result.added}건 자동 수집 완료</strong><br>` +
+        `<span style="font-size:11px;opacity:0.9;">${state.properties[id].name} · ${min}~${max}㎡ · 최근 12개월 매매</span>`,
+        'success',
+        5500
+      );
+      renderView();  // 거래사례 비교 탭 갱신
+    } else if (result.total === 0) {
+      showToast(`ℹ️ 같은 단지·면적·기간 조건 거래사례 없음`, 'info', 4000);
+    } else {
+      showToast(
+        `ℹ️ 거래사례 ${result.total}건 조회 완료 (중복 제외, 신규 추가 0건)`,
+        'info',
+        4000
+      );
+    }
+  });
 });
 
 document.getElementById('deletePropertyBtn').addEventListener('click', async () => {
