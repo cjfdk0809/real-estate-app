@@ -2725,6 +2725,7 @@ function applyRegistryToModalForm(a) {
 // ============================================================
 let _currentKaptCode = null;  // 현재 선택된 단지의 K-apt 코드
 let _currentLawdCd = null;    // Phase 3: 거래사례 자동수집용 시군구 코드 (5자리)
+let _currentBun = null;       // Phase 3.1: 본건 지번 (NPL 평가 정확도 - 다른 단지 매칭 방지)
 let _autoLookupTimer = null;  // 디바운스 타이머
 
 function _onBuildingInputChange() {
@@ -2771,6 +2772,11 @@ async function autoLookupBuildingInfo() {
     if (d.lookup_params && d.lookup_params.sigungu_cd) {
       _currentLawdCd = d.lookup_params.sigungu_cd;
       console.log('[Phase 3] 시군구 코드 저장:', _currentLawdCd);
+    }
+    // Phase 3.1: 본건 지번 저장 (다른 단지 매칭 방지)
+    if (d.lookup_params && d.lookup_params.bun) {
+      _currentBun = d.lookup_params.bun;
+      console.log('[Phase 3.1] 본건 지번 저장:', _currentBun);
     }
 
     const fieldsFilled = [];
@@ -2854,6 +2860,10 @@ async function autoFetchComparables(propertyId, propertyData) {
     max_area: String(maxArea),
     include_rent: 'false',  // 매매만
   });
+  // Phase 3.1: 지번 매칭 (NPL 평가 정확도 - 다른 단지 자동 제외)
+  if (_currentBun) {
+    params.set('jibun', _currentBun);
+  }
   const url = `${BACKEND_URL}/api/transactions/bulk?${params.toString()}`;
   console.log('[Phase 3] 거래사례 자동수집 URL:', url);
 
