@@ -932,8 +932,8 @@ table { border-collapse: collapse; width: 100%; }
         <div class="field field-full"><label>단지명·건물명</label><input name="name" required></div>
         <div class="field"><label>도로명주소</label><input name="addrRoad"></div>
         <div class="field"><label>지번주소</label><input name="addrLot"></div>
-        <div class="field"><label>동</label><input name="building"></div>
-        <div class="field"><label>호수</label><input name="unit"></div>
+        <div class="field"><label>동</label><input name="building" oninput="_onBuildingInputChange()"></div>
+        <div class="field"><label>호수</label><input name="unit" oninput="_onBuildingInputChange()"></div>
       </div>
 
       <div class="section-h">면적·구조</div>
@@ -2727,6 +2727,104 @@ function applyRegistryToModalForm(a) {
 }
 
 // ============================================================
+// Phase 2: 동·호수 자동 조회 (표제부 + 공시가격)
+// ============================================================
+let _currentKaptCode = null;  // 현재 선택된 단지의 K-apt 코드
+let _autoLookupTimer = null;  // 디바운스 타이머
+
+function _onBuildingInputChange() {
+  clearTimeout(_autoLookupTimer);
+  _autoLookupTimer = setTimeout(autoLookupBuildingInfo, 600);  // 600ms 후 조회
+}
+
+async function autoLookupBuildingInfo() {
+  if (!_currentKaptCode) return;  // K-apt 코드 없으면 무시
+
+  const form = document.getElementById('propertyForm');
+  const dongRaw = form.elements.building?.value?.trim() || '';
+  const hoRaw = form.elements.unit?.value?.trim() || '';
+
+  // 숫자만 추출 ("101동" → "101", "1904호" → "1904")
+  const dong = dongRaw.replace(/\D/g, '');
+  const ho = hoRaw.replace(/\D/g, '');
+
+  if (!dong || !ho) return;  // 둘 다 입력돼야 조회
+
+  // 상태 표시 영역 생성/갱신
+  let statusDiv = document.getElementById('autoLookupStatus');
+  if (!statusDiv) {
+    statusDiv = document.createElement('div');
+    statusDiv.id = 'autoLookupStatus';
+    statusDiv.style.cssText = 'grid-column: 1 / -1; padding: 10px 14px; border-radius: 6px; font-size: 12px; margin-top: 8px; line-height: 1.5;';
+    form.elements.unit.parentNode.parentNode.appendChild(statusDiv);
+  }
+
+  statusDiv.style.background = 'var(--kiwoom-navy-soft)';
+  statusDiv.style.color = 'var(--kiwoom-navy)';
+  statusDiv.innerHTML = `⏳ <strong>${dong}동 ${ho}호</strong> 표제부·공시가격 자동 조회 중...`;
+
+  try {
+    const url = `${BACKEND_URL}/api/building/auto-lookup?kapt_code=${_currentKaptCode}&dong_nm=${dong}&ho_nm=${ho}`;
+    console.log('[Phase 2] 조회 URL:', url);
+
+    const r = await fetch(url);
+    const d = await r.json();
+
+    console.log('[Phase 2] 백엔드 응답:', d);  // 응답 구조 확인용
+
+    const fieldsFilled = [];
+    const setIf = (k, v) => {
+      if (form.elements[k] && v != null && v !== '' && !form.elements[k].value) {
+        form.elements[k].value = v;
+        fieldsFilled.push(k);
+      }
+    };
+
+    // 호별 정보 (unit) - 다양한 필드명 대응
+    if (d.unit) {
+      setIf('exclusiveArea', d.unit.exclusiveArea || d.unit.exclusive_area || d.unit.area);
+      setIf('supplyArea', d.unit.supplyArea || d.unit.supply_area);
+      setIf('floor', d.unit.floor);
+    }
+
+    // 표제부 정보 (title)
+    if (d.title) {
+      setIf('totalFloors', d.title.totalFloors || d.title.total_floors);
+      setIf('totalUnits', d.title.totalUnits || d.title.total_units);
+      setIf('completionDate', d.title.completionDate || d.title.completion_date);
+      setIf('usage', d.title.usage || d.title.main_use);
+    }
+
+    // 공시가격 (price)
+    if (d.price) {
+      const priceValue = typeof d.price === 'object'
+        ? (d.price.publicPrice || d.price.public_price || d.price.value)
+        : d.price;
+      setIf('publicPrice', priceValue);
+    }
+
+    // 결과 표시
+    if (fieldsFilled.length > 0) {
+      statusDiv.style.background = '#f0fff4';
+      statusDiv.style.color = 'var(--green)';
+      statusDiv.innerHTML = `✅ <strong>${fieldsFilled.length}개 필드 자동 입력 완료!</strong><br><span style="font-size: 11px;">입력된 필드: ${fieldsFilled.join(', ')}</span>`;
+    } else if (d.errors && d.errors.length > 0) {
+      statusDiv.style.background = '#fef5e6';
+      statusDiv.style.color = 'var(--warn)';
+      statusDiv.innerHTML = `⚠️ 조회 실패: ${d.errors.join(', ')}`;
+    } else {
+      statusDiv.style.background = '#fef5e6';
+      statusDiv.style.color = 'var(--warn)';
+      statusDiv.innerHTML = `ℹ️ <strong>${dong}동 ${ho}호 정보 없음</strong><br><span style="font-size: 11px;">동·호수를 확인하거나 직접 입력해주세요</span>`;
+    }
+  } catch (e) {
+    statusDiv.style.background = '#fee2e2';
+    statusDiv.style.color = '#dc2626';
+    statusDiv.innerHTML = `❌ 네트워크 오류: ${e.message}`;
+  }
+}
+
+// ============================================================
 // 단지 자동입력 (Autofill from DANJI_DB)
 // ============================================================
 // 검색어 정규화 (띄어쓰기·특수문자 제거, 소문자화)
@@ -2999,6 +3097,7 @@ function renderKaptAptSuggestion(apt, score, query) {
 
 async function fillFromKaptApt(apt) {
   const form = document.getElementById('propertyForm');
+  _currentKaptCode = apt.kapt_code || null;  // Phase 2: K-apt 코드 저장
   // 단지명·주소 자동 입력 (즉시)
   if (form.elements.name) form.elements.name.value = apt.name || '';
   
@@ -3384,6 +3483,7 @@ async function fetchAptListByBjdCode(bjdCode) {
 
 // K-apt 단지 정보로 폼 자동 채우기
 async function fillFromKapt(kaptCode) {
+  _currentKaptCode = kaptCode || null;  // Phase 2: K-apt 코드 저장
   const box = document.getElementById('kaptSuggestions');
   box.innerHTML = `<div style="padding: 12px; text-align: center; color: var(--ink-muted); font-size: 12px;">⏳ 단지 상세정보 조회 중...</div>`;
   
