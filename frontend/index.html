@@ -2841,10 +2841,10 @@ async function autoFetchComparables(propertyId, propertyData) {
     return { skipped: true, reason: '단지명/전용면적 정보 부족' };
   }
 
-  // 전용면적 ±1% 범위 계산 (NPL 보수적 평가)
+  // 전용면적 ±5% 범위 계산 (같은 평형군에서 표본 확보)
   const area = Number(propertyData.exclusiveArea);
-  const minArea = Math.floor(area * 0.99 * 100) / 100;
-  const maxArea = Math.ceil(area * 1.01 * 100) / 100;
+  const minArea = Math.floor(area * 0.95 * 100) / 100;
+  const maxArea = Math.ceil(area * 1.05 * 100) / 100;
 
   const params = new URLSearchParams({
     lawd_cd: _currentLawdCd,
