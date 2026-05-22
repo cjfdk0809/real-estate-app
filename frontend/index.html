@@ -32,6 +32,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;500;600;700&family=Pretendard:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 <style>
 :root {
   /* ========== 키움에프앤아이 브랜드 컬러 (네이비 단색 톤) ========== */
@@ -1827,13 +1828,35 @@ function renderComparables() {
     </div>
 
     <div class="card">
-      <div class="card-title">거래사례 목록 
-        <div class="btn-row no-print">
-          <button class="btn btn-ghost" onclick="openApiImport()">⚡ 국토부 자동수집</button>
-          <button class="btn btn-primary" onclick="openComparableModal()">＋ 추가</button>
+      <div class="card-title" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+        <span>거래사례 목록</span>
+        <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+          <div class="comps-filter no-print" style="display: inline-flex; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 3px;">
+            ${['전체','매매','전세','월세'].map(t => {
+              const active = (window._compsFilter || '전체') === t;
+              const count = t === '전체' ? comps.length : comps.filter(x => x.type === t).length;
+              return `<button class="comps-filter-btn" onclick="setCompsFilter('${t}')" style="
+                padding: 6px 14px; border: none; cursor: pointer; font-size: 12px; font-weight: 600;
+                border-radius: 5px;
+                background: ${active ? 'var(--kiwoom-navy)' : 'transparent'};
+                color: ${active ? '#fff' : 'var(--ink-muted)'};
+                transition: all 0.15s;
+              ">${t} <span style="opacity:0.7; font-weight:400;">(${count})</span></button>`;
+            }).join('')}
+          </div>
+          <div class="btn-row no-print">
+            <button class="btn btn-ghost" onclick="openApiImport()">⚡ 국토부 자동수집</button>
+            <button class="btn btn-primary" onclick="openComparableModal()">＋ 추가</button>
+          </div>
         </div>
       </div>
-      ${comps.length === 0 ? '<div class="empty"><div class="empty-text">등록된 거래사례가 없습니다.</div></div>' : `
+      ${(() => {
+        const f = window._compsFilter || '전체';
+        const filtered = f === '전체' ? comps : comps.filter(x => x.type === f);
+        if (filtered.length === 0) {
+          return `<div class="empty"><div class="empty-text">${f === '전체' ? '등록된 거래사례가 없습니다.' : `${f} 거래가 없습니다.`}</div></div>`;
+        }
+        return `
       <table class="tbl">
         <thead><tr>
           <th>거래일</th><th>유형</th><th>단지</th><th>동·호</th>
@@ -1841,7 +1864,7 @@ function renderComparables() {
           <th class="text-right">금액 / 월세</th><th class="text-right">평당가</th><th>비고</th><th class="no-print"></th>
         </tr></thead>
         <tbody>
-          ${comps.map(x => {
+          ${filtered.map(x => {
             const pyongPrice = x.area ? Math.round(x.price / (x.area / 3.305785)) : null;
             const priceCell = x.type === '월세' && x.monthly
               ? `<div>보증 <strong>${fmt.won(x.price)}</strong></div><div class="text-small" style="color:#a8884a;">월 ${x.monthly.toLocaleString()}만</div>`
@@ -1860,7 +1883,8 @@ function renderComparables() {
             </tr>`;
           }).join('')}
         </tbody>
-      </table>`}
+      </table>`;
+      })()}
     </div>
   `;
   drawPriceChart(comps);
@@ -2095,11 +2119,67 @@ function renderAreaAnalysisTable(items, label, isWolse) {
   </div>`;
 }
 
+// 거래사례 유형 필터 (전체/매매/전세/월세)
+function setCompsFilter(type) {
+  window._compsFilter = type;
+  renderView();
+}
+
 function drawPriceChart(comps) {
   const ctx = document.getElementById('priceChart');
   if (!ctx) return;
-  const sales = comps.filter(x => x.type === '매매').sort((a,b) => a.date.localeCompare(b.date));
-  const jeonse = comps.filter(x => x.type === '전세').sort((a,b) => a.date.localeCompare(b.date));
+
+  // 매매/전세/월세 데이터 분리
+  const byType = (t) => comps.filter(x => x.type === t && x.date && x.price)
+    .sort((a,b) => a.date.localeCompare(b.date))
+    .map(x => ({ x: x.date, y: x.price / 10000, raw: x }));
+  const sales = byType('매매');
+  const jeonse = byType('전세');
+  const wolse = byType('월세');
+
+  // 변동률 계산 (매매 기준 첫→마지막)
+  function changeRate(arr) {
+    if (arr.length < 2) return null;
+    const first = arr[0].y, last = arr[arr.length - 1].y;
+    if (!first) return null;
+    return ((last - first) / first) * 100;
+  }
+  const salesChange = changeRate(sales);
+  const jeonseChange = changeRate(jeonse);
+
+  // 차트 상단에 변동률 요약 표시
+  let summaryEl = document.getElementById('priceChartSummary');
+  if (!summaryEl) {
+    summaryEl = document.createElement('div');
+    summaryEl.id = 'priceChartSummary';
+    summaryEl.style.cssText = 'display:flex; gap:16px; flex-wrap:wrap; margin-bottom:12px; font-size:12px;';
+    ctx.parentNode.parentNode.insertBefore(summaryEl, ctx.parentNode);
+  }
+  const fmtChange = (v, label, color) => {
+    if (v == null) return `<span style="color:var(--ink-muted);">${label}: 거래 부족</span>`;
+    const arrow = v > 0 ? '▲' : v < 0 ? '▼' : '─';
+    const sign = v > 0 ? '+' : '';
+    return `<span style="display:inline-flex; align-items:center; gap:4px;">
+      <span style="width:10px; height:10px; background:${color}; border-radius:50%; display:inline-block;"></span>
+      <strong style="color:${color};">${label}</strong>
+      <span style="color:${v > 0 ? '#dc2626' : v < 0 ? '#0ea5e9' : 'var(--ink-muted)'}; font-weight:600;">${arrow} ${sign}${v.toFixed(1)}%</span>
+    </span>`;
+  };
+  summaryEl.innerHTML = `
+    ${fmtChange(salesChange, '매매', '#1e3a5f')}
+    ${fmtChange(jeonseChange, '전세', '#d97706')}
+    ${wolse.length > 0 ? `<span style="display:inline-flex; align-items:center; gap:4px;">
+      <span style="width:10px; height:10px; background:#0d9488; border-radius:50%; display:inline-block;"></span>
+      <strong style="color:#0d9488;">월세</strong>
+      <span style="color:var(--ink-muted);">${wolse.length}건</span>
+    </span>` : ''}
+  `;
+
+  // 12개월 범위 (최근 거래로부터 12개월 전 ~ 최근)
+  const allDates = [...sales, ...jeonse, ...wolse].map(p => p.x).sort();
+  const now = allDates.length ? new Date(allDates[allDates.length - 1]) : new Date();
+  const minDate = new Date(now); minDate.setMonth(minDate.getMonth() - 12);
+  const maxDate = new Date(now); maxDate.setMonth(maxDate.getMonth() + 1);
 
   if (window._priceChart) window._priceChart.destroy();
   window._priceChart = new Chart(ctx, {
@@ -2108,29 +2188,93 @@ function drawPriceChart(comps) {
       datasets: [
         {
           label: '매매',
-          data: sales.map(x => ({x: x.date, y: x.price / 10000})),
-          borderColor: '#011F8E', backgroundColor: 'rgba(1,31,142,0.1)',
-          tension: 0.3, pointRadius: 5, pointHoverRadius: 7, borderWidth: 2.5,
+          data: sales,
+          borderColor: '#1e3a5f',
+          backgroundColor: 'rgba(30, 58, 95, 0.08)',
+          tension: 0.35, pointRadius: 5, pointHoverRadius: 8,
+          pointBackgroundColor: '#fff', pointBorderColor: '#1e3a5f', pointBorderWidth: 2,
+          borderWidth: 2.5, fill: true,
         },
         {
           label: '전세',
-          data: jeonse.map(x => ({x: x.date, y: x.price / 10000})),
-          borderColor: '#a8884a', backgroundColor: 'rgba(168,136,74,0.1)',
-          tension: 0.3, pointRadius: 5, pointHoverRadius: 7, borderWidth: 2.5,
-        }
-      ]
+          data: jeonse,
+          borderColor: '#d97706',
+          backgroundColor: 'rgba(217, 119, 6, 0.06)',
+          tension: 0.35, pointRadius: 5, pointHoverRadius: 8,
+          pointBackgroundColor: '#fff', pointBorderColor: '#d97706', pointBorderWidth: 2,
+          borderWidth: 2.5, fill: true, borderDash: [],
+        },
+        {
+          label: '월세 (보증금)',
+          data: wolse,
+          borderColor: '#0d9488',
+          backgroundColor: 'rgba(13, 148, 136, 0.05)',
+          tension: 0.35, pointRadius: 4, pointHoverRadius: 7,
+          pointBackgroundColor: '#fff', pointBorderColor: '#0d9488', pointBorderWidth: 2,
+          borderWidth: 2, fill: false, borderDash: [4, 4],
+        },
+      ],
     },
     options: {
       responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'nearest', intersect: false, axis: 'xy' },
       plugins: {
-        legend: { position: 'top', labels: { font: { family: 'Pretendard', size: 12 } } },
-        tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(2)}억` } }
+        legend: {
+          position: 'top', align: 'end',
+          labels: {
+            font: { family: 'Pretendard', size: 12, weight: '600' },
+            usePointStyle: true, pointStyle: 'circle',
+            padding: 16, boxWidth: 8, boxHeight: 8,
+          },
+        },
+        tooltip: {
+          backgroundColor: 'rgba(15, 23, 42, 0.95)',
+          titleFont: { family: 'Pretendard', size: 12, weight: '700' },
+          bodyFont: { family: 'Pretendard', size: 12 },
+          padding: 12, cornerRadius: 8, displayColors: true, usePointStyle: true,
+          callbacks: {
+            title: (items) => items[0]?.raw?.x ? fmt.date(items[0].raw.x) : '',
+            label: (ctx) => {
+              const r = ctx.raw?.raw;
+              const v = ctx.parsed.y.toFixed(2) + '억';
+              if (r && r.type === '월세' && r.monthly) {
+                return `${ctx.dataset.label}: 보증 ${v} / 월 ${r.monthly.toLocaleString()}만`;
+              }
+              return `${ctx.dataset.label}: ${v}`;
+            },
+            afterLabel: (ctx) => {
+              const r = ctx.raw?.raw;
+              if (!r) return '';
+              const parts = [];
+              if (r.area) parts.push(`전용 ${r.area}㎡`);
+              if (r.floor) parts.push(`${r.floor}층`);
+              return parts.join(' · ');
+            },
+          },
+        },
       },
       scales: {
-        x: { type: 'category', ticks: { font: { family: 'JetBrains Mono', size: 10 } } },
-        y: { ticks: { font: { family: 'JetBrains Mono', size: 11 }, callback: (v) => v + '억' } }
-      }
-    }
+        x: {
+          type: 'time',
+          min: minDate, max: maxDate,
+          time: { unit: 'month', displayFormats: { month: 'yy년 MM월' }, tooltipFormat: 'yyyy-MM-dd' },
+          grid: { color: 'rgba(148, 163, 184, 0.12)' },
+          ticks: {
+            font: { family: 'Pretendard', size: 11, weight: '500' },
+            color: 'var(--ink-muted)', maxRotation: 0, autoSkip: false,
+          },
+        },
+        y: {
+          beginAtZero: false,
+          grid: { color: 'rgba(148, 163, 184, 0.12)' },
+          ticks: {
+            font: { family: 'Pretendard', size: 11, weight: '500' },
+            color: 'var(--ink-muted)',
+            callback: (v) => v + '억',
+          },
+        },
+      },
+    },
   });
 }
 
