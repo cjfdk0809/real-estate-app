@@ -1042,7 +1042,11 @@ def auto_lookup_building():
         try:
             xml_text = fetch_br_title_cached(sigungu_cd, bjdong_cd, plat_gb_cd, bun, ji, cache_ts())
             items, err = parse_xml_items(xml_text)
-            if not err and items:
+            if err:
+                result['errors'].append(f'표제부 API 오류: {err}')
+            elif not items:
+                result['errors'].append(f'표제부 데이터 없음 (sigunguCd={sigungu_cd}, bjdongCd={bjdong_cd}, bun={bun.zfill(4)}, ji={ji.zfill(4)}) - 공공데이터 포털에 등록되지 않은 주소일 수 있습니다')
+            else:
                 # dong 매칭, 없으면 첫 번째
                 matched = None
                 for x in items:
@@ -1052,6 +1056,8 @@ def auto_lookup_building():
                         break
                 if not matched:
                     matched = items[0]
+                    available_dongs = [safe_get(x, 'dongNm') for x in items]
+                    result['errors'].append(f'표제부에 "{dong_nm}동" 매칭 실패, 첫 번째 동({safe_get(matched, "dongNm")}) 사용 / 단지 내 동 목록: {available_dongs}')
                 result['title'] = {
                     'dongNm': safe_get(matched, 'dongNm'),
                     'totalFloors': safe_get(matched, 'grndFlrCnt'),
@@ -1064,8 +1070,6 @@ def auto_lookup_building():
                     'struct': safe_get(matched, 'strctCdNm'),
                     'hhldCnt': safe_get(matched, 'hhldCnt'),
                 }
-            elif err:
-                result['errors'].append(f'표제부: {err}')
         except Exception as e:
             result['errors'].append(safe_error('표제부 조회 오류', e))
         
@@ -1073,18 +1077,24 @@ def auto_lookup_building():
         try:
             xml_text = fetch_br_expose_cached(sigungu_cd, bjdong_cd, plat_gb_cd, bun, ji, cache_ts())
             items, err = parse_xml_items(xml_text)
-            if not err and items:
+            if err:
+                result['errors'].append(f'전유공용면적 API 오류: {err}')
+            elif not items:
+                result['errors'].append(f'전유공용면적 데이터 없음 (sigunguCd={sigungu_cd}, bjdongCd={bjdong_cd}, bun={bun.zfill(4)}, ji={ji.zfill(4)})')
+            else:
                 exclu_area = None
                 pub_area = 0.0
                 floor = None
                 struct = None
                 pub_count = 0
+                match_count = 0
                 
                 for x in items:
                     d = norm_dong(safe_get(x, 'dongNm'))
                     h = norm_ho(safe_get(x, 'hoNm'))
                     if d != dong_target or h != ho_target:
                         continue
+                    match_count += 1
                     gb = safe_get(x, 'exposPubuseGbCdNm')  # 전유/공용
                     main = safe_get(x, 'mainAtchGbCdNm')   # 주/부속
                     area = safe_get(x, 'area')
@@ -1115,8 +1125,17 @@ def auto_lookup_building():
                         'floor': floor,
                         'struct': struct,
                     }
-            elif err:
-                result['errors'].append(f'전유공용면적: {err}')
+                elif match_count == 0:
+                    # 매칭된 호수가 없음 - 단지 내 동·호수 샘플 보여주기
+                    available_dongs = sorted(set([safe_get(x, 'dongNm') for x in items]))[:10]
+                    available_hos_in_target_dong = sorted(set([safe_get(x, 'hoNm') for x in items if norm_dong(safe_get(x, 'dongNm')) == dong_target]))[:10]
+                    if available_hos_in_target_dong:
+                        result['errors'].append(f'전유공용면적: "{dong_nm}동 {ho_nm}호" 매칭 실패 / {dong_nm}동의 호수 일부: {available_hos_in_target_dong}')
+                    else:
+                        result['errors'].append(f'전유공용면적: "{dong_nm}동" 매칭 실패 / 단지 내 동 목록: {available_dongs}')
+                else:
+                    # 매칭은 됐는데 전유면적이 없음
+                    result['errors'].append(f'전유공용면적: "{dong_nm}동 {ho_nm}호" 매칭 {match_count}건 있으나 전유면적 누락')
         except Exception as e:
             result['errors'].append(safe_error('전유공용면적 조회 오류', e))
         
@@ -1124,7 +1143,11 @@ def auto_lookup_building():
         try:
             xml_text = fetch_br_price_cached(sigungu_cd, bjdong_cd, plat_gb_cd, bun, ji, cache_ts())
             items, err = parse_xml_items(xml_text)
-            if not err and items:
+            if err:
+                result['errors'].append(f'공시가격 API 오류: {err}')
+            elif not items:
+                result['errors'].append(f'공시가격 데이터 없음 (sigunguCd={sigungu_cd}, bjdongCd={bjdong_cd}, bun={bun.zfill(4)}, ji={ji.zfill(4)})')
+            else:
                 matched_prices = []
                 for x in items:
                     d = norm_dong(safe_get(x, 'dongNm'))
@@ -1140,8 +1163,8 @@ def auto_lookup_building():
                         'value': safe_get(p, 'bldRgstPc'),
                         'stdDay': safe_get(p, 'bldRgstStdDay'),
                     }
-            elif err:
-                result['errors'].append(f'공시가격: {err}')
+                else:
+                    result['errors'].append(f'공시가격: "{dong_nm}동 {ho_nm}호" 매칭 실패 (전체 {len(items)}건 중 0건 매칭)')
         except Exception as e:
             result['errors'].append(safe_error('공시가격 조회 오류', e))
         
