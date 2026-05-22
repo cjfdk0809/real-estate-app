@@ -402,7 +402,7 @@ def health():
             'url_set': bool(SUPABASE_URL),
             'key_set': bool(SUPABASE_KEY),
         },
-        'version': 'v2.13-floor-price',
+        'version': 'v2.14-jibun-match',
     })
 
 
@@ -595,6 +595,18 @@ def get_transactions_bulk():
         all_items = [x for x in all_items if x['area'] >= min_area]
     if max_area is not None:
         all_items = [x for x in all_items if x['area'] <= max_area]
+
+    # v2.14: jibun 필터 - 같은 지번(단지)만 통과 (NPL 평가 정확도)
+    # 예: 본건 지번 "3278" vs 거래사례 지번 "1008-2" → 다른 단지로 판단해 제외
+    jibun_filter = request.args.get('jibun', '').strip()
+    if jibun_filter:
+        def jibun_main(s):
+            # "3278-0" → "3278", "0292" → "292", "292" → "292"
+            s = (s or '').strip().lstrip('0')
+            return s.split('-')[0].strip() if s else ''
+        target = jibun_main(jibun_filter)
+        if target:
+            all_items = [x for x in all_items if jibun_main(x.get('jibun', '')) == target]
 
     # 최신순 정렬
     all_items.sort(key=lambda x: x.get('date', ''), reverse=True)
