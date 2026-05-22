@@ -402,7 +402,7 @@ def health():
             'url_set': bool(SUPABASE_URL),
             'key_set': bool(SUPABASE_KEY),
         },
-        'version': 'v2.12-match',
+        'version': 'v2.13-floor-price',
     })
 
 
@@ -1226,7 +1226,10 @@ def auto_lookup_building():
                         try:
                             exclu_area = float(area)
                             if not floor:
-                                floor = safe_get(x, 'flrNoNm')
+                                # v2.13: "8층" → 8 (숫자만 추출) - 프론트 number input 호환
+                                floor_raw = safe_get(x, 'flrNoNm')
+                                m = re.search(r'(-?\d+)', floor_raw)
+                                floor = int(m.group(1)) if m else None
                             if not struct:
                                 struct = safe_get(x, 'strctCdNm')
                         except (ValueError, TypeError):
@@ -1270,10 +1273,25 @@ def auto_lookup_building():
             elif not items:
                 result['errors'].append(f'공시가격 데이터 없음 (sigunguCd={sigungu_cd}, bjdongCd={bjdong_cd}, bun={bun.zfill(4)}, ji={ji.zfill(4)})')
             else:
+                # v2.13: 공시가격 API는 dongNm/hoNm 외 다른 필드명 가능성 (apartmentDongName, dongName, dongNo 등)
+                # 다양한 필드명 fallback 시도
+                def get_dong_field(x):
+                    for k in ('dongNm', 'dongName', 'apartmentDongName', 'dongNo', 'houseDongName', 'apt_dong_nm'):
+                        v = safe_get(x, k)
+                        if v:
+                            return v
+                    return ''
+                def get_ho_field(x):
+                    for k in ('hoNm', 'hoName', 'apartmentHoName', 'hoNo', 'houseHoName', 'apt_ho_nm'):
+                        v = safe_get(x, k)
+                        if v:
+                            return v
+                    return ''
+                
                 matched_prices = []
                 for x in items:
-                    d = norm_dong(safe_get(x, 'dongNm'))
-                    h = norm_ho(safe_get(x, 'hoNm'))
+                    d = norm_dong(get_dong_field(x))
+                    h = norm_ho(get_ho_field(x))
                     if d != dong_target or h != ho_target:
                         continue
                     matched_prices.append(x)
@@ -1286,15 +1304,15 @@ def auto_lookup_building():
                         'stdDay': safe_get(p, 'bldRgstStdDay'),
                     }
                 else:
-                    # v2.12: 매칭 실패 시 디버그 - 같은 동의 실제 호수 형식 보여주기
-                    # ('0802호' vs '802' 같은 형식 차이 진단용)
-                    same_dong_hos = sorted(set([safe_get(x, 'hoNm') for x in items if norm_dong(safe_get(x, 'dongNm')) == dong_target]))[:15]
-                    sample_rows = [{'dong': safe_get(x, 'dongNm'), 'ho': safe_get(x, 'hoNm')} for x in items[:5]]
+                    # v2.13: 매칭 실패 시 첫 행의 모든 키 목록 출력 (실제 필드명 진단용)
+                    same_dong_hos = sorted(set([get_ho_field(x) for x in items if norm_dong(get_dong_field(x)) == dong_target]))[:15]
+                    sample_rows = [{'dong': get_dong_field(x), 'ho': get_ho_field(x)} for x in items[:5]]
+                    available_dongs = sorted(set([get_dong_field(x) for x in items]))[:10]
+                    all_keys = sorted(list(items[0].keys())) if items else []
                     if same_dong_hos:
                         result['errors'].append(f'공시가격: "{dong_nm}동 {ho_nm}호" 매칭 실패 (전체 {len(items)}건) / {dong_nm}동의 호수 일부: {same_dong_hos}')
                     else:
-                        available_dongs = sorted(set([safe_get(x, 'dongNm') for x in items]))[:10]
-                        result['errors'].append(f'공시가격: "{dong_nm}동" 매칭 실패 (전체 {len(items)}건) / 동 목록: {available_dongs} / 샘플: {sample_rows}')
+                        result['errors'].append(f'공시가격: "{dong_nm}동" 매칭 실패 (전체 {len(items)}건) / 동 목록: {available_dongs} / 샘플: {sample_rows} / 첫행 전체키: {all_keys}')
         except Exception as e:
             result['errors'].append(safe_error('공시가격 조회 오류', e))
         
