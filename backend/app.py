@@ -844,6 +844,106 @@ def fetch_br_price_cached(sigungu_cd, bjdong_cd, plat_gb_cd, bun, ji, _ts):
     return r.text
 
 
+# ============================================================
+# 페이지네이션 지원 함수 (대형 단지용)
+# ============================================================
+# API 한 페이지당 최대 100건 반환 (numOfRows를 더 높여도 100건만 반환됨)
+_PAGE_SIZE = 100
+
+
+def fetch_br_expose_all_pages(sigungu_cd, bjdong_cd, plat_gb_cd, bun, ji):
+    """전유공용면적 - 모든 페이지 통합 조회 (대형 단지 대응).
+    
+    페이지당 100건씩 최대 200페이지(20,000세대)까지 가져옵니다.
+    헬리오시티(9,510세대) 같은 대형 단지도 한 번에 모두 가져올 수 있습니다.
+    
+    Returns: (items_list, error_message_or_None)
+    """
+    all_items = []
+    page = 1
+    max_pages = 200
+    
+    while page <= max_pages:
+        params = {
+            'serviceKey': API_KEY,
+            'sigunguCd': sigungu_cd,
+            'bjdongCd': bjdong_cd,
+            'platGbCd': plat_gb_cd,
+            'bun': bun.zfill(4),
+            'ji': ji.zfill(4),
+            'numOfRows': str(_PAGE_SIZE),
+            'pageNo': str(page),
+        }
+        try:
+            r = requests.get(URL_BR_EXPOSE, params=params, timeout=30)
+            r.raise_for_status()
+        except Exception as e:
+            if page == 1:
+                return [], f'전유공용면적 API 호출 실패 (page={page}): {e}'
+            break  # 중간 페이지 실패 → 그동안 모은 데이터로 진행
+        
+        items, err = parse_xml_items(r.text)
+        if err:
+            if page == 1:
+                return [], err
+            break
+        if not items:
+            break  # 더 이상 데이터 없음
+        
+        all_items.extend(items)
+        if len(items) < _PAGE_SIZE:
+            break  # 마지막 페이지 (100건 미만 → 끝)
+        page += 1
+    
+    return all_items, None
+
+
+def fetch_br_price_all_pages(sigungu_cd, bjdong_cd, plat_gb_cd, bun, ji):
+    """공시가격 - 모든 페이지 통합 조회 (대형 단지 대응).
+    
+    페이지당 100건씩 최대 200페이지(20,000건)까지 가져옵니다.
+    
+    Returns: (items_list, error_message_or_None)
+    """
+    all_items = []
+    page = 1
+    max_pages = 200
+    
+    while page <= max_pages:
+        params = {
+            'serviceKey': API_KEY,
+            'sigunguCd': sigungu_cd,
+            'bjdongCd': bjdong_cd,
+            'platGbCd': plat_gb_cd,
+            'bun': bun.zfill(4),
+            'ji': ji.zfill(4),
+            'numOfRows': str(_PAGE_SIZE),
+            'pageNo': str(page),
+        }
+        try:
+            r = requests.get(URL_BR_PRICE, params=params, timeout=30)
+            r.raise_for_status()
+        except Exception as e:
+            if page == 1:
+                return [], f'공시가격 API 호출 실패 (page={page}): {e}'
+            break
+        
+        items, err = parse_xml_items(r.text)
+        if err:
+            if page == 1:
+                return [], err
+            break
+        if not items:
+            break
+        
+        all_items.extend(items)
+        if len(items) < _PAGE_SIZE:
+            break
+        page += 1
+    
+    return all_items, None
+
+
 @app.route('/api/building/lookup')
 def lookup_building():
     """건축물대장 통합 조회 (표제부 + 전유공용면적 + 공시가격).
@@ -1073,10 +1173,9 @@ def auto_lookup_building():
         except Exception as e:
             result['errors'].append(safe_error('표제부 조회 오류', e))
         
-        # 5. 전유공용면적 (호별 면적) 조회
+        # 5. 전유공용면적 (호별 면적) 조회 - 페이지네이션 적용 (대형 단지 대응)
         try:
-            xml_text = fetch_br_expose_cached(sigungu_cd, bjdong_cd, plat_gb_cd, bun, ji, cache_ts())
-            items, err = parse_xml_items(xml_text)
+            items, err = fetch_br_expose_all_pages(sigungu_cd, bjdong_cd, plat_gb_cd, bun, ji)
             if err:
                 result['errors'].append(f'전유공용면적 API 오류: {err}')
             elif not items:
@@ -1139,10 +1238,9 @@ def auto_lookup_building():
         except Exception as e:
             result['errors'].append(safe_error('전유공용면적 조회 오류', e))
         
-        # 6. 공시가격 (가장 최근 기준일 기준)
+        # 6. 공시가격 (가장 최근 기준일 기준) - 페이지네이션 적용
         try:
-            xml_text = fetch_br_price_cached(sigungu_cd, bjdong_cd, plat_gb_cd, bun, ji, cache_ts())
-            items, err = parse_xml_items(xml_text)
+            items, err = fetch_br_price_all_pages(sigungu_cd, bjdong_cd, plat_gb_cd, bun, ji)
             if err:
                 result['errors'].append(f'공시가격 API 오류: {err}')
             elif not items:
