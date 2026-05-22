@@ -2190,29 +2190,26 @@ function drawPriceChart(comps) {
           label: '매매',
           data: sales,
           borderColor: '#1e3a5f',
-          backgroundColor: 'rgba(30, 58, 95, 0.08)',
-          tension: 0.35, pointRadius: 5, pointHoverRadius: 8,
+          backgroundColor: 'rgba(30, 58, 95, 0.06)',
+          tension: 0.4,
+          pointRadius: 0,         // 동그라미 제거
+          pointHoverRadius: 5,    // 호버 시에만 작게 표시
           pointBackgroundColor: '#fff', pointBorderColor: '#1e3a5f', pointBorderWidth: 2,
-          borderWidth: 2.5, fill: true,
+          borderWidth: 3, fill: true,
         },
         {
           label: '전세',
           data: jeonse,
           borderColor: '#d97706',
-          backgroundColor: 'rgba(217, 119, 6, 0.06)',
-          tension: 0.35, pointRadius: 5, pointHoverRadius: 8,
+          backgroundColor: 'rgba(217, 119, 6, 0.05)',
+          tension: 0.4,
+          pointRadius: 0,         // 동그라미 제거
+          pointHoverRadius: 5,    // 호버 시에만 작게 표시
           pointBackgroundColor: '#fff', pointBorderColor: '#d97706', pointBorderWidth: 2,
-          borderWidth: 2.5, fill: true, borderDash: [],
+          borderWidth: 3, fill: true,
         },
-        {
-          label: '월세 (보증금)',
-          data: wolse,
-          borderColor: '#0d9488',
-          backgroundColor: 'rgba(13, 148, 136, 0.05)',
-          tension: 0.35, pointRadius: 4, pointHoverRadius: 7,
-          pointBackgroundColor: '#fff', pointBorderColor: '#0d9488', pointBorderWidth: 2,
-          borderWidth: 2, fill: false, borderDash: [4, 4],
-        },
+        // 월세는 보증금/월세 금액 차이로 시세 추이 표현이 부적합 → 그래프 제외
+        // (변동률 요약 영역에 건수만 표시)
       ],
     },
     options: {
