@@ -402,7 +402,7 @@ def health():
             'url_set': bool(SUPABASE_URL),
             'key_set': bool(SUPABASE_KEY),
         },
-        'version': 'v2.9-area',
+        'version': 'v2.12-match',
     })
 
 
@@ -1113,10 +1113,19 @@ def auto_lookup_building():
         plat_gb_cd = '0'  # 대지
         
         # 매칭 유틸: "101동"="101", "201호"="201" 등 모두 정규화
+        # v2.12: zero-padding ('0802' → '802'), 알파벳 prefix ('B0802' → '802') 처리
         def norm_dong(s):
-            return str(s).replace(' ', '').replace('동', '')
+            s = str(s).replace(' ', '').replace('동', '')
+            s = re.sub(r'^[A-Za-z]+', '', s)  # 알파벳 prefix 제거
+            if s.isdigit():
+                s = str(int(s))  # 선행 0 제거
+            return s
         def norm_ho(s):
-            return str(s).replace(' ', '').replace('호', '')
+            s = str(s).replace(' ', '').replace('호', '')
+            s = re.sub(r'^[A-Za-z]+', '', s)  # 'B', 'PH' 등 알파벳 prefix 제거
+            if s.isdigit():
+                s = str(int(s))  # '0802' → '802' (선행 0 제거)
+            return s
         
         dong_target = norm_dong(dong_nm)
         ho_target = norm_ho(ho_nm)
@@ -1134,6 +1143,8 @@ def auto_lookup_building():
                 'ji': ji,
                 'dong_nm': dong_nm,
                 'ho_nm': ho_nm,
+                'dong_target_norm': dong_target,  # v2.12: 정규화 결과
+                'ho_target_norm': ho_target,      # v2.12: 정규화 결과
                 'kapt_addr': addr_lot,
             }
         }
@@ -1187,6 +1198,7 @@ def auto_lookup_building():
                 struct = None
                 pub_count = 0
                 match_count = 0
+                matched_samples = []  # v2.12: 매칭된 행의 실제 값 (디버그용)
                 
                 for x in items:
                     d = norm_dong(safe_get(x, 'dongNm'))
@@ -1198,16 +1210,28 @@ def auto_lookup_building():
                     main = safe_get(x, 'mainAtchGbCdNm')   # 주/부속
                     area = safe_get(x, 'area')
                     
-                    if gb == '전유' and main == '주':
+                    # v2.12: 디버그 샘플 수집 (최대 5건) - 매칭 실패 원인 진단용
+                    if len(matched_samples) < 5:
+                        matched_samples.append({
+                            'dong': safe_get(x, 'dongNm'),
+                            'ho': safe_get(x, 'hoNm'),
+                            'gb': gb,
+                            'main': main,
+                            'area': area,
+                            'purps': safe_get(x, 'mainPurpsCdNm'),
+                        })
+                    
+                    # v2.12: 매칭 완화 — '전유' 부분 매칭 ('전유'/'전유부분' 모두 처리)
+                    if '전유' in gb and exclu_area is None:
                         try:
                             exclu_area = float(area)
+                            if not floor:
+                                floor = safe_get(x, 'flrNoNm')
+                            if not struct:
+                                struct = safe_get(x, 'strctCdNm')
                         except (ValueError, TypeError):
                             pass
-                        if not floor:
-                            floor = safe_get(x, 'flrNoNm')
-                        if not struct:
-                            struct = safe_get(x, 'strctCdNm')
-                    elif gb == '공용' and main == '주':
+                    elif '공용' in gb:
                         try:
                             pub_area += float(area)
                             pub_count += 1
@@ -1233,8 +1257,8 @@ def auto_lookup_building():
                     else:
                         result['errors'].append(f'전유공용면적: "{dong_nm}동" 매칭 실패 / 단지 내 동 목록: {available_dongs}')
                 else:
-                    # 매칭은 됐는데 전유면적이 없음
-                    result['errors'].append(f'전유공용면적: "{dong_nm}동 {ho_nm}호" 매칭 {match_count}건 있으나 전유면적 누락')
+                    # v2.12: 매칭은 됐는데 전유면적 추출 실패 - 실제 데이터 샘플 출력
+                    result['errors'].append(f'전유공용면적: "{dong_nm}동 {ho_nm}호" 매칭 {match_count}건 있으나 전유 추출 실패. 샘플(최대5): {matched_samples}')
         except Exception as e:
             result['errors'].append(safe_error('전유공용면적 조회 오류', e))
         
@@ -1262,7 +1286,15 @@ def auto_lookup_building():
                         'stdDay': safe_get(p, 'bldRgstStdDay'),
                     }
                 else:
-                    result['errors'].append(f'공시가격: "{dong_nm}동 {ho_nm}호" 매칭 실패 (전체 {len(items)}건 중 0건 매칭)')
+                    # v2.12: 매칭 실패 시 디버그 - 같은 동의 실제 호수 형식 보여주기
+                    # ('0802호' vs '802' 같은 형식 차이 진단용)
+                    same_dong_hos = sorted(set([safe_get(x, 'hoNm') for x in items if norm_dong(safe_get(x, 'dongNm')) == dong_target]))[:15]
+                    sample_rows = [{'dong': safe_get(x, 'dongNm'), 'ho': safe_get(x, 'hoNm')} for x in items[:5]]
+                    if same_dong_hos:
+                        result['errors'].append(f'공시가격: "{dong_nm}동 {ho_nm}호" 매칭 실패 (전체 {len(items)}건) / {dong_nm}동의 호수 일부: {same_dong_hos}')
+                    else:
+                        available_dongs = sorted(set([safe_get(x, 'dongNm') for x in items]))[:10]
+                        result['errors'].append(f'공시가격: "{dong_nm}동" 매칭 실패 (전체 {len(items)}건) / 동 목록: {available_dongs} / 샘플: {sample_rows}')
         except Exception as e:
             result['errors'].append(safe_error('공시가격 조회 오류', e))
         
@@ -3007,6 +3039,107 @@ document.querySelectorAll('thead th[data-sort]').forEach(th => {
     return html
 
 
+@app.route('/admin/diag-expose')
+def admin_diag_expose():
+    """v2.12: 전유공용면적 / 공시가격 raw 진단 페이지.
+    
+    URL: /admin/diag-expose?key=ADMIN_SECRET&kapt=A14322001&dong=103&ho=802
+    
+    단지코드+동·호수만 입력하면 두 API의 raw 응답에서
+    실제 dongNm/hoNm/exposPubuseGbCdNm 값들을 보여줍니다.
+    """
+    key = request.args.get('key', '')
+    if not ADMIN_SECRET:
+        return jsonify({'error': 'ADMIN_SECRET 환경변수가 설정되지 않았습니다.'}), 503
+    if key != ADMIN_SECRET:
+        return jsonify({'error': '잘못된 관리자 키'}), 403
+    
+    kapt_code = request.args.get('kapt', '').strip()
+    dong_filter = request.args.get('dong', '').strip()
+    ho_filter = request.args.get('ho', '').strip()
+    
+    if not kapt_code:
+        return jsonify({'error': 'kapt 파라미터 필수 (예: ?kapt=A14322001&dong=103&ho=802)'}), 400
+    
+    try:
+        # 단지정보로 sigungu/bjdong/bun/ji 추출
+        basis_xml = fetch_apt_basis_cached(kapt_code, cache_ts())
+        basis_items, err = parse_kapt_response(basis_xml)
+        if err or not basis_items:
+            return jsonify({'error': f'단지정보 조회 실패: {err}'}), 502
+        b = basis_items[0]
+        bjd_code = safe_get(b, 'bjdCode')
+        sigungu_cd = bjd_code[:5]
+        bjdong_cd = bjd_code[5:]
+        addr_lot = safe_get(b, 'kaptAddr')
+        m = re.search(r'(\d+)(?:-(\d+))?(?:\s|$)', addr_lot)
+        bun = m.group(1) if m else ''
+        ji = m.group(2) if (m and m.group(2)) else '0'
+        
+        # 전유공용면적 + 공시가격 모두 페이지네이션으로 가져옴
+        expose_items, expose_err = fetch_br_expose_all_pages(sigungu_cd, bjdong_cd, '0', bun, ji)
+        price_items, price_err = fetch_br_price_all_pages(sigungu_cd, bjdong_cd, '0', bun, ji)
+        
+        # 동·호 매칭 필터
+        def norm_d(s):
+            s = str(s).replace(' ', '').replace('동', '')
+            s = re.sub(r'^[A-Za-z]+', '', s)
+            return str(int(s)) if s.isdigit() else s
+        def norm_h(s):
+            s = str(s).replace(' ', '').replace('호', '')
+            s = re.sub(r'^[A-Za-z]+', '', s)
+            return str(int(s)) if s.isdigit() else s
+        
+        dt = norm_d(dong_filter) if dong_filter else None
+        ht = norm_h(ho_filter) if ho_filter else None
+        
+        # 전유공용면적 - 매칭된 행 전체 raw 데이터
+        expose_matched = []
+        if dt and ht:
+            for x in expose_items:
+                if norm_d(safe_get(x, 'dongNm')) == dt and norm_h(safe_get(x, 'hoNm')) == ht:
+                    expose_matched.append(x)
+        
+        # 공시가격 - 같은 동의 모든 호수 list (호수 형식 진단용)
+        price_same_dong = []
+        if dt:
+            seen = set()
+            for x in price_items:
+                d = safe_get(x, 'dongNm')
+                h = safe_get(x, 'hoNm')
+                if norm_d(d) == dt and h not in seen:
+                    seen.add(h)
+                    price_same_dong.append({'dongNm': d, 'hoNm': h, 'price': safe_get(x, 'bldRgstPc')})
+        
+        return jsonify({
+            'lookup_params': {
+                'kapt_code': kapt_code,
+                'sigungu_cd': sigungu_cd,
+                'bjdong_cd': bjdong_cd,
+                'bun': bun,
+                'ji': ji,
+                'addr': addr_lot,
+                'dong_filter': dong_filter,
+                'ho_filter': ho_filter,
+                'dong_target': dt,
+                'ho_target': ht,
+            },
+            'expose': {
+                'total_count': len(expose_items),
+                'matched_rows_full_raw': expose_matched,  # 전유/공용 구분 진단용
+                'error': expose_err,
+            },
+            'price': {
+                'total_count': len(price_items),
+                'same_dong_hos': price_same_dong[:50],  # 호수 형식 진단용
+                'first_5_rows': price_items[:5],
+                'error': price_err,
+            },
+        })
+    except Exception as e:
+        return jsonify({'error': safe_error('진단 오류', e)}), 500
+
+
 @app.route('/api/admin/diag-kapt')
 def admin_diag_kapt():
     """K-apt  API 응답을 raw 그대로 반환 (진단용).
@@ -3056,7 +3189,7 @@ def admin_diag_kapt():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     print('=' * 60)
-    print('부동산 자산관리 백엔드 서버 (v2.9-area)')
+    print('부동산 자산관리 백엔드 서버 (v2.12-match)')
     print('=' * 60)
     print(f'API 키 설정: {"O" if API_KEY else "X (.env 파일에 MOLIT_API_KEY 추가 필요)"}')
     print(f'Supabase 연결: {"O" if supabase else "X (선택사항 - 자동완성만 비활성화)"}')
