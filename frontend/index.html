@@ -1438,7 +1438,7 @@ async function loadState() {
 
   // 2. Supabase 클라우드 로드 (네트워크)
   try {
-    const r = await fetch(`${BACKEND_URL}/api/state?user_id=${encodeURIComponent(userId)}`);
+    const r = await fetch(`/api/state?user_id=${encodeURIComponent(userId)}`);
     const d = await r.json();
     if (d.state && Object.keys(d.state).length > 0) {
       cloudState = d.state;
@@ -1478,7 +1478,7 @@ async function saveState() {
   }
 
   // 2. Supabase 비동기 저장 (백그라운드, 사용자 대기 없이)
-  fetch(`${BACKEND_URL}/api/state`, {
+  fetch('/api/state', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ user_id: userId, state }),
