@@ -402,7 +402,7 @@ def health():
             'url_set': bool(SUPABASE_URL),
             'key_set': bool(SUPABASE_KEY),
         },
-        'version': 'v2.14-jibun-match',
+        'version': 'v2.15-supabase-sync',
     })
 
 
@@ -3214,12 +3214,64 @@ def admin_diag_kapt():
 
 
 # ============================================================
+# ============================================================
+# Phase 4: Supabase 동기화 API (v2.15) - 본건 데이터를 Supabase에 저장/복원
+# ============================================================
+# 목적: localStorage의 한계(브라우저별 격리) 극복, 다른 PC/모바일에서도 같은 데이터 접근
+# URL 파라미터 user=kiwoom-team 처럼 지정하면 팀 공유 모드, 미지정 시 자동 생성된 개인 UUID
+# ============================================================
+
+@app.route('/api/state', methods=['GET'])
+def api_get_state():
+    """저장된 사용자 상태를 Supabase에서 가져옴."""
+    user_id = (request.args.get('user_id') or '').strip()
+    if not user_id:
+        return jsonify({'error': 'user_id required'}), 400
+    if not supabase:
+        return jsonify({'error': 'supabase unavailable', 'state': None}), 503
+    try:
+        r = supabase.table('user_states').select('state, updated_at').eq('user_id', user_id).execute()
+        if r.data and len(r.data) > 0:
+            return jsonify({
+                'state': r.data[0].get('state') or None,
+                'updated_at': r.data[0].get('updated_at'),
+                'user_id': user_id,
+            })
+        # 신규 사용자 - 빈 상태 반환
+        return jsonify({'state': None, 'updated_at': None, 'user_id': user_id})
+    except Exception as e:
+        return jsonify({'error': safe_error(str(e)), 'state': None}), 500
+
+
+@app.route('/api/state', methods=['POST'])
+def api_save_state():
+    """사용자 상태를 Supabase에 저장 (upsert)."""
+    data = request.json or {}
+    user_id = (data.get('user_id') or '').strip()
+    state = data.get('state')
+    if not user_id:
+        return jsonify({'error': 'user_id required'}), 400
+    if state is None:
+        return jsonify({'error': 'state required'}), 400
+    if not supabase:
+        return jsonify({'error': 'supabase unavailable'}), 503
+    try:
+        supabase.table('user_states').upsert({
+            'user_id': user_id,
+            'state': state,
+        }, on_conflict='user_id').execute()
+        return jsonify({'ok': True, 'user_id': user_id})
+    except Exception as e:
+        return jsonify({'error': safe_error(str(e))}), 500
+
+
+# ============================================================
 # 시작
 # ============================================================
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     print('=' * 60)
-    print('부동산 자산관리 백엔드 서버 (v2.12-match)')
+    print('부동산 자산관리 백엔드 서버 (v2.15-supabase-sync)')
     print('=' * 60)
     print(f'API 키 설정: {"O" if API_KEY else "X (.env 파일에 MOLIT_API_KEY 추가 필요)"}')
     print(f'Supabase 연결: {"O" if supabase else "X (선택사항 - 자동완성만 비활성화)"}')
