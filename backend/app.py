@@ -24,6 +24,7 @@ from dotenv import load_dotenv
 
 from lawd_codes import LAWD_CODES, find_lawd_code
 from registry_analyzer import registry_bp  # 🆕 등기부 분석 모듈
+from complex_identifier import identify_complex, identify_dong  # 🆕 Day 8: 단지 교차검증
 
 # Supabase 클라이언트 (선택적 - 미설치/미설정 시에도 기존 기능은 정상 작동)
 try:
@@ -395,6 +396,7 @@ def health():
             'building_register': True,
             'price_disclosure': True,
             'supabase_search': supabase is not None,  # 신규: 자동완성 가능 여부
+            'cross_verify': True,  # 🆕 Day 8: 단지 교차검증
         },
         'supabase': {
             'lib_installed': HAS_SUPABASE_LIB,
@@ -402,7 +404,7 @@ def health():
             'url_set': bool(SUPABASE_URL),
             'key_set': bool(SUPABASE_KEY),
         },
-        'version': 'v2.15-supabase-sync',
+        'version': 'v2.16-cross-verify',
     })
 
 
@@ -1064,27 +1066,82 @@ def lookup_building():
 # ============================================================
 # 신규: 건축물대장 통합 자동조회 (단지코드 + 동·호수만으로)
 # Phase 1: 2단계 작업 (동·호수 입력 시 건축물대장 자동조회)
+# 🆕 v2.16 (Day 8): 단지 교차검증 통합 — K-apt 옛 지번 의존 해소
 # ============================================================
+
+@app.route('/api/complex/identify')
+def api_identify_complex():
+    """단지 교차검증 식별 (단독 호출용, v2.16 신규).
+    
+    Query params:
+        kapt_code: 단지코드 (필수, A로 시작)
+        force_refresh: '1'이면 캐시 무시 (선택, 디버깅 시 유용)
+    
+    Returns: complex_identifier.identify_complex() 결과
+        - mgm_bldrgst_pk, 신지번(bun/ji), 신뢰도 점수, 매칭 상세 등
+    """
+    if not API_KEY:
+        return jsonify({'error': 'API 키 미설정'}), 500
+    
+    kapt_code = request.args.get('kapt_code', '').strip()
+    force_refresh = request.args.get('force_refresh', '0') == '1'
+    
+    if not kapt_code or not kapt_code.startswith('A'):
+        return jsonify({'error': '유효한 kapt_code 필요 (A로 시작)'}), 400
+    
+    try:
+        # K-apt 기본정보로 단지 메타데이터 확보
+        basis_xml = fetch_apt_basis_cached(kapt_code, cache_ts())
+        basis_items, err = parse_kapt_response(basis_xml)
+        if err:
+            return jsonify({'error': safe_error('단지정보 조회 실패', err)}), 502
+        if not basis_items:
+            return jsonify({'error': '단지 정보를 찾을 수 없습니다'}), 404
+        b = basis_items[0]
+        
+        bjd_code = safe_get(b, 'bjdCode')
+        if len(bjd_code) != 10:
+            return jsonify({'error': f'법정동코드 형식 오류: {bjd_code}'}), 502
+        sigungu_cd = bjd_code[:5]
+        bjdong_cd = bjd_code[5:]
+        
+        household_str = safe_get(b, 'kaptdaCnt')
+        try:
+            household = int(household_str) if household_str else None
+        except (ValueError, TypeError):
+            household = None
+        
+        result = identify_complex(
+            kapt_code=kapt_code,
+            sigungu_cd=sigungu_cd,
+            bjdong_cd=bjdong_cd,
+            complex_name=safe_get(b, 'kaptName'),
+            road_addr=safe_get(b, 'doroJuso'),
+            household_count=household,
+            use_approval_date=safe_get(b, 'kaptUsedate'),
+            force_refresh=force_refresh,
+        )
+        return jsonify(result)
+    
+    except Exception as e:
+        return jsonify({'error': safe_error('교차검증 오류', e)}), 500
+
 
 @app.route('/api/building/auto-lookup')
 def auto_lookup_building():
-    """단지코드 + 동·호수만으로 건축물대장 자동조회.
+    """🆕 v2.16-cross-verify: 교차검증으로 정확한 신지번 확보 후 3종 API 조회.
     
-    내부적으로 단지 정보를 조회하여 시군구코드/법정동코드/본번/부번을 자동 추출하고,
-    건축물대장(표제부+전유공용면적+공시가격)을 통합 조회합니다.
+    Day 8 변경: K-apt가 제공하는 옛 지번 의존을 끊고, 건축HUB 총괄표제부와
+    단지명/도로명주소/세대수 교차검증으로 정확한 신지번을 자동 보정.
     
-    Query params:
+    Query params (기존과 동일 — 프론트엔드 호환):
         kapt_code: 단지코드 (필수, A로 시작)
         dong_nm: 동 이름 (필수, 예: "101" 또는 "101동")
         ho_nm: 호수 (필수, 예: "201" 또는 "201호")
     
-    Returns: {
-        unit: { dongNm, hoNm, excluArea, pubArea, supplyArea, floor, struct },
-        title: { totalFloors, undergroundFloors, totalArea, completionDate, mainPurps, struct },
-        price: { value, stdDay },
-        errors: [...],
-        lookup_params: {...}  # 디버그용
-    }
+    Returns (기존 구조 유지 + complex 필드 추가):
+        unit, title, price, errors, lookup_params (기존)
+        complex: { match_score, score_breakdown, source, mgm_bldrgst_pk, ... } (🆕)
     """
     if not API_KEY:
         return jsonify({'error': 'API 키 미설정'}), 500
@@ -1099,7 +1156,9 @@ def auto_lookup_building():
         return jsonify({'error': 'dong_nm, ho_nm 모두 필수'}), 400
     
     try:
+        # ============================================================
         # 1. 단지 기본정보 조회 (V4 API)
+        # ============================================================
         basis_xml = fetch_apt_basis_cached(kapt_code, cache_ts())
         basis_items, err = parse_kapt_response(basis_xml)
         if err:
@@ -1108,22 +1167,78 @@ def auto_lookup_building():
             return jsonify({'error': '단지 정보를 찾을 수 없습니다'}), 404
         b = basis_items[0]
         
+        # ============================================================
         # 2. bjdCode → 시군구코드(5자리), 법정동코드(5자리) 추출
+        # ============================================================
         bjd_code = safe_get(b, 'bjdCode')
         if len(bjd_code) != 10:
             return jsonify({'error': f'법정동코드 형식 오류: {bjd_code}'}), 502
         sigungu_cd = bjd_code[:5]
         bjdong_cd = bjd_code[5:]
-        
-        # 3. 지번주소 → 본번/부번 파싱 (예: "서울 동대문구 이문동 559" → bun=559)
         addr_lot = safe_get(b, 'kaptAddr')
-        m = re.search(r'(\d+)(?:-(\d+))?(?:\s|$)', addr_lot)
-        if not m:
-            return jsonify({'error': f'지번 파싱 실패: {addr_lot}'}), 502
-        bun = m.group(1)
-        ji = m.group(2) or '0'
-        plat_gb_cd = '0'  # 대지
         
+        # ============================================================
+        # 3. 🆕 교차검증 — 정확한 신지번 확보
+        # ============================================================
+        household_str = safe_get(b, 'kaptdaCnt')
+        try:
+            household = int(household_str) if household_str else None
+        except (ValueError, TypeError):
+            household = None
+        
+        complex_result = identify_complex(
+            kapt_code=kapt_code,
+            sigungu_cd=sigungu_cd,
+            bjdong_cd=bjdong_cd,
+            complex_name=safe_get(b, 'kaptName'),
+            road_addr=safe_get(b, 'doroJuso'),
+            household_count=household,
+            use_approval_date=safe_get(b, 'kaptUsedate'),
+        )
+        
+        complex_summary = None
+        used_fallback = False
+        
+        if complex_result.get('success'):
+            # ✅ 교차검증 성공: 정확한 신지번 사용
+            plat_gb_cd = complex_result['plat_gb_cd']
+            bun = complex_result['bun']
+            ji = complex_result['ji']
+            complex_summary = {
+                'mgm_bldrgst_pk': complex_result.get('mgm_bldrgst_pk'),
+                'name': complex_result.get('complex_name'),
+                'road_addr': complex_result.get('road_addr'),
+                'jibun_addr': complex_result.get('jibun_addr'),
+                'match_score': complex_result.get('match_score'),
+                'score_breakdown': complex_result.get('score_breakdown'),
+                'source': complex_result.get('source'),
+                'candidates_count': complex_result.get('candidates_count', 0),
+                'rival_candidates': complex_result.get('rival_candidates', 0),
+            }
+        else:
+            # ⚠ 교차검증 실패 → fallback: 기존 방식(주소 파싱)으로 시도
+            used_fallback = True
+            m = re.search(r'(\d+)(?:-(\d+))?(?:\s|$)', addr_lot)
+            if not m:
+                return jsonify({
+                    'error': f'교차검증 실패 + 지번 파싱 실패: {complex_result.get("message")}',
+                    'complex_error': complex_result,
+                }), 502
+            bun = m.group(1)
+            ji = m.group(2) or '0'
+            plat_gb_cd = '0'
+            complex_summary = {
+                'name': safe_get(b, 'kaptName'),
+                'match_score': 0,
+                'source': 'fallback',
+                'fallback_reason': complex_result.get('error'),
+                'fallback_message': complex_result.get('message'),
+                'candidates_count': complex_result.get('candidates_count', 0),
+            }
+        
+        # ============================================================
+        # 4. 동·호수 정규화 (기존 v2.12 로직 그대로)
+        # ============================================================
         # 매칭 유틸: "101동"="101", "201호"="201" 등 모두 정규화
         # v2.12: zero-padding ('0802' → '802'), 알파벳 prefix ('B0802' → '802') 처리
         def norm_dong(s):
@@ -1147,21 +1262,27 @@ def auto_lookup_building():
             'title': None,
             'price': None,
             'errors': [],
+            'complex': complex_summary,  # 🆕 v2.16: 교차검증 결과
             'lookup_params': {
                 'kapt_code': kapt_code,
                 'sigungu_cd': sigungu_cd,
                 'bjdong_cd': bjdong_cd,
                 'bun': bun,
                 'ji': ji,
+                'plat_gb_cd': plat_gb_cd,
                 'dong_nm': dong_nm,
                 'ho_nm': ho_nm,
                 'dong_target_norm': dong_target,  # v2.12: 정규화 결과
                 'ho_target_norm': ho_target,      # v2.12: 정규화 결과
                 'kapt_addr': addr_lot,
+                'verified_jibun': not used_fallback,  # 🆕 v2.16: 교차검증 신지번 여부
+                'version': 'v2.16-cross-verify',
             }
         }
         
-        # 4. 표제부 조회
+        # ============================================================
+        # 5. 표제부 조회 (기존 코드 그대로)
+        # ============================================================
         try:
             xml_text = fetch_br_title_cached(sigungu_cd, bjdong_cd, plat_gb_cd, bun, ji, cache_ts())
             items, err = parse_xml_items(xml_text)
@@ -1196,7 +1317,9 @@ def auto_lookup_building():
         except Exception as e:
             result['errors'].append(safe_error('표제부 조회 오류', e))
         
-        # 5. 전유공용면적 (호별 면적) 조회 - 페이지네이션 적용 (대형 단지 대응)
+        # ============================================================
+        # 6. 전유공용면적 (호별 면적) 조회 - 페이지네이션 적용 (대형 단지 대응)
+        # ============================================================
         try:
             items, err = fetch_br_expose_all_pages(sigungu_cd, bjdong_cd, plat_gb_cd, bun, ji)
             if err:
@@ -1277,7 +1400,9 @@ def auto_lookup_building():
         except Exception as e:
             result['errors'].append(safe_error('전유공용면적 조회 오류', e))
         
-        # 6. 공시가격 (가장 최근 기준일 기준) - 페이지네이션 적용
+        # ============================================================
+        # 7. 공시가격 (가장 최근 기준일 기준) - 페이지네이션 적용
+        # ============================================================
         try:
             items, err = fetch_br_price_all_pages(sigungu_cd, bjdong_cd, plat_gb_cd, bun, ji)
             if err:
@@ -1749,7 +1874,7 @@ button:disabled { background: #ccc; cursor: not-allowed; }
 <p class="muted">법정동 마스터 + 아파트 단지 마스터를 Supabase DB에 채웁니다. 한 번만 실행하시면 됩니다.</p>
 
 <div class="card">
-<h2>1️⃣ 법정동 마스터 (약 20,000건)</h2>
+<h2>1⃣ 법정동 마스터 (약 20,000건)</h2>
 <p class="muted">행정표준코드관리시스템 출처. 동/읍/면 + 리 단위 전체.</p>
 <div class="row">
 <button id="btn-dong" onclick="loadDong()">로드 시작</button>
@@ -1760,8 +1885,8 @@ button:disabled { background: #ccc; cursor: not-allowed; }
 </div>
 
 <div class="card">
-<h2>2️⃣ 아파트 단지 마스터 (약 18,000개)</h2>
-<p class="muted">⚠️ 1번 완료 후 진행하세요. K-apt  API getTotalAptList3로 페이지당 1000개씩 일괄 조회 (약 2~5분 소요).</p>
+<h2>2⃣ 아파트 단지 마스터 (약 18,000개)</h2>
+<p class="muted">⚠ 1번 완료 후 진행하세요. K-apt  API getTotalAptList3로 페이지당 1000개씩 일괄 조회 (약 2~5분 소요).</p>
 <div class="row">
 <button id="btn-apt" onclick="loadApt()" disabled>1번 먼저 완료</button>
 <span id="apt-status" class="muted">대기 중</span>
@@ -1770,7 +1895,7 @@ button:disabled { background: #ccc; cursor: not-allowed; }
 <div id="apt-log" class="log" style="display:none;margin-top:12px;"></div>
 </div>
 
-<p class="muted" style="text-align:center;margin-top:20px;">⚠️ 페이지를 닫지 마세요. 닫으면 진행이 멈춥니다 (다시 열면 이어서 진행됩니다).</p>
+<p class="muted" style="text-align:center;margin-top:20px;">⚠ 페이지를 닫지 마세요. 닫으면 진행이 멈춥니다 (다시 열면 이어서 진행됩니다).</p>
 </div>
 
 <script>
@@ -2267,7 +2392,7 @@ tbody tr.target-jibun:hover { background: #fff3c4; }
       <!-- 지번 선택 박스 -->
       <div id="jibun-selector-card" class="search-card" style="display:none; margin-bottom:16px; background:linear-gradient(135deg, #fff8e1 0%, #fffde7 100%); border-left:4px solid #ffb300;">
         <h2 style="font-size:16px;">🎯 분석 대상 지번 선택</h2>
-        <p class="search-hint" style="margin-top:4px;">⚠️ 같은 단지명에 여러 지번이 있을 수 있어요. 사장님 부동산의 지번을 선택하면 <strong>해당 지번 거래만</strong> 분석합니다.</p>
+        <p class="search-hint" style="margin-top:4px;">⚠ 같은 단지명에 여러 지번이 있을 수 있어요. 사장님 부동산의 지번을 선택하면 <strong>해당 지번 거래만</strong> 분석합니다.</p>
         <select id="jibun-selector" style="width:100%; padding:12px 14px; font-size:14px; border:2px solid #ffb300; border-radius:8px; margin-top:12px; background:white; font-weight:500; cursor:pointer; outline:none;"></select>
         <div id="jibun-current" style="margin-top:8px; font-size:13px; color:#5d4037; font-weight:500;"></div>
       </div>
@@ -2625,7 +2750,7 @@ async function selectDanji(danji) {
       banner.style.background = '#fff3e0';
       banner.style.borderColor = '#ffcc80';
       banner.style.color = '#bf6900';
-      banner.innerHTML = `ℹ️ 단지명 자동매칭으로 시군구(${lawd_cd}) 전체에서 ${items.length}건 추출 (검색 키워드: <strong>${escapeHtml(searchKeyword)}</strong>). 정확도가 낮을 수 있으니, 거래 표 하단의 <strong>지번 입력</strong>으로 사장님 단지를 좁혀주세요.`;
+      banner.innerHTML = `ℹ 단지명 자동매칭으로 시군구(${lawd_cd}) 전체에서 ${items.length}건 추출 (검색 키워드: <strong>${escapeHtml(searchKeyword)}</strong>). 정확도가 낮을 수 있으니, 거래 표 하단의 <strong>지번 입력</strong>으로 사장님 단지를 좁혀주세요.`;
       document.getElementById('analysis').insertBefore(banner, document.getElementById('analysis').firstChild);
     }
     
@@ -2642,7 +2767,7 @@ async function selectDanji(danji) {
 function showError(msg) {
   document.getElementById('loading').style.display = 'none';
   const eb = document.getElementById('error-box');
-  eb.textContent = '⚠️ ' + msg;
+  eb.textContent = '⚠ ' + msg;
   eb.style.display = 'block';
 }
 
@@ -2776,7 +2901,7 @@ function renderAnalysis() {
       `회수 가능 범위: ${formatPrice(lower)} ~ ${formatPrice(upper)}`;
     let descParts = [];
     descParts.push(`📌 평균 매매가 ${formatPrice(avgTrade)}의 85~95%로 추정 (시장 변동성, 처분 비용 반영).`);
-    if (validTrades.length < 5) descParts.push('⚠️ 거래 건수가 적어(' + validTrades.length + '건) 추정 신뢰도 낮음. 추가 검토 필요.');
+    if (validTrades.length < 5) descParts.push('⚠ 거래 건수가 적어(' + validTrades.length + '건) 추정 신뢰도 낮음. 추가 검토 필요.');
     if (avgJeonse > 0 && rentRatio > 0) descParts.push(`💰 전세 보증금 회수 시 약 ${formatPrice(avgJeonse)} 확보 가능.`);
     document.getElementById('npl-desc').innerHTML = descParts.join('<br>');
   } else {
@@ -3271,11 +3396,12 @@ def api_save_state():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     print('=' * 60)
-    print('부동산 자산관리 백엔드 서버 (v2.15-supabase-sync)')
+    print('부동산 자산관리 백엔드 서버 (v2.16-cross-verify)')
     print('=' * 60)
     print(f'API 키 설정: {"O" if API_KEY else "X (.env 파일에 MOLIT_API_KEY 추가 필요)"}')
     print(f'Supabase 연결: {"O" if supabase else "X (선택사항 - 자동완성만 비활성화)"}')
     print(f'법정동 코드: {len(LAWD_CODES)}건 로드됨')
+    print(f'🆕 Day 8: 단지 교차검증(cross_verify) 활성화')
     print(f'서버 시작: http://localhost:{port}')
     print(f'프론트엔드: http://localhost:{port}')
     print(f'API 헬스체크: http://localhost:{port}/api/health')
