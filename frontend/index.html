@@ -361,9 +361,10 @@ table { border-collapse: collapse; width: 100%; }
   border-bottom: 1px solid var(--kiwoom-navy-deep); 
 }
 .tbl td { padding: 11px 12px; border-bottom: 1px solid var(--line); color: var(--ink); }
+.tbl th.text-right { text-align: right; }
 .tbl tbody tr:hover { background: var(--bg-subtle); }
 .tbl .num { font-family: var(--mono); text-align: right; }
-.tbl .price { font-family: var(--mono); font-weight: 600; text-align: right; color: var(--kiwoom-navy); }
+  .tbl .price { font-family: var(--mono); font-weight: 600; text-align: right; color: var(--kiwoom-navy); }
 .tbl-action { 
   display: inline-block; 
   padding: 3px 8px; 
@@ -4464,13 +4465,30 @@ async function fetchTransactions() {
     resultBox.innerHTML = `<div style="padding: 12px; background: var(--accent-soft); border-radius: 6px; color: var(--accent);">백엔드 연결 실패: ${e.message}</div>`;
   }
 }
-
 async function importItems(items) {
   const id = state.currentPropertyId;
   if (!id) { alert('먼저 본건을 선택하세요.'); return; }
   if (!state.comparables[id]) state.comparables[id] = [];
+  
+  const existing = state.comparables[id];
   let added = 0;
+  let skipped = 0;
+  
   items.forEach(x => {
+    // 중복 체크: 거래일 + 유형 + 면적 + 층 + 금액 모두 일치하면 중복으로 판정
+    const isDuplicate = existing.some(e => 
+      e.date === x.date && 
+      e.type === x.type &&
+      Number(e.area) === Number(x.area) && 
+      Number(e.floor) === Number(x.floor) && 
+      Number(e.price) === Number(x.price)
+    );
+    
+    if (isDuplicate) {
+      skipped++;
+      return;
+    }
+    
     state.comparables[id].push({
       id: uid(),
       date: x.date,
@@ -4486,10 +4504,17 @@ async function importItems(items) {
     });
     added++;
   });
+  
   await saveState();
   closeModal('apiImportModal');
-  alert(`${added}건이 거래사례에 추가되었습니다.`);
+  
+  let msg = `${added}건이 거래사례에 추가되었습니다.`;
+  if (skipped > 0) {
+    msg += `\n(중복 ${skipped}건 자동 제외)`;
+  }
+  alert(msg);
   renderView();
+}
 }
 </script>
 
