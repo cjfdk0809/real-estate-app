@@ -4082,6 +4082,14 @@ function closePropertyModal() {
         const input = document.getElementById('modalRegistryFileInput');
         if (input) input.value = '';
     }
+    
+    // 🆕 v2 추가: 모달 스크롤을 맨 위로 (다음 열기 시 첫 화면부터)
+    const propModal = document.getElementById('propertyModal');
+    if (propModal) {
+        propModal.scrollTop = 0;
+        const modalInner = propModal.querySelector('.modal');
+        if (modalInner) modalInner.scrollTop = 0;
+    }
 }
 function closeModal(id) { document.getElementById(id).classList.remove('show'); }
 
