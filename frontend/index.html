@@ -2201,13 +2201,13 @@ function drawPriceChart(comps) {
   const valid = comps.filter(c => c.date && c.price);
   const wolseCount = valid.filter(c => c.type === '월세').length;
 
-  // 🆕 거래 데이터 범위에 따라 동적 월 생성 (최소 12개월, 최대 36개월)
+  // 🆕 거래 데이터 범위에 따라 동적 월 생성 (최소 6개월, 최대 36개월)
     const allDates = valid.map(c => c.date).sort();
     const lastDate = allDates.length ? new Date(allDates[allDates.length - 1]) : new Date();
     const firstDate = allDates.length ? new Date(allDates[0]) : new Date();
     let monthsCount = (lastDate.getFullYear() - firstDate.getFullYear()) * 12 
                     + (lastDate.getMonth() - firstDate.getMonth()) + 1;
-    monthsCount = Math.max(monthsCount, 12);  // 최소 12개월 (데이터 적을 때 가독성)
+    monthsCount = Math.max(monthsCount, 6);  // 최소 6개월 (데이터 적을 때 가독성)
     monthsCount = Math.min(monthsCount, 36);  // 최대 36개월 (차트 가독성 한계)
     const months = [];  // [{ym: 'YYYY-MM', label: 'YY년 MM월'}, ...]
     for (let i = monthsCount - 1; i >= 0; i--) {
