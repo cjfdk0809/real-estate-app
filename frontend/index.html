@@ -4038,24 +4038,50 @@ function openPropertyModal(id) {
   }
   document.getElementById('propertyModal').classList.add('show');
 }
-function closePropertyModal() { 
-  document.getElementById('propertyModal').classList.remove('show');
-  _pendingRegistryAnalysis = null;
-  _modalRegistryFile = null;
-  // 모달 PDF 업로드 박스 초기화
-  const zone = document.getElementById('modalRegistryUploadZone');
-  if (zone) {
-    zone.style.borderColor = 'var(--kiwoom-navy)';
-    zone.style.background = 'white';
-    const title = document.getElementById('modalRegistryUploadTitle');
-    const desc = document.getElementById('modalRegistryUploadDesc');
-    const status = document.getElementById('modalRegistryStatus');
-    if (title) title.textContent = '📎 클릭 또는 끌어놓기로 PDF 업로드';
-    if (desc) desc.textContent = '집합건물 등기부 권장 · 최대 10MB';
-    if (status) { status.style.display = 'none'; status.innerHTML = ''; }
-    const input = document.getElementById('modalRegistryFileInput');
-    if (input) input.value = '';
-  }
+function closePropertyModal() {
+    document.getElementById('propertyModal').classList.remove('show');
+    _pendingRegistryAnalysis = null;
+    _modalRegistryFile = null;
+    
+    // 🆕 Phase 2 자동조회 전역 상태 초기화
+    _currentKaptCode = null;
+    _currentLawdCd = null;
+    _currentBun = null;
+    clearTimeout(_autoLookupTimer);
+    _autoLookupTimer = null;
+    
+    // 🆕 동적 생성된 상태 div 모두 제거
+    const autoStatus = document.getElementById('autoLookupStatus');
+    if (autoStatus) autoStatus.remove();
+    const kaptDetail = document.getElementById('kaptDetailLoading');
+    if (kaptDetail) kaptDetail.remove();
+    
+    // 🆕 K-apt 단지 검색 input 비우기
+    ['kaptSearch', 'kaptSigungu', 'kaptDong'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+    const kaptSuggestions = document.getElementById('kaptSuggestions');
+    if (kaptSuggestions) kaptSuggestions.innerHTML = '';
+    
+    // 🆕 폼 자체 리셋 (안전)
+    const propertyForm = document.getElementById('propertyForm');
+    if (propertyForm) propertyForm.reset();
+    
+    // 모달 PDF 업로드 박스 초기화 (기존 그대로)
+    const zone = document.getElementById('modalRegistryUploadZone');
+    if (zone) {
+        zone.style.borderColor = 'var(--kiwoom-navy)';
+        zone.style.background = 'white';
+        const title = document.getElementById('modalRegistryUploadTitle');
+        const desc = document.getElementById('modalRegistryUploadDesc');
+        const status = document.getElementById('modalRegistryStatus');
+        if (title) title.textContent = '📎 클릭 또는 끌어놓기로 PDF 업로드';
+        if (desc) desc.textContent = '집합건물 등기부 권장 · 최대 10MB';
+        if (status) { status.style.display = 'none'; status.innerHTML = ''; }
+        const input = document.getElementById('modalRegistryFileInput');
+        if (input) input.value = '';
+    }
 }
 function closeModal(id) { document.getElementById(id).classList.remove('show'); }
 
