@@ -444,8 +444,8 @@ table { border-collapse: collapse; width: 100%; }
 /* ========== BADGES ========== */
 .badge { display: inline-block; padding: 3px 9px; border-radius: 3px; font-size: 10px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
 .badge-매매 { background: var(--kiwoom-navy); color: white; }
-.badge-전세 { background: #1e7a3d; color: white; }
-.badge-월세 { background: #a8884a; color: white; }
+.badge-전세 { background: #d97706; color: white; }
+.badge-월세 { background: #0d9488; color: white; }
 .badge-경매 { background: #8b1818; color: white; }
 .badge-공매 { background: #6b3d8c; color: white; }
 
@@ -1903,10 +1903,11 @@ function renderComparables() {
             ${['전체','매매','전세','월세'].map(t => {
               const active = (window._compsFilter || '전체') === t;
               const count = t === '전체' ? comps.length : comps.filter(x => x.type === t).length;
+              const typeColors = { '전체': 'var(--kiwoom-navy)', '매매': 'var(--kiwoom-navy)', '전세': '#d97706', '월세': '#0d9488' };
               return `<button class="comps-filter-btn" onclick="setCompsFilter('${t}')" style="
                 padding: 6px 14px; border: none; cursor: pointer; font-size: 12px; font-weight: 600;
                 border-radius: 5px;
-                background: ${active ? 'var(--kiwoom-navy)' : 'transparent'};
+                background: ${active ? typeColors[t] : 'transparent'};
                 color: ${active ? '#fff' : 'var(--ink-muted)'};
                 transition: all 0.15s;
               ">${t} <span style="opacity:0.7; font-weight:400;">(${count})</span></button>`;
@@ -1927,7 +1928,7 @@ function renderComparables() {
         return `
       <table class="tbl">
         <thead><tr>
-          <th>거래일</th><th>유형</th><th>단지</th><th>동·호</th>
+          <th class="text-right">거래일</th><th>유형</th><th>단지</th><th>동·호</th>
           <th class="text-right">전용면적</th><th class="text-right">층</th>
           <th class="text-right">금액 / 월세</th><th class="text-right">평당가</th><th>비고</th><th class="no-print"></th>
         </tr></thead>
