@@ -3138,6 +3138,13 @@ async function autoLookupBuildingInfo() {
 // Phase 3: 거래사례 자동수집 (저장 시 트리거)
 // ============================================================
 // 같은 단지 + 전용면적 ±1% + 최근 12개월 매매 거래를 자동으로 수집
+// 도로명주소에서 도로명만 추출: "서울특별시 강서구 우현로 67" → "우현로"
+function _extractRoadName(addrRoad) {
+  if (!addrRoad) return '';
+  const m = String(addrRoad).match(/([가-힣A-Za-z0-9]+(?:대로|로|길))/);
+  return m ? m[1] : '';
+}
+
 async function autoFetchComparables(propertyId, propertyData, ctx) {
   // 시군구코드·지번: 저장 시 전달된 스냅샷(ctx) 우선, 없으면 현재 전역값
   const lawdCd = (ctx && ctx.lawdCd) || _currentLawdCd;
@@ -3157,32 +3164,38 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
   const minArea = Math.floor(area * 0.95 * 100) / 100;
   const maxArea = Math.ceil(area * 1.05 * 100) / 100;
 
-  const params = new URLSearchParams({
-    lawd_cd: lawdCd,
-    months: '12',
-    danji_name: propertyData.name,
-    min_area: String(minArea),
-    max_area: String(maxArea),
-    include_rent: 'false',  // 매매만
-  });
-  // Phase 3.1: 지번 매칭 (NPL 평가 정확도 - 다른 단지 자동 제외)
-  if (bun) {
-    params.set('jibun', bun);
-  }
-  const url = `${BACKEND_URL}/api/transactions/bulk?${params.toString()}`;
-  console.log('[Phase 3] 거래사례 자동수집 URL:', url);
+  // 도로명 추출: "서울특별시 강서구 우현로 67" → "우현로" (단지명+도로명 교차검증용)
+  const roadNm = _extractRoadName(propertyData.addrRoad || '');
 
-  try {
+  // 거래사례 조회 헬퍼: useRoad=true면 도로명 교차검증 적용
+  async function _fetchBulk(useRoad) {
+    const params = new URLSearchParams({
+      lawd_cd: lawdCd,
+      months: '12',
+      danji_name: propertyData.name,
+      min_area: String(minArea),
+      max_area: String(maxArea),
+      include_rent: 'false',  // 매매만
+    });
+    if (useRoad && roadNm) params.set('road_nm', roadNm);  // 단지명+도로명 교차검증
+    const url = `${BACKEND_URL}/api/transactions/bulk?${params.toString()}`;
+    console.log(`[Phase 3] 거래사례 조회(도로명 ${useRoad && roadNm ? roadNm : '미적용'}):`, url);
     const r = await fetch(url);
     const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    return d.items || [];
+  }
 
-    if (d.error) {
-      console.error('[Phase 3] API 오류:', d.error);
-      return { error: d.error };
+  try {
+    // 1차: 단지명 + 도로명 교차검증으로 정확 조회
+    let items = await _fetchBulk(true);
+    let crossUnverified = false;
+    // 도로명 교차검증으로 0건이면 단지명+면적만으로 재조회 → "도로명 미검증"으로 표시
+    if (items.length === 0 && roadNm) {
+      const alt = await _fetchBulk(false);
+      if (alt.length > 0) { items = alt; crossUnverified = true; }
     }
-
-    const items = d.items || [];
-    console.log(`[Phase 3] API 응답: 전체 ${items.length}건`);
+    console.log(`[Phase 3] 최종 ${items.length}건 (도로명미검증=${crossUnverified})`);
 
     // 중복 방지: 기존 거래의 키 set
     if (!state.comparables[propertyId]) state.comparables[propertyId] = [];
@@ -3203,7 +3216,7 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
         area: item.area,
         floor: item.floor,
         price: item.price,
-        memo: '자동수집',
+        memo: crossUnverified ? '자동수집(도로명미검증)' : '자동수집',
       });
     });
 
@@ -3216,9 +3229,10 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
       added: newItems.length,
       total: items.length,
       areaRange: { min: minArea, max: maxArea },
+      crossUnverified,
     };
   } catch (e) {
-    console.error('[Phase 3] 네트워크 오류:', e);
+    console.error('[Phase 3] 오류:', e);
     return { error: e.message };
   }
 }
@@ -4218,11 +4232,14 @@ document.getElementById('propertyForm').addEventListener('submit', async (e) => 
     }
     if (result.added > 0) {
       const { min, max } = result.areaRange;
+      const warn = result.crossUnverified
+        ? ' · <span style="color:#ffd; font-weight:700;">⚠️도로명 미검증(단지명·면적 기준 — 확인 권장)</span>'
+        : '';
       showToast(
         `✅ <strong>거래사례 ${result.added}건 자동 수집 완료</strong><br>` +
-        `<span style="font-size:11px;opacity:0.9;">${state.properties[id].name} · ${min}~${max}㎡ · 최근 12개월 매매</span>`,
-        'success',
-        5500
+        `<span style="font-size:11px;opacity:0.9;">${state.properties[id].name} · ${min}~${max}㎡ · 최근 12개월 매매${warn}</span>`,
+        result.crossUnverified ? 'warn' : 'success',
+        6500
       );
       renderView();  // 거래사례 비교 탭 갱신
     } else if (result.total === 0) {
