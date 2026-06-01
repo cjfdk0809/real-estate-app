@@ -242,6 +242,7 @@ def normalize_trade_item(raw):
         'memo': raw.get('cdealType', ''),  # 해제 등
         'jibun': raw.get('jibun', ''),
         'dong': raw.get('umdNm', ''),
+        'road': raw.get('roadNm', ''),  # 도로명 (상세 API) - 단지명+도로명 교차검증용
     }
 
 
@@ -597,6 +598,18 @@ def get_transactions_bulk():
         all_items = [x for x in all_items if x['area'] >= min_area]
     if max_area is not None:
         all_items = [x for x in all_items if x['area'] <= max_area]
+
+    # v2.17: 도로명 필터 - 단지명+도로명 교차검증 (지번보다 안정적, 같은 이름 다른 단지 제외)
+    # 도로명 데이터가 없는 거래는 제외하지 않음(안전). 도로명만 비교(단지가 여러 건물번호에 걸칠 수 있음).
+    road_filter = request.args.get('road_nm', '').strip()
+    if road_filter:
+        rf = road_filter.replace(' ', '')
+        def road_match(x):
+            xr = (x.get('road', '') or '').replace(' ', '')
+            if not xr:
+                return True
+            return rf in xr or xr in rf
+        all_items = [x for x in all_items if road_match(x)]
 
     # v2.14: jibun 필터 - 같은 지번(단지)만 통과 (NPL 평가 정확도)
     # 예: 본건 지번 "3278" vs 거래사례 지번 "1008-2" → 다른 단지로 판단해 제외
