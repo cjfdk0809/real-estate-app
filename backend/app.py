@@ -283,6 +283,7 @@ def normalize_rent_item(raw):
         'type': '월세' if monthly > 0 else '전세',
         'jibun': raw.get('jibun', ''),
         'dong': raw.get('umdNm', ''),
+        'road': raw.get('roadNm', ''),  # 도로명 (교차검증용)
     }
 
 
@@ -1269,7 +1270,24 @@ def auto_lookup_building():
         
         dong_target = norm_dong(dong_nm)
         ho_target = norm_ho(ho_nm)
-        
+
+        # v2.18: 등기부 지번 폴백 - K-apt 대표지번에 표제부가 없으면 등기부(PDF) 지번으로 전환
+        # (대형 재건축 단지에서 K-apt 지번 ≠ 건축물대장 지번인 경우 대응)
+        jibun_hint = request.args.get('jibun_hint', '').strip()
+        if jibun_hint:
+            hint_bun = jibun_hint.split('-')[0].strip()
+            if hint_bun and hint_bun != bun:
+                try:
+                    probe_items, _ = parse_xml_items(
+                        fetch_br_title_cached(sigungu_cd, bjdong_cd, plat_gb_cd, bun, ji, cache_ts()))
+                    if not probe_items:
+                        hint_items, _ = parse_xml_items(
+                            fetch_br_title_cached(sigungu_cd, bjdong_cd, plat_gb_cd, hint_bun, '0', cache_ts()))
+                        if hint_items:
+                            bun, ji = hint_bun, '0'  # 등기부 지번에 표제부 존재 → 전환
+                except Exception:
+                    pass
+
         result = {
             'unit': None,
             'title': None,
@@ -1706,20 +1724,28 @@ def search_apt():
     if len(q) < 2:
         return jsonify({'error': 'q(단지명)는 2자 이상이어야 합니다.'}), 400
     try:
-        query = (
-            supabase.table('apt_master')
-            .select(
-                'kapt_code, kapt_name, bjd_code, sido, sigungu, dong, '
-                'addr_road, addr_lot, total_units, total_dongs, completion_date'
-            )
-            .ilike('kapt_name', f'%{q}%')
-        )
-        if sido:
-            query = query.eq('sido', sido)
-        if sigungu:
-            query = query.eq('sigungu', sigungu)
-        resp = query.limit(limit).execute()
-        return jsonify({'count': len(resp.data), 'items': resp.data})
+        cols = ('kapt_code, kapt_name, bjd_code, sido, sigungu, dong, '
+                'addr_road, addr_lot, total_units, total_dongs, completion_date')
+
+        def _run(col):
+            qy = supabase.table('apt_master').select(cols).ilike(col, f'%{q}%')
+            if sido:
+                qy = qy.eq('sido', sido)
+            if sigungu:
+                qy = qy.eq('sigungu', sigungu)
+            return qy.limit(limit).execute().data or []
+
+        # 1) 단지명 검색 → 2) 부족하면 도로명주소로도 검색해 병합 (단지명/도로명 둘 다 지원)
+        items = _run('kapt_name')
+        if len(items) < limit:
+            seen = {it.get('kapt_code') for it in items}
+            for it in _run('addr_road'):
+                if it.get('kapt_code') not in seen:
+                    items.append(it)
+                    seen.add(it.get('kapt_code'))
+                if len(items) >= limit:
+                    break
+        return jsonify({'count': len(items), 'items': items})
     except Exception as e:
         return jsonify({'error': f'Supabase 조회 오류: {e}'}), 500
 
