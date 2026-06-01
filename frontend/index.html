@@ -2393,6 +2393,10 @@ function analyzeRights(rightsInput) {
   const baseDate = baseRight ? baseRight.date : null;
   const inheritTypes = ['임차권', '전세권', '지상권', '지역권', '가처분', '가등기', '환매'];
   const classified = sorted.map(r => {
+    // 소유권이전·보존 = 취득가액 정보 (소멸/인수 판정 대상 아님, 합계 제외)
+    if ((r.type || '').includes('소유권') && !/가등기|청구권/.test(r.type || '')) {
+      return { ...r, status: '정보', reason: '소유권(취득가액) — 판정 대상 아님' };
+    }
     let status = '소멸', reason = '말소기준 이후 → 배당 후 소멸';
     if (!baseDate) { reason = '말소기준 미확정 (근저당·가압류 등 입력 필요)'; }
     else if (r === baseRight) { reason = '말소기준권리 (배당 후 소멸)'; }
@@ -3376,13 +3380,13 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
     // 중복 방지: 기존 거래의 키 set
     if (!state.comparables[propertyId]) state.comparables[propertyId] = [];
     const existingKeys = new Set(
-      state.comparables[propertyId].map(c => `${c.date}_${c.area}_${c.floor}_${c.price}`)
+      state.comparables[propertyId].map(c => `${c.date}_${c.area}_${c.floor}_${c.price}_${c.monthly||0}`)
     );
 
     // 새 거래만 추가 (date 내림차순 정렬용 임시 배열)
     const newItems = [];
     items.forEach(item => {
-      const key = `${item.date}_${item.area}_${item.floor}_${item.price}`;
+      const key = `${item.date}_${item.area}_${item.floor}_${item.price}_${item.monthly||0}`;
       if (existingKeys.has(key)) return;
       newItems.push({
         id: uid(),
@@ -3392,6 +3396,7 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
         area: item.area,
         floor: item.floor,
         price: item.price,
+        monthly: item.monthly || undefined,
         memo: crossUnverified ? '자동수집(도로명미검증)' : '자동수집',
       });
     });
