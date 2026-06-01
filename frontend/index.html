@@ -3014,6 +3014,8 @@ async function autoLinkBuildingLedger(a) {
 
     if (chosen) {
       if (ds) ds.value = chosen.name;
+      // 거래사례용 시군구코드를 미리 확보 (느린 표제부 조회와 분리 → 조회 지연돼도 거래사례 정상)
+      if (chosen.bjd_code) _currentLawdCd = String(chosen.bjd_code).slice(0, 5);
       fillFromKaptApt(chosen);  // 세대수·시공사·시행사 + (이어서) 공급/공용면적 + 시군구·지번 설정
     } else if (ds && typeof searchDanji === 'function') {
       ds.value = name;          // 주소로 단정 불가 → 목록을 띄워 사용자가 직접 선택
@@ -3070,7 +3072,14 @@ async function autoLookupBuildingInfo() {
     if (_pdfBunHint) url += `&jibun_hint=${encodeURIComponent(_pdfBunHint)}`;
     console.log('[Phase 2] 조회 URL:', url);
 
-    const r = await fetch(url);
+    const _ctrl = new AbortController();
+    const _to = setTimeout(() => _ctrl.abort(), 60000);  // 60초 타임아웃 (멈춤 방지)
+    let r;
+    try {
+      r = await fetch(url, { signal: _ctrl.signal });
+    } finally {
+      clearTimeout(_to);
+    }
     const d = await r.json();
 
     console.log('[Phase 2] 백엔드 응답:', d);  // 응답 구조 확인용
@@ -3133,9 +3142,15 @@ async function autoLookupBuildingInfo() {
       statusDiv.innerHTML = `ℹ️ <strong>${dong}동 ${ho}호 정보 없음</strong><br><span style="font-size: 11px;">동·호수를 확인하거나 직접 입력해주세요</span>`;
     }
   } catch (e) {
-    statusDiv.style.background = '#fee2e2';
-    statusDiv.style.color = '#dc2626';
-    statusDiv.innerHTML = `❌ 네트워크 오류: ${e.message}`;
+    if (e.name === 'AbortError') {
+      statusDiv.style.background = '#fff7ed';
+      statusDiv.style.color = '#9a3412';
+      statusDiv.innerHTML = `⚠️ <strong>표제부·면적 조회가 지연되어 건너뛰었습니다.</strong><br><span style="font-size:11px;">공급·공용면적·공시가격은 직접 입력하시면 됩니다. 거래사례 자동수집은 정상 진행됩니다.</span>`;
+    } else {
+      statusDiv.style.background = '#fee2e2';
+      statusDiv.style.color = '#dc2626';
+      statusDiv.innerHTML = `❌ 네트워크 오류: ${e.message}`;
+    }
   }
 }
 
