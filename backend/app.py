@@ -879,18 +879,19 @@ def fetch_br_price_cached(sigungu_cd, bjdong_cd, plat_gb_cd, bun, ji, _ts):
 _PAGE_SIZE = 100
 
 
-def fetch_br_expose_all_pages(sigungu_cd, bjdong_cd, plat_gb_cd, bun, ji):
+def fetch_br_expose_all_pages(sigungu_cd, bjdong_cd, plat_gb_cd, bun, ji, match_fn=None, buffer_pages=1):
     """전유공용면적 - 모든 페이지 통합 조회 (대형 단지 대응).
-    
-    페이지당 100건씩 최대 200페이지(20,000세대)까지 가져옵니다.
-    헬리오시티(9,510세대) 같은 대형 단지도 한 번에 모두 가져올 수 있습니다.
-    
+
+    match_fn 제공 시, 대상 호를 찾으면 buffer_pages만큼만 더 보고 조기 종료(속도↑).
+    match_fn이 안 맞으면 기존처럼 전체 페이지 조회(안전 폴백).
+
     Returns: (items_list, error_message_or_None)
     """
     all_items = []
     page = 1
     max_pages = 200
-    
+    found_page = None
+
     while page <= max_pages:
         params = {
             'serviceKey': API_KEY,
@@ -909,7 +910,7 @@ def fetch_br_expose_all_pages(sigungu_cd, bjdong_cd, plat_gb_cd, bun, ji):
             if page == 1:
                 return [], f'전유공용면적 API 호출 실패 (page={page}): {e}'
             break  # 중간 페이지 실패 → 그동안 모은 데이터로 진행
-        
+
         items, err = parse_xml_items(r.text)
         if err:
             if page == 1:
@@ -917,26 +918,36 @@ def fetch_br_expose_all_pages(sigungu_cd, bjdong_cd, plat_gb_cd, bun, ji):
             break
         if not items:
             break  # 더 이상 데이터 없음
-        
+
         all_items.extend(items)
+        # 조기 종료: 대상 호를 찾았으면 buffer_pages만큼만 더 보고 중단
+        if match_fn and found_page is None:
+            try:
+                if any(match_fn(x) for x in items):
+                    found_page = page
+            except Exception:
+                pass
+        if found_page is not None and page >= found_page + buffer_pages:
+            break
         if len(items) < _PAGE_SIZE:
             break  # 마지막 페이지 (100건 미만 → 끝)
         page += 1
-    
+
     return all_items, None
 
 
-def fetch_br_price_all_pages(sigungu_cd, bjdong_cd, plat_gb_cd, bun, ji):
+def fetch_br_price_all_pages(sigungu_cd, bjdong_cd, plat_gb_cd, bun, ji, match_fn=None, buffer_pages=0):
     """공시가격 - 모든 페이지 통합 조회 (대형 단지 대응).
-    
-    페이지당 100건씩 최대 200페이지(20,000건)까지 가져옵니다.
-    
+
+    match_fn 제공 시 대상 호 발견하면 조기 종료(속도↑). 안 맞으면 전체 조회(안전 폴백).
+
     Returns: (items_list, error_message_or_None)
     """
     all_items = []
     page = 1
     max_pages = 200
-    
+    found_page = None
+
     while page <= max_pages:
         params = {
             'serviceKey': API_KEY,
@@ -955,7 +966,7 @@ def fetch_br_price_all_pages(sigungu_cd, bjdong_cd, plat_gb_cd, bun, ji):
             if page == 1:
                 return [], f'공시가격 API 호출 실패 (page={page}): {e}'
             break
-        
+
         items, err = parse_xml_items(r.text)
         if err:
             if page == 1:
@@ -963,12 +974,20 @@ def fetch_br_price_all_pages(sigungu_cd, bjdong_cd, plat_gb_cd, bun, ji):
             break
         if not items:
             break
-        
+
         all_items.extend(items)
+        if match_fn and found_page is None:
+            try:
+                if any(match_fn(x) for x in items):
+                    found_page = page
+            except Exception:
+                pass
+        if found_page is not None and page >= found_page + buffer_pages:
+            break
         if len(items) < _PAGE_SIZE:
             break
         page += 1
-    
+
     return all_items, None
 
 
@@ -1352,7 +1371,12 @@ def auto_lookup_building():
         # 6. 전유공용면적 (호별 면적) 조회 - 페이지네이션 적용 (대형 단지 대응)
         # ============================================================
         try:
-            items, err = fetch_br_expose_all_pages(sigungu_cd, bjdong_cd, plat_gb_cd, bun, ji)
+            def _expose_match(x):
+                return (norm_dong(safe_get(x, 'dongNm')) == dong_target
+                        and norm_ho(safe_get(x, 'hoNm')) == ho_target
+                        and '전유' in safe_get(x, 'exposPubuseGbCdNm'))
+            items, err = fetch_br_expose_all_pages(sigungu_cd, bjdong_cd, plat_gb_cd, bun, ji,
+                                                   match_fn=_expose_match, buffer_pages=1)
             if err:
                 result['errors'].append(f'전유공용면적 API 오류: {err}')
             elif not items:
@@ -1435,7 +1459,12 @@ def auto_lookup_building():
         # 7. 공시가격 (가장 최근 기준일 기준) - 페이지네이션 적용
         # ============================================================
         try:
-            items, err = fetch_br_price_all_pages(sigungu_cd, bjdong_cd, plat_gb_cd, bun, ji)
+            def _price_match(x):
+                dv = next((safe_get(x, k) for k in ('dongNm', 'dongName', 'apartmentDongName', 'dongNo', 'houseDongName', 'apt_dong_nm') if safe_get(x, k)), '')
+                hv = next((safe_get(x, k) for k in ('hoNm', 'hoName', 'apartmentHoName', 'hoNo', 'houseHoName', 'apt_ho_nm') if safe_get(x, k)), '')
+                return norm_dong(dv) == dong_target and norm_ho(hv) == ho_target
+            items, err = fetch_br_price_all_pages(sigungu_cd, bjdong_cd, plat_gb_cd, bun, ji,
+                                                  match_fn=_price_match, buffer_pages=0)
             if err:
                 result['errors'].append(f'공시가격 API 오류: {err}')
             elif not items:
