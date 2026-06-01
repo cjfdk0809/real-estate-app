@@ -2980,6 +2980,9 @@ function applyRegistryToModalForm(a) {
 async function autoLinkBuildingLedger(a) {
   const name = ((a && a.property && a.property.complex_name) || '').trim();
   if (!name) return;
+  // 등기부(PDF) 지번 본번을 힌트로 저장 (K-apt 지번에 표제부 없을 때 폴백용)
+  const _lotNums = String((a.property && a.property.address_lot) || '').match(/\d+(?:-\d+)?/g);
+  _pdfBunHint = _lotNums ? _lotNums[_lotNums.length - 1].split('-')[0] : null;
   const ds = document.getElementById('danjiSearch');
   const norm = s => (s || '').replace(/\s/g, '');
   try {
@@ -3028,6 +3031,7 @@ async function autoLinkBuildingLedger(a) {
 let _currentKaptCode = null;  // 현재 선택된 단지의 K-apt 코드
 let _currentLawdCd = null;    // Phase 3: 거래사례 자동수집용 시군구 코드 (5자리)
 let _currentBun = null;       // Phase 3.1: 본건 지번 (NPL 평가 정확도 - 다른 단지 매칭 방지)
+let _pdfBunHint = null;       // v2.18: 등기부(PDF) 지번 본번 - 표제부 조회 폴백 힌트
 let _autoLookupTimer = null;  // 디바운스 타이머
 
 function _onBuildingInputChange() {
@@ -3062,7 +3066,8 @@ async function autoLookupBuildingInfo() {
   statusDiv.innerHTML = `⏳ <strong>${dong}동 ${ho}호</strong> 표제부·공시가격 자동 조회 중...`;
 
   try {
-    const url = `${BACKEND_URL}/api/building/auto-lookup?kapt_code=${_currentKaptCode}&dong_nm=${dong}&ho_nm=${ho}`;
+    let url = `${BACKEND_URL}/api/building/auto-lookup?kapt_code=${_currentKaptCode}&dong_nm=${dong}&ho_nm=${ho}`;
+    if (_pdfBunHint) url += `&jibun_hint=${encodeURIComponent(_pdfBunHint)}`;
     console.log('[Phase 2] 조회 URL:', url);
 
     const r = await fetch(url);
@@ -3171,11 +3176,11 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
   async function _fetchBulk(useRoad) {
     const params = new URLSearchParams({
       lawd_cd: lawdCd,
-      months: '12',
+      months: '24',
       danji_name: propertyData.name,
       min_area: String(minArea),
       max_area: String(maxArea),
-      include_rent: 'false',  // 매매만
+      include_rent: 'true',  // 매매 + 전세 + 월세
     });
     if (useRoad && roadNm) params.set('road_nm', roadNm);  // 단지명+도로명 교차검증
     const url = `${BACKEND_URL}/api/transactions/bulk?${params.toString()}`;
@@ -4130,6 +4135,7 @@ function closePropertyModal() {
     _currentKaptCode = null;
     _currentLawdCd = null;
     _currentBun = null;
+    _pdfBunHint = null;
     clearTimeout(_autoLookupTimer);
     _autoLookupTimer = null;
     
@@ -4237,7 +4243,7 @@ document.getElementById('propertyForm').addEventListener('submit', async (e) => 
         : '';
       showToast(
         `✅ <strong>거래사례 ${result.added}건 자동 수집 완료</strong><br>` +
-        `<span style="font-size:11px;opacity:0.9;">${state.properties[id].name} · ${min}~${max}㎡ · 최근 12개월 매매${warn}</span>`,
+        `<span style="font-size:11px;opacity:0.9;">${state.properties[id].name} · ${min}~${max}㎡ · 최근 24개월 매매·전세·월세${warn}</span>`,
         result.crossUnverified ? 'warn' : 'success',
         6500
       );
