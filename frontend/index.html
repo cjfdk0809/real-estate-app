@@ -2435,7 +2435,7 @@ function updateScenario(field, value) {
   sc[field] = (value === '' || value == null) ? null : Number(value);
   state.scenarios[id] = sc;
   saveState();
-  renderAuction();
+  renderView();
 }
 
 // 예상 낙찰가 시나리오 + NPL 담보여력 카드 HTML
@@ -2513,7 +2513,6 @@ function renderAuction() {
   const c = document.getElementById('viewContainer');
   const p = state.properties[state.currentPropertyId];
   const auctions = (state.auctions[p.id] || []).slice().sort((a,b) => (b.hearingDate || '').localeCompare(a.hearingDate || ''));
-  const rights = state.rights[p.id] || [];
 
   const completed = auctions.filter(x => x.winningBid);
   const avgRate = completed.length ? completed.reduce((s,x) => s + (x.winningBid / x.appraisal), 0) / completed.length : 0;
@@ -2544,8 +2543,6 @@ function renderAuction() {
         <div class="stat-value">${auctions.length ? (auctions.reduce((s,x)=>s+(x.failedCount||0),0)/auctions.length).toFixed(1) : '-'}<span class="stat-unit">회</span></div>
       </div>
     </div>
-
-    ${renderScenarioAndNPL(p, auctions, rights)}
 
     <div class="card">
       <div class="card-title">경공매 사건 목록 <button class="btn btn-primary no-print" onclick="openAuctionModal()">＋ 추가</button></div>
@@ -2682,6 +2679,7 @@ function renderValuation() {
 function renderRights() {
   const c = document.getElementById('viewContainer');
   const p = state.properties[state.currentPropertyId];
+  const auctions = state.auctions[p.id] || [];
   const ra = analyzeRights(state.rights[p.id] || []);
   const rights = ra.classified;
   const totalAssumed = ra.assumedTotal;
@@ -2741,6 +2739,8 @@ function renderRights() {
         </tbody>
       </table>`}
     </div>
+
+    ${renderScenarioAndNPL(p, auctions, state.rights[p.id] || [])}
   `;
 }
 
