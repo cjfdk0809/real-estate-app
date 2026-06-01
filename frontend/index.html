@@ -941,10 +941,10 @@ table { border-collapse: collapse; width: 100%; }
 
       <div class="section-h">면적·구조</div>
       <div class="form-grid">
-        <div class="field"><label>전용면적 (㎡)</label><input name="exclusiveArea" type="number" step="0.01"></div>
-        <div class="field"><label>공급면적 (㎡)</label><input name="supplyArea" type="number" step="0.01"></div>
-        <div class="field"><label>주거공용면적 (㎡)</label><input name="commonArea" type="number" step="0.01"></div>
-        <div class="field"><label>대지지분 (㎡)</label><input name="landShare" type="number" step="0.01"></div>
+        <div class="field"><label>전용면적 (㎡)</label><input name="exclusiveArea" type="number" step="any"></div>
+        <div class="field"><label>공급면적 (㎡)</label><input name="supplyArea" type="number" step="any"></div>
+        <div class="field"><label>주거공용면적 (㎡)</label><input name="commonArea" type="number" step="any"></div>
+        <div class="field"><label>대지지분 (㎡)</label><input name="landShare" type="number" step="any"></div>
         <div class="field"><label>해당 층</label><input name="floor" type="number"></div>
         <div class="field"><label>건물 총 층수</label><input name="totalFloors" type="number"></div>
       </div>
@@ -2949,6 +2949,19 @@ function applyRegistryToModalForm(a) {
     setIf('acquisitionDate', a.ownership.acquisition_date);
   }
   
+  // ── 건축물대장 정보 자동 연동 (세대수·시공사·시행사·공급/공용면적) ──
+  // 등기부 PDF에는 위 정보가 없으므로(건축물대장 소관), PDF의 단지명으로
+  // K-apt 단지 검색을 자동 실행한다. 사용자가 주소를 확인하고 해당 단지를
+  // 1회 클릭하면 fillFromKaptApt()가 세대수·시공사·시행사·준공일을,
+  // 이어지는 동·호 자동조회가 공급/공용면적을 채운다.
+  if (a.property && a.property.complex_name) {
+    const _ds = document.getElementById('danjiSearch');
+    if (_ds && typeof searchDanji === 'function') {
+      _ds.value = a.property.complex_name;
+      try { searchDanji(a.property.complex_name); } catch (e) { console.warn('단지 자동검색 실패:', e); }
+    }
+  }
+
   // 메모에 핵심 요약 추가
   if (form.elements.notes) {
     const baseline = a.analysis?.baseline_right;
@@ -3620,6 +3633,9 @@ async function fillFromKaptApt(apt) {
       }
     }
   }
+  // 단지 선택 시, 동·호가 이미 입력돼 있으면 공급/공용면적도 즉시 자동 조회
+  // (등기부 PDF 자동연동 또는 사용자가 동·호를 먼저 입력한 경우 대응)
+  try { autoLookupBuildingInfo(); } catch (e) { console.warn('면적 자동조회 실패:', e); }
 }
 
 function renderDanjiSuggestion(key, score) {
