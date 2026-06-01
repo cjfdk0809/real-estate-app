@@ -2949,18 +2949,11 @@ function applyRegistryToModalForm(a) {
     setIf('acquisitionDate', a.ownership.acquisition_date);
   }
   
-  // ── 건축물대장 정보 자동 연동 (세대수·시공사·시행사·공급/공용면적) ──
-  // 등기부 PDF에는 위 정보가 없으므로(건축물대장 소관), PDF의 단지명으로
-  // K-apt 단지 검색을 자동 실행한다. 사용자가 주소를 확인하고 해당 단지를
-  // 1회 클릭하면 fillFromKaptApt()가 세대수·시공사·시행사·준공일을,
-  // 이어지는 동·호 자동조회가 공급/공용면적을 채운다.
-  if (a.property && a.property.complex_name) {
-    const _ds = document.getElementById('danjiSearch');
-    if (_ds && typeof searchDanji === 'function') {
-      _ds.value = a.property.complex_name;
-      try { searchDanji(a.property.complex_name); } catch (e) { console.warn('단지 자동검색 실패:', e); }
-    }
-  }
+  // ── 건축물대장 정보 + 거래사례 자동연동 ──────────────────────
+  // 등기부 PDF에는 세대수·시공사·시행사·공급면적이 없고(건축물대장 소관),
+  // 거래사례 자동수집에 필요한 시군구코드·지번도 없다.
+  // PDF의 단지명+주소로 K-apt 단지를 자동 식별·선택하면 위 정보가 한 번에 채워진다.
+  autoLinkBuildingLedger(a);
 
   // 메모에 핵심 요약 추가
   if (form.elements.notes) {
@@ -2977,6 +2970,55 @@ function applyRegistryToModalForm(a) {
       const existing = form.elements.notes.value || '';
       form.elements.notes.value = notes.join('\n') + (existing ? '\n\n' + existing : '');
     }
+  }
+}
+
+// PDF 등기부 분석 후, 단지명+주소로 K-apt 단지를 자동 식별하여 선택한다.
+// 성공 시 fillFromKaptApt()가 세대수·시공사·시행사를 채우고, 이어지는 동·호 자동조회가
+// 공급/공용면적을 채우며 시군구코드·지번이 설정되어 저장 시 거래사례 자동수집까지 작동한다.
+// 주소로 단정할 수 없으면(동명이단지) 목록만 띄워 사용자가 직접 선택하게 한다.
+async function autoLinkBuildingLedger(a) {
+  const name = ((a && a.property && a.property.complex_name) || '').trim();
+  if (!name) return;
+  const ds = document.getElementById('danjiSearch');
+  const norm = s => (s || '').replace(/\s/g, '');
+  try {
+    const r = await fetch(`${BACKEND_URL}/api/search/apt?q=${encodeURIComponent(name)}&limit=30`);
+    const d = await r.json();
+    let items = (d && d.items) ? d.items.map(it => ({ ...it, name: it.name || it.kapt_name || '' })) : [];
+    if (items.length === 0) {
+      if (ds) ds.value = name;  // 결과 없음: 단지명만 채워두고 사용자가 시군구로 좁혀 찾도록
+      return;
+    }
+    // 후보가 1건이면 그대로, 여러 건이면 PDF 주소(도로명/지번)로 정확 매칭
+    let chosen = null;
+    if (items.length === 1) {
+      chosen = items[0];
+    } else {
+      const pdfRoad = norm(a.property.address_road);
+      const pdfLot = norm(a.property.address_lot);
+      const scored = items.map(it => {
+        const cRoad = norm(it.addr_road), cLot = norm(it.addr_lot);
+        let s = 0;
+        if (pdfRoad && cRoad && (cRoad.includes(pdfRoad) || pdfRoad.includes(cRoad))) s += 2;
+        if (pdfLot && cLot && (cLot.includes(pdfLot) || pdfLot.includes(cLot))) s += 2;
+        return { it, s };
+      }).sort((x, y) => y.s - x.s);
+      const top = scored[0];
+      const uniqueTop = scored.filter(x => x.s === top.s).length === 1;
+      if (top.s >= 2 && uniqueTop) chosen = top.it;  // 주소가 확실히 일치하는 단 1건만 자동선택
+    }
+
+    if (chosen) {
+      if (ds) ds.value = chosen.name;
+      fillFromKaptApt(chosen);  // 세대수·시공사·시행사 + (이어서) 공급/공용면적 + 시군구·지번 설정
+    } else if (ds && typeof searchDanji === 'function') {
+      ds.value = name;          // 주소로 단정 불가 → 목록을 띄워 사용자가 직접 선택
+      searchDanji(name);
+    }
+  } catch (e) {
+    console.warn('건축물대장 자동연동 실패:', e);
+    if (ds) ds.value = name;
   }
 }
 
@@ -3096,11 +3138,14 @@ async function autoLookupBuildingInfo() {
 // Phase 3: 거래사례 자동수집 (저장 시 트리거)
 // ============================================================
 // 같은 단지 + 전용면적 ±1% + 최근 12개월 매매 거래를 자동으로 수집
-async function autoFetchComparables(propertyId, propertyData) {
+async function autoFetchComparables(propertyId, propertyData, ctx) {
+  // 시군구코드·지번: 저장 시 전달된 스냅샷(ctx) 우선, 없으면 현재 전역값
+  const lawdCd = (ctx && ctx.lawdCd) || _currentLawdCd;
+  const bun = (ctx && ctx.bun) || _currentBun;
   // 필수 정보 체크
-  if (!_currentLawdCd) {
+  if (!lawdCd) {
     console.log('[Phase 3] 시군구 코드 없음 - 거래사례 자동수집 skip');
-    return { skipped: true, reason: '시군구 코드 없음 (K-apt 자동입력 미사용 물건)' };
+    return { skipped: true, reason: '시군구 코드 없음 (K-apt 단지 미식별 물건)' };
   }
   if (!propertyData.name || !propertyData.exclusiveArea) {
     console.log('[Phase 3] 단지명/전용면적 없음 - 거래사례 자동수집 skip');
@@ -3113,7 +3158,7 @@ async function autoFetchComparables(propertyId, propertyData) {
   const maxArea = Math.ceil(area * 1.05 * 100) / 100;
 
   const params = new URLSearchParams({
-    lawd_cd: _currentLawdCd,
+    lawd_cd: lawdCd,
     months: '12',
     danji_name: propertyData.name,
     min_area: String(minArea),
@@ -3121,8 +3166,8 @@ async function autoFetchComparables(propertyId, propertyData) {
     include_rent: 'false',  // 매매만
   });
   // Phase 3.1: 지번 매칭 (NPL 평가 정확도 - 다른 단지 자동 제외)
-  if (_currentBun) {
-    params.set('jibun', _currentBun);
+  if (bun) {
+    params.set('jibun', bun);
   }
   const url = `${BACKEND_URL}/api/transactions/bulk?${params.toString()}`;
   console.log('[Phase 3] 거래사례 자동수집 URL:', url);
@@ -4147,13 +4192,22 @@ document.getElementById('propertyForm').addEventListener('submit', async (e) => 
       });
     _pendingRegistryAnalysis = null;
   }
+  // 거래사례 자동수집에 필요한 값 스냅샷 (closePropertyModal이 전역을 초기화하므로 미리 보관)
+  const _autoCtx = { lawdCd: _currentLawdCd, bun: _currentBun };
+
   await saveState();
   closePropertyModal();
   renderPropertyList();
+
+  // 저장 후에는 항상 '본건 정보' 화면으로 (사용자 기대 동작)
+  state.currentView = 'overview';
+  document.querySelectorAll('.nav-item').forEach(n => {
+    n.classList.toggle('active', n.dataset.view === 'overview');
+  });
   renderView();
 
   // Phase 3: 거래사례 자동수집 (백그라운드, 사용자 대기 없이)
-  autoFetchComparables(id, state.properties[id]).then(result => {
+  autoFetchComparables(id, state.properties[id], _autoCtx).then(result => {
     if (result.skipped) {
       console.log('[Phase 3] 자동수집 건너뜀:', result.reason);
       return;
