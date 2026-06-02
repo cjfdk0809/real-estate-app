@@ -1825,7 +1825,19 @@ function duplicateProperty(id) {
 function renderComparables() {
   const c = document.getElementById('viewContainer');
   const p = state.properties[state.currentPropertyId];
-  const comps = (state.comparables[p.id] || []).slice().sort((a,b) => b.date.localeCompare(a.date));
+
+  // 이 물건의 전체 거래 (단지 필터 드롭다운 목록은 항상 이 전체에서 뽑음)
+  const allComps = (state.comparables[p.id] || []).slice().sort((a,b) => b.date.localeCompare(a.date));
+  const danjiList = [...new Set(allComps.map(x => x.name).filter(Boolean))].sort();
+
+  // [핵심] 단지 선택값: 저장된 선택 우선, 없으면 본건 단지명이 목록에 있으면 그것, 아니면 전체
+  let curDanji = window._compsDanjiFilter || (danjiList.includes(p.name) ? p.name : '전체');
+  // 현재 물건에 없는 단지명이 남아있으면(물건 전환 등) 전체로 되돌림
+  if (curDanji !== '전체' && !danjiList.includes(curDanji)) curDanji = '전체';
+
+  // [핵심] 선택된 단지로 거른 거래 — 이후 통계·차트·NPL추정·평형별·목록 전부 이걸 사용
+  const comps = (curDanji === '전체') ? allComps : allComps.filter(x => x.name === curDanji);
+
   const sales = comps.filter(x => x.type === '매매');
   const jeonse = comps.filter(x => x.type === '전세');
   const wolse = comps.filter(x => x.type === '월세');
@@ -1845,15 +1857,13 @@ function renderComparables() {
   const nplMedian = avgAllSales * 0.90;
   const nplUpper = avgAllSales * 0.95;
 
-  // [추가] 단지 선택 필터용 — 수집된 거래의 단지명 목록
-  const danjiList = [...new Set(comps.map(x => x.name).filter(Boolean))].sort();
-  const curDanji = window._compsDanjiFilter || '전체';
+  const danjiTag = curDanji === '전체' ? '전체 단지' : curDanji;
 
   c.innerHTML = `
     <div class="page-head">
       <div class="page-eyebrow">거래사례 비교 · Comparable Sales</div>
       <h1 class="page-title">${p.name}</h1>
-      <div class="page-sub">동일 단지·동일 면적대 거래를 자동 필터링하여 본건 시세를 추정합니다.</div>
+      <div class="page-sub">동일 단지·동일 면적대 거래를 자동 필터링하여 본건 시세를 추정합니다. <strong style="color:var(--kiwoom-navy);">(현재 분석 대상: ${danjiTag})</strong></div>
     </div>
 
     <div class="grid grid-4 mb-24">
@@ -1879,14 +1889,14 @@ function renderComparables() {
     </div>
 
     <div class="card mb-16">
-      <div class="card-title">시세 추이 차트</div>
+      <div class="card-title">시세 추이 차트 <span class="text-muted text-small" style="font-weight:400;">· ${danjiTag}</span></div>
       <div style="height: 280px;"><canvas id="priceChart"></canvas></div>
     </div>
 
     ${avgAllSales > 0 ? `
     <!-- ========== NPL 회수 가능 금액 추정 ========== -->
     <div style="background: linear-gradient(135deg, var(--kiwoom-navy-soft) 0%, #d4dcf0 100%); border: 1px solid var(--kiwoom-navy-light); border-left: 4px solid var(--kiwoom-navy); border-radius: 8px; padding: 22px 26px; margin-bottom: 16px;">
-      <div style="font-size: 11px; letter-spacing: 0.18em; color: var(--kiwoom-navy); text-transform: uppercase; font-weight: 700; margin-bottom: 8px;">💰 NPL 회수 가능 금액 추정 · NPL Recovery Estimate</div>
+      <div style="font-size: 11px; letter-spacing: 0.18em; color: var(--kiwoom-navy); text-transform: uppercase; font-weight: 700; margin-bottom: 8px;">💰 NPL 회수 가능 금액 추정 · NPL Recovery Estimate <span style="font-family:var(--sans); letter-spacing:0; text-transform:none; font-weight:600; color:var(--kiwoom-navy-deep);">(${danjiTag})</span></div>
       <div style="font-family: var(--mono); font-size: 30px; font-weight: 800; color: var(--kiwoom-navy-deep); line-height: 1.2; letter-spacing: -0.02em;">${fmt.won(Math.round(nplMedian))}</div>
       <div style="font-size: 13px; color: var(--ink-soft); margin-top: 6px; font-family: var(--mono);">회수 범위: ${fmt.won(Math.round(nplLower))} ~ ${fmt.won(Math.round(nplUpper))}</div>
       <div style="font-size: 12px; color: var(--ink-soft); margin-top: 14px; line-height: 1.7;">
@@ -1910,15 +1920,14 @@ function renderComparables() {
         <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
           ${danjiList.length > 1 ? `
           <select onchange="window._compsDanjiFilter=this.value; renderView();"
-            style="padding: 7px 12px; border: 1px solid var(--kiwoom-navy); border-radius: 6px; font-size: 12px; font-weight: 600; color: var(--kiwoom-navy); background: white; cursor: pointer; max-width: 200px;">
-            <option value="전체" ${curDanji==='전체'?'selected':''}>🏢 전체 단지 (${danjiList.length}개)</option>
+            style="padding: 7px 12px; border: 1px solid var(--kiwoom-navy); border-radius: 6px; font-size: 12px; font-weight: 600; color: var(--kiwoom-navy); background: white; cursor: pointer; max-width: 220px;">
+            <option value="전체" ${curDanji==='전체'?'selected':''}>🏢 전체 단지 (${danjiList.length}개 혼합)</option>
             ${danjiList.map(n => `<option value="${n}" ${curDanji===n?'selected':''}>${n}</option>`).join('')}
           </select>` : ''}
           <div class="comps-filter no-print" style="display: inline-flex; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 3px;">
             ${['전체','매매','전세','월세'].map(t => {
               const active = (window._compsFilter || '전체') === t;
-              const base = curDanji === '전체' ? comps : comps.filter(x => x.name === curDanji);
-              const count = t === '전체' ? base.length : base.filter(x => x.type === t).length;
+              const count = t === '전체' ? comps.length : comps.filter(x => x.type === t).length;
               const typeColors = { '전체': 'var(--kiwoom-navy)', '매매': 'var(--kiwoom-navy)', '전세': '#d97706', '월세': '#0d9488' };
               return `<button class="comps-filter-btn" onclick="setCompsFilter('${t}')" style="
                 padding: 6px 14px; border: none; cursor: pointer; font-size: 12px; font-weight: 600;
@@ -1937,7 +1946,7 @@ function renderComparables() {
       </div>
       ${(() => {
         const f = window._compsFilter || '전체';
-        let filtered = curDanji === '전체' ? comps : comps.filter(x => x.name === curDanji);
+        let filtered = comps;  // comps는 이미 단지 필터됨
         if (f !== '전체') filtered = filtered.filter(x => x.type === f);
         if (filtered.length === 0) {
           return `<div class="empty"><div class="empty-text">${f === '전체' ? '등록된 거래사례가 없습니다.' : `${f} 거래가 없습니다.`}</div></div>`;
