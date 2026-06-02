@@ -2228,15 +2228,15 @@ function drawPriceChart(comps) {
   const valid = comps.filter(c => c.date && c.price);
   const wolseCount = valid.filter(c => c.type === '월세').length;
 
-  // 🆕 거래 데이터 범위에 따라 동적 월 생성 (최소 6개월, 최대 36개월)
+  // 거래 데이터 범위에 따라 동적 월 생성 (최소 6개월, 최대 36개월)
     const allDates = valid.map(c => c.date).sort();
     const lastDate = allDates.length ? new Date(allDates[allDates.length - 1]) : new Date();
     const firstDate = allDates.length ? new Date(allDates[0]) : new Date();
     let monthsCount = (lastDate.getFullYear() - firstDate.getFullYear()) * 12 
                     + (lastDate.getMonth() - firstDate.getMonth()) + 1;
-    monthsCount = Math.max(monthsCount, 6);  // 최소 6개월 (데이터 적을 때 가독성)
-    monthsCount = Math.min(monthsCount, 36);  // 최대 36개월 (차트 가독성 한계)
-    const months = [];  // [{ym: 'YYYY-MM', label: 'YY년 MM월'}, ...]
+    monthsCount = Math.max(monthsCount, 6);
+    monthsCount = Math.min(monthsCount, 36);
+    const months = [];
     for (let i = monthsCount - 1; i >= 0; i--) {
       const d = new Date(lastDate.getFullYear(), lastDate.getMonth() - i, 1);
       const ym = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
@@ -2245,7 +2245,7 @@ function drawPriceChart(comps) {
     }
 
   // 월별 집계: 매매·전세 평균가(억) + 거래량(건)
-  const agg = {}; // ym → {salesPrices:[], jeonsePrices:[]}
+  const agg = {};
   valid.forEach(c => {
     const ym = c.date.substring(0, 7);
     if (!agg[ym]) agg[ym] = { salesPrices: [], jeonsePrices: [] };
@@ -2258,7 +2258,29 @@ function drawPriceChart(comps) {
   const salesCount   = months.map(m => agg[m.ym]?.salesPrices.length  || 0);
   const jeonseCount  = months.map(m => agg[m.ym]?.jeonsePrices.length || 0);
 
-  // 변동률: 첫 유효월 평균 vs 마지막 유효월 평균
+  // [추가] 거래 없는 달을 "가장 가까운 달" 값으로 채워 라인이 처음~끝 끊기지 않게
+  function _fillNearest(arr) {
+    const n = arr.length;
+    const out = arr.slice();
+    for (let i = 0; i < n; i++) {
+      if (out[i] != null) continue;
+      let lo = i - 1, hi = i + 1, val = null;
+      while (lo >= 0 || hi < n) {
+        if (lo >= 0 && arr[lo] != null) { val = arr[lo]; break; }   // 이전 달 우선
+        if (hi < n && arr[hi] != null) { val = arr[hi]; break; }    // 그다음 이후 달
+        lo--; hi++;
+      }
+      out[i] = val;
+    }
+    return out;
+  }
+  const salesLine  = _fillNearest(salesAvg);   // 라인용 (빈 달 채움)
+  const jeonseLine = _fillNearest(jeonseAvg);
+  // 실제 거래가 있는 달만 점을 찍어 "채운 구간"과 구분
+  const salesPointR  = salesAvg.map(v => v != null ? 3 : 0);
+  const jeonsePointR = jeonseAvg.map(v => v != null ? 3 : 0);
+
+  // 변동률: 첫 유효월 평균 vs 마지막 유효월 평균 (실제 거래 기준)
   function changeRate(monthlyAvgs) {
     const validVals = monthlyAvgs.filter(v => v != null);
     if (validVals.length < 2) return null;
@@ -2306,7 +2328,6 @@ function drawPriceChart(comps) {
     data: {
       labels: months.map(m => m.label),
       datasets: [
-        // 거래량 막대 (배경에)
         {
           type: 'bar', label: '매매 거래량',
           data: salesCount, yAxisID: 'y1',
@@ -2321,20 +2342,19 @@ function drawPriceChart(comps) {
           borderColor: 'rgba(217, 119, 6, 0.3)', borderWidth: 1,
           borderRadius: 3, order: 2,
         },
-        // 평균가 라인 (앞에)
         {
           type: 'line', label: '매매 평균가',
-          data: salesAvg, yAxisID: 'y',
+          data: salesLine, yAxisID: 'y',
           borderColor: '#1e3a5f', backgroundColor: 'rgba(30, 58, 95, 0.04)',
-          tension: 0.45, pointRadius: 0, pointHoverRadius: 6,
+          tension: 0.45, pointRadius: salesPointR, pointHoverRadius: 6,
           pointBackgroundColor: '#fff', pointBorderColor: '#1e3a5f', pointBorderWidth: 2,
           borderWidth: 3, fill: false, spanGaps: true, order: 1,
         },
         {
           type: 'line', label: '전세 평균가',
-          data: jeonseAvg, yAxisID: 'y',
+          data: jeonseLine, yAxisID: 'y',
           borderColor: '#d97706', backgroundColor: 'rgba(217, 119, 6, 0.04)',
-          tension: 0.45, pointRadius: 0, pointHoverRadius: 6,
+          tension: 0.45, pointRadius: jeonsePointR, pointHoverRadius: 6,
           pointBackgroundColor: '#fff', pointBorderColor: '#d97706', pointBorderWidth: 2,
           borderWidth: 3, fill: false, spanGaps: true, order: 1,
         },
@@ -2362,7 +2382,10 @@ function drawPriceChart(comps) {
               const v = item.parsed.y;
               if (v == null || isNaN(v)) return null;
               if (item.dataset.yAxisID === 'y') {
-                return `${item.dataset.label}: ${v.toFixed(2)}억`;
+                // 실제 거래 없는 달은 인접 추정값임을 표시
+                const realArr = item.dataset.label === '매매 평균가' ? salesAvg : jeonseAvg;
+                const isReal = realArr[item.dataIndex] != null;
+                return `${item.dataset.label}: ${v.toFixed(2)}억${isReal ? '' : ' (인접 추정)'}`;
               }
               return `${item.dataset.label}: ${v}건`;
             },
@@ -2392,7 +2415,7 @@ function drawPriceChart(comps) {
           position: 'right',
           beginAtZero: true,
           title: { display: true, text: '거래량 (건)', font: { family: 'Pretendard', size: 11, weight: '600' }, color: 'var(--ink-muted)' },
-          grid: { drawOnChartArea: false },  // 오른쪽 축 grid 안 그림 (혼란 방지)
+          grid: { drawOnChartArea: false },
           ticks: {
             font: { family: 'Pretendard', size: 11, weight: '500' },
             color: 'var(--ink-muted)',
@@ -3349,11 +3372,44 @@ function _extractRoadName(addrRoad) {
   return m ? m[1] : '';
 }
 async function autoFetchComparables(propertyId, propertyData, ctx) {
+  // ── 진행률 막대 (화면 하단 고정) ───────────────────────────
+  function _prog(pct, msg) {
+    if (!document.getElementById('autoProgressKeyframes')) {
+      const st = document.createElement('style');
+      st.id = 'autoProgressKeyframes';
+      st.textContent = '@keyframes autoprog-spin{to{transform:rotate(360deg);}}';
+      document.head.appendChild(st);
+    }
+    let box = document.getElementById('autoProgress');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'autoProgress';
+      box.style.cssText = 'position:fixed;left:50%;bottom:30px;transform:translateX(-50%);width:min(440px,92vw);background:#fff;border:1px solid #dde3ee;border-radius:10px;box-shadow:0 6px 24px rgba(0,22,77,0.18);padding:14px 18px;z-index:10001;font-family:Pretendard,sans-serif;';
+      box.innerHTML = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">'
+        + '<span style="width:14px;height:14px;border:2px solid #E6EAF5;border-top-color:#011F8E;border-radius:50%;display:inline-block;animation:autoprog-spin 1s linear infinite;"></span>'
+        + '<span id="autoProgressMsg" style="font-size:12px;font-weight:600;color:#011F8E;"></span>'
+        + '<span id="autoProgressPct" style="margin-left:auto;font-family:monospace;font-size:12px;color:#8892A6;"></span></div>'
+        + '<div style="height:8px;background:#eef1f7;border-radius:6px;overflow:hidden;">'
+        + '<div id="autoProgressBar" style="height:100%;width:0%;background:linear-gradient(90deg,#011F8E,#2A4FBE);border-radius:6px;transition:width .4s ease;"></div></div>';
+      document.body.appendChild(box);
+    }
+    const v = Math.max(0, Math.min(100, pct));
+    document.getElementById('autoProgressMsg').textContent = msg || '';
+    document.getElementById('autoProgressPct').textContent = Math.round(v) + '%';
+    document.getElementById('autoProgressBar').style.width = v + '%';
+  }
+  function _progDone(delay) {
+    setTimeout(() => {
+      const box = document.getElementById('autoProgress');
+      if (box) { box.style.transition = 'opacity .3s'; box.style.opacity = '0'; setTimeout(() => box.remove(), 300); }
+    }, delay || 0);
+  }
+
   // 시군구코드·지번: 저장 시 전달된 스냅샷(ctx) 우선, 없으면 현재 전역값
   let lawdCd = (ctx && ctx.lawdCd) || _currentLawdCd;
   let bun = (ctx && ctx.bun) || _currentBun || _pdfBunHint;
 
-  // [추가] 시군구 코드가 없으면 주소에서 보충 (등기부 PDF로 등록한 K-apt 미식별 물건)
+  // 시군구 코드가 없으면 주소에서 보충 (등기부 PDF로 등록한 K-apt 미식별 물건)
   if (!lawdCd && window.KFITradeCollector) {
     const addr = propertyData.addrLot || propertyData.addrRoad || '';
     lawdCd = KFITradeCollector.addressToLawdCd(addr);
@@ -3364,7 +3420,7 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
     if (lawdCd) console.log('[Phase 3] 주소로 시군구 코드 보충 →', lawdCd, '/ 본번:', bun);
   }
 
-  // 필수 정보 체크
+  // 필수 정보 체크 (진행 막대 띄우기 전에 skip 판단)
   if (!lawdCd) {
     console.log('[Phase 3] 시군구 코드 없음 - 거래사례 자동수집 skip');
     return { skipped: true, reason: '시군구 코드 없음 (K-apt 단지 미식별 물건)' };
@@ -3374,28 +3430,23 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
     return { skipped: true, reason: '단지명/전용면적 정보 부족' };
   }
 
-  // 전용면적 ±5% 범위 계산 (같은 평형군에서 표본 확보)
+  _prog(15, '거래사례 자동수집 준비 중...');
+
+  // 전용면적 ±5% 범위
   const area = Number(propertyData.exclusiveArea);
   const minArea = Math.floor(area * 0.95 * 100) / 100;
   const maxArea = Math.ceil(area * 1.05 * 100) / 100;
-
-  // 도로명 추출: "서울특별시 강서구 우현로 67" → "우현로" (단지명+도로명 교차검증용)
   const roadNm = _extractRoadName(propertyData.addrRoad || '');
 
-  // 거래사례 조회 헬퍼
-  //  useRoad=true   : 도로명 교차검증 적용
-  //  skipDanji=true : 단지명 없이 시군구+면적만으로 조회(지번 매칭용)
   async function _fetchBulk(useRoad, skipDanji) {
     const params = new URLSearchParams({
-      lawd_cd: lawdCd,
-      months: '24',
-      min_area: String(minArea),
-      max_area: String(maxArea),
-      include_rent: 'true',  // 매매 + 전세 + 월세
+      lawd_cd: lawdCd, months: '24',
+      min_area: String(minArea), max_area: String(maxArea),
+      include_rent: 'true',
     });
     if (!skipDanji) {
       params.set('danji_name', propertyData.name);
-      if (useRoad && roadNm) params.set('road_nm', roadNm);  // 단지명+도로명 교차검증
+      if (useRoad && roadNm) params.set('road_nm', roadNm);
     }
     const _tag = skipDanji ? '지번매칭' : (useRoad && roadNm ? '도로명 ' + roadNm : '단지명');
     const url = `${BACKEND_URL}/api/transactions/bulk?${params.toString()}`;
@@ -3407,20 +3458,24 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
   }
 
   try {
-    // 1차: 단지명 + 도로명 교차검증으로 정확 조회
+    // 1차: 단지명 + 도로명
+    _prog(35, '단지명·도로명으로 조회 중...');
     let items = await _fetchBulk(true);
     let crossUnverified = false;
-    // 2차: 도로명 교차검증으로 0건이면 단지명+면적만으로 재조회 → "도로명 미검증"으로 표시
+
+    // 2차: 단지명 + 면적
     if (items.length === 0 && roadNm) {
+      _prog(55, '면적 기준으로 재조회 중...');
       const alt = await _fetchBulk(false);
       if (alt.length > 0) { items = alt; crossUnverified = true; }
     }
-    // 3차: [추가] 단지명으로 여전히 0건이면, 지번(본번)으로 재조회
-    //      (등기부 "에스케이아파트" vs 국토부 "중곡SK" 같은 단지명 표기 불일치 대응)
+
+    // 3차: 지번(본번) 매칭
     if (items.length === 0 && bun) {
+      _prog(75, '지번으로 매칭 조회 중...');
       const bonbun = parseInt(String(bun).split('-')[0], 10);
       if (bonbun) {
-        const byArea = await _fetchBulk(false, true);  // 단지명 없이 시군구+면적만
+        const byArea = await _fetchBulk(false, true);
         const matched = byArea.filter(it =>
           parseInt(String(it.jibun || '').split('-')[0], 10) === bonbun
         );
@@ -3433,13 +3488,11 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
     }
     console.log(`[Phase 3] 최종 ${items.length}건 (미검증=${crossUnverified})`);
 
-    // 중복 방지: 기존 거래의 키 set
+    _prog(90, '수집 결과 저장 중...');
     if (!state.comparables[propertyId]) state.comparables[propertyId] = [];
     const existingKeys = new Set(
       state.comparables[propertyId].map(c => `${c.date}_${c.area}_${c.floor}_${c.price}_${c.monthly||0}`)
     );
-
-    // 새 거래만 추가 (date 내림차순 정렬용 임시 배열)
     const newItems = [];
     items.forEach(item => {
       const key = `${item.date}_${item.area}_${item.floor}_${item.price}_${item.monthly||0}`;
@@ -3453,17 +3506,17 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
         floor: item.floor,
         price: item.price,
         monthly: item.monthly || undefined,
-        jibun: item.jibun || undefined,   // [추가] 지번 보존
-        dong: item.dong || undefined,     // [추가] 법정동 보존
+        jibun: item.jibun || undefined,
+        dong: item.dong || undefined,
         memo: crossUnverified ? '자동수집(미검증)' : '자동수집',
       });
     });
-
-    // 날짜 내림차순 정렬 후 추가
     newItems.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
     state.comparables[propertyId].push(...newItems);
-
     await saveState();
+
+    _prog(100, `완료 — 신규 ${newItems.length}건 추가`);
+    _progDone(900);
     return {
       added: newItems.length,
       total: items.length,
@@ -3472,6 +3525,7 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
     };
   } catch (e) {
     console.error('[Phase 3] 오류:', e);
+    _progDone(0);
     return { error: e.message };
   }
 }
