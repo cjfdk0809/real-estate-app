@@ -1845,6 +1845,10 @@ function renderComparables() {
   const nplMedian = avgAllSales * 0.90;
   const nplUpper = avgAllSales * 0.95;
 
+  // [추가] 단지 선택 필터용 — 수집된 거래의 단지명 목록
+  const danjiList = [...new Set(comps.map(x => x.name).filter(Boolean))].sort();
+  const curDanji = window._compsDanjiFilter || '전체';
+
   c.innerHTML = `
     <div class="page-head">
       <div class="page-eyebrow">거래사례 비교 · Comparable Sales</div>
@@ -1904,10 +1908,17 @@ function renderComparables() {
       <div class="card-title" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
         <span>거래사례 목록</span>
         <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+          ${danjiList.length > 1 ? `
+          <select onchange="window._compsDanjiFilter=this.value; renderView();"
+            style="padding: 7px 12px; border: 1px solid var(--kiwoom-navy); border-radius: 6px; font-size: 12px; font-weight: 600; color: var(--kiwoom-navy); background: white; cursor: pointer; max-width: 200px;">
+            <option value="전체" ${curDanji==='전체'?'selected':''}>🏢 전체 단지 (${danjiList.length}개)</option>
+            ${danjiList.map(n => `<option value="${n}" ${curDanji===n?'selected':''}>${n}</option>`).join('')}
+          </select>` : ''}
           <div class="comps-filter no-print" style="display: inline-flex; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 3px;">
             ${['전체','매매','전세','월세'].map(t => {
               const active = (window._compsFilter || '전체') === t;
-              const count = t === '전체' ? comps.length : comps.filter(x => x.type === t).length;
+              const base = curDanji === '전체' ? comps : comps.filter(x => x.name === curDanji);
+              const count = t === '전체' ? base.length : base.filter(x => x.type === t).length;
               const typeColors = { '전체': 'var(--kiwoom-navy)', '매매': 'var(--kiwoom-navy)', '전세': '#d97706', '월세': '#0d9488' };
               return `<button class="comps-filter-btn" onclick="setCompsFilter('${t}')" style="
                 padding: 6px 14px; border: none; cursor: pointer; font-size: 12px; font-weight: 600;
@@ -1926,16 +1937,17 @@ function renderComparables() {
       </div>
       ${(() => {
         const f = window._compsFilter || '전체';
-        const filtered = f === '전체' ? comps : comps.filter(x => x.type === f);
+        let filtered = curDanji === '전체' ? comps : comps.filter(x => x.name === curDanji);
+        if (f !== '전체') filtered = filtered.filter(x => x.type === f);
         if (filtered.length === 0) {
           return `<div class="empty"><div class="empty-text">${f === '전체' ? '등록된 거래사례가 없습니다.' : `${f} 거래가 없습니다.`}</div></div>`;
         }
         return `
       <table class="tbl">
         <thead><tr>
-          <th class="text-right">거래일</th><th>유형</th><th>단지</th><th>동·호</th>
-          <th class="text-right">전용면적</th><th class="text-right">층</th>
-          <th class="text-right">금액 / 월세</th><th class="text-right">평당가</th><th>비고</th><th class="no-print"></th>
+          <th style="text-align:center;">거래일</th><th style="text-align:center;">유형</th><th style="text-align:center;">단지</th><th style="text-align:center;">동·호</th>
+          <th style="text-align:center;">전용면적</th><th style="text-align:center;">층</th>
+          <th style="text-align:center;">금액 / 월세</th><th style="text-align:center;">평당가</th><th style="text-align:center;">비고</th><th class="no-print"></th>
         </tr></thead>
         <tbody>
           ${filtered.map(x => {
@@ -1944,16 +1956,16 @@ function renderComparables() {
               ? `<div>보증 <strong>${fmt.won(x.price)}</strong></div><div class="text-small" style="color:#a8884a;">월 ${x.monthly.toLocaleString()}만</div>`
               : `<strong>${fmt.won(x.price)}</strong>${x.monthly ? `<br><span class="text-small text-muted">월 ${x.monthly}만</span>` : ''}`;
             return `<tr>
-              <td class="num">${fmt.date(x.date)}</td>
-              <td><span class="badge badge-${x.type}">${x.type}</span></td>
-              <td>${x.name}</td>
-              <td class="text-small">${x.building || ''} ${x.unit || ''}</td>
-              <td class="num">${x.area || '-'}㎡</td>
-              <td class="num">${x.floor || '-'}</td>
-              <td class="price">${priceCell}</td>
-              <td class="num text-small">${pyongPrice ? pyongPrice.toLocaleString() + '만/평' : '-'}</td>
-              <td class="text-small text-muted">${x.memo || ''}</td>
-              <td class="no-print"><span class="tbl-action" onclick="editComparable('${x.id}')">편집</span><span class="tbl-action" onclick="deleteComparable('${x.id}')">삭제</span></td>
+              <td class="num" style="text-align:center;">${fmt.date(x.date)}</td>
+              <td style="text-align:center;"><span class="badge badge-${x.type}">${x.type}</span></td>
+              <td style="text-align:center;">${x.name}</td>
+              <td class="text-small" style="text-align:center;">${x.building || ''} ${x.unit || ''}</td>
+              <td class="num" style="text-align:center;">${x.area || '-'}㎡</td>
+              <td class="num" style="text-align:center;">${x.floor || '-'}</td>
+              <td class="price" style="text-align:center;">${priceCell}</td>
+              <td class="num text-small" style="text-align:center;">${pyongPrice ? pyongPrice.toLocaleString() + '만/평' : '-'}</td>
+              <td class="text-small text-muted" style="text-align:center;">${x.memo || ''}</td>
+              <td class="no-print" style="text-align:center;"><span class="tbl-action" onclick="editComparable('${x.id}')">편집</span><span class="tbl-action" onclick="deleteComparable('${x.id}')">삭제</span></td>
             </tr>`;
           }).join('')}
         </tbody>
@@ -2886,14 +2898,15 @@ function renderReport() {
   const _recovery = (_distributable != null && ra.seniorClaim) ? Math.min(100, _distributable / ra.seniorClaim * 100) : null;
 
   c.innerHTML = `
-    <div class="btn-row right no-print mb-16">
-      <button class="btn btn-ghost" onclick="window.print()">📄 PDF 출력 / 인쇄</button>
-    </div>
-
-    <div class="page-head">
-      <div class="page-eyebrow">자산 분석 리포트 · Asset Report</div>
-      <h1 class="page-title">${p.name}</h1>
-      <div class="page-sub">${p.building} ${p.unit} · ${p.addrRoad} · 작성일 ${today}</div>
+    <div class="page-head" style="display: flex; justify-content: space-between; align-items: flex-end; gap: 16px;">
+      <div>
+        <div class="page-eyebrow">자산 분석 리포트 · Asset Report</div>
+        <h1 class="page-title">${p.name}</h1>
+        <div class="page-sub">${p.building} ${p.unit} · ${p.addrRoad} · 작성일 ${today}</div>
+      </div>
+      <div class="btn-row no-print">
+        <button class="btn btn-ghost" onclick="window.print()">📄 PDF 출력 / 인쇄</button>
+      </div>
     </div>
 
     <div class="section-h">1. 본건 개요</div>
@@ -2990,6 +3003,7 @@ function renderReport() {
     </div>
   `;
 }
+
 // ============================================================
 // 물건 검색 모달: 등기부 PDF 업로드 → AI 자동 분석 → 폼 자동 입력
 // ============================================================
