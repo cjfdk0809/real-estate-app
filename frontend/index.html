@@ -3325,11 +3325,22 @@ function _extractRoadName(addrRoad) {
   const m = String(addrRoad).match(/([가-힣A-Za-z0-9]+(?:대로|로|길))/);
   return m ? m[1] : '';
 }
-
 async function autoFetchComparables(propertyId, propertyData, ctx) {
   // 시군구코드·지번: 저장 시 전달된 스냅샷(ctx) 우선, 없으면 현재 전역값
-  const lawdCd = (ctx && ctx.lawdCd) || _currentLawdCd;
-  const bun = (ctx && ctx.bun) || _currentBun;
+  let lawdCd = (ctx && ctx.lawdCd) || _currentLawdCd;
+  let bun = (ctx && ctx.bun) || _currentBun || _pdfBunHint;
+
+  // [추가] 시군구 코드가 없으면 주소에서 보충 (등기부 PDF로 등록한 K-apt 미식별 물건)
+  if (!lawdCd && window.KFITradeCollector) {
+    const addr = propertyData.addrLot || propertyData.addrRoad || '';
+    lawdCd = KFITradeCollector.addressToLawdCd(addr);
+    if (!bun) {
+      const _p = KFITradeCollector.parseAddress(addr);
+      bun = (_p && _p.bonbun) ? _p.bonbun : null;
+    }
+    if (lawdCd) console.log('[Phase 3] 주소로 시군구 코드 보충 →', lawdCd, '/ 본번:', bun);
+  }
+
   // 필수 정보 체크
   if (!lawdCd) {
     console.log('[Phase 3] 시군구 코드 없음 - 거래사례 자동수집 skip');
@@ -3348,19 +3359,24 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
   // 도로명 추출: "서울특별시 강서구 우현로 67" → "우현로" (단지명+도로명 교차검증용)
   const roadNm = _extractRoadName(propertyData.addrRoad || '');
 
-  // 거래사례 조회 헬퍼: useRoad=true면 도로명 교차검증 적용
-  async function _fetchBulk(useRoad) {
+  // 거래사례 조회 헬퍼
+  //  useRoad=true   : 도로명 교차검증 적용
+  //  skipDanji=true : 단지명 없이 시군구+면적만으로 조회(지번 매칭용)
+  async function _fetchBulk(useRoad, skipDanji) {
     const params = new URLSearchParams({
       lawd_cd: lawdCd,
       months: '24',
-      danji_name: propertyData.name,
       min_area: String(minArea),
       max_area: String(maxArea),
       include_rent: 'true',  // 매매 + 전세 + 월세
     });
-    if (useRoad && roadNm) params.set('road_nm', roadNm);  // 단지명+도로명 교차검증
+    if (!skipDanji) {
+      params.set('danji_name', propertyData.name);
+      if (useRoad && roadNm) params.set('road_nm', roadNm);  // 단지명+도로명 교차검증
+    }
+    const _tag = skipDanji ? '지번매칭' : (useRoad && roadNm ? '도로명 ' + roadNm : '단지명');
     const url = `${BACKEND_URL}/api/transactions/bulk?${params.toString()}`;
-    console.log(`[Phase 3] 거래사례 조회(도로명 ${useRoad && roadNm ? roadNm : '미적용'}):`, url);
+    console.log(`[Phase 3] 거래사례 조회(${_tag}):`, url);
     const r = await fetch(url);
     const d = await r.json();
     if (d.error) throw new Error(d.error);
@@ -3371,12 +3387,28 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
     // 1차: 단지명 + 도로명 교차검증으로 정확 조회
     let items = await _fetchBulk(true);
     let crossUnverified = false;
-    // 도로명 교차검증으로 0건이면 단지명+면적만으로 재조회 → "도로명 미검증"으로 표시
+    // 2차: 도로명 교차검증으로 0건이면 단지명+면적만으로 재조회 → "도로명 미검증"으로 표시
     if (items.length === 0 && roadNm) {
       const alt = await _fetchBulk(false);
       if (alt.length > 0) { items = alt; crossUnverified = true; }
     }
-    console.log(`[Phase 3] 최종 ${items.length}건 (도로명미검증=${crossUnverified})`);
+    // 3차: [추가] 단지명으로 여전히 0건이면, 지번(본번)으로 재조회
+    //      (등기부 "에스케이아파트" vs 국토부 "중곡SK" 같은 단지명 표기 불일치 대응)
+    if (items.length === 0 && bun) {
+      const bonbun = parseInt(String(bun).split('-')[0], 10);
+      if (bonbun) {
+        const byArea = await _fetchBulk(false, true);  // 단지명 없이 시군구+면적만
+        const matched = byArea.filter(it =>
+          parseInt(String(it.jibun || '').split('-')[0], 10) === bonbun
+        );
+        if (matched.length > 0) {
+          items = matched;
+          crossUnverified = true;
+          console.log(`[Phase 3] 지번(본번 ${bonbun}) 매칭으로 ${matched.length}건 확보`);
+        }
+      }
+    }
+    console.log(`[Phase 3] 최종 ${items.length}건 (미검증=${crossUnverified})`);
 
     // 중복 방지: 기존 거래의 키 set
     if (!state.comparables[propertyId]) state.comparables[propertyId] = [];
@@ -3398,7 +3430,9 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
         floor: item.floor,
         price: item.price,
         monthly: item.monthly || undefined,
-        memo: crossUnverified ? '자동수집(도로명미검증)' : '자동수집',
+        jibun: item.jibun || undefined,   // [추가] 지번 보존
+        dong: item.dong || undefined,     // [추가] 법정동 보존
+        memo: crossUnverified ? '자동수집(미검증)' : '자동수집',
       });
     });
 
