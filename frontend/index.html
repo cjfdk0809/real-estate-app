@@ -3384,7 +3384,7 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
     if (!box) {
       box = document.createElement('div');
       box.id = 'autoProgress';
-      box.style.cssText = 'position:fixed;left:50%;bottom:30px;transform:translateX(-50%);width:min(440px,92vw);background:#fff;border:1px solid #dde3ee;border-radius:10px;box-shadow:0 6px 24px rgba(0,22,77,0.18);padding:14px 18px;z-index:10001;font-family:Pretendard,sans-serif;';
+      box.style.cssText = 'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(440px,92vw);background:#fff;border:1px solid #dde3ee;border-radius:10px;box-shadow:0 6px 24px rgba(0,22,77,0.18);padding:14px 18px;z-index:10001;font-family:Pretendard,sans-serif;';
       box.innerHTML = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">'
         + '<span style="width:14px;height:14px;border:2px solid #E6EAF5;border-top-color:#011F8E;border-radius:50%;display:inline-block;animation:autoprog-spin 1s linear infinite;"></span>'
         + '<span id="autoProgressMsg" style="font-size:12px;font-weight:600;color:#011F8E;"></span>'
@@ -4412,7 +4412,7 @@ function openPropertyModal(id) {
     document.getElementById('propertyModalTitleText').textContent = '물건 검색';
     document.getElementById('deletePropertyBtn').classList.add('hide');
   }
-  document.getElementById('propertyModal').classList.add('show');
+  const _pm0=document.getElementById('propertyModal');_pm0.classList.add('show');requestAnimationFrame(()=>{_pm0.scrollTop=0;const _mi0=_pm0.querySelector('.modal');if(_mi0)_mi0.scrollTop=0;});
 }
 function closePropertyModal() {
     document.getElementById('propertyModal').classList.remove('show');
