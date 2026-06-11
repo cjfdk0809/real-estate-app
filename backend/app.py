@@ -575,25 +575,23 @@ def get_transactions_bulk():
         except Exception as e:
             errors.append(f'{ym}: {e}')
 
-    # 필터링 (양방향 부분 매칭으로 강건하게)
+    # 필터링: 단지명 정밀 매칭
+    # (위치 prefix/차수 변형은 허용, 브랜드 단편(예: '성원') 오매칭은 차단)
     if danji_filter:
         nf = danji_filter.replace(' ', '').lower()
         def matches(item_name):
             n = (item_name or '').replace(' ', '').lower()
             if not n or not nf:
                 return False
-            # 1. 양방향 부분 매칭 (검색어 ↔ 거래명)
-            if nf in n or n in nf:
-                return True
-            # 2. 마지막 N글자 매칭 (브랜드명 매칭, 위치 prefix 자동 처리)
-            if len(nf) >= 4 and len(n) >= 4:
-                if nf[-4:] in n or n[-4:] in nf:
-                    return True
-            # 3. 첫 4글자 매칭
-            if len(nf) >= 4 and len(n) >= 4:
-                if nf[:4] in n or n[:4] in nf:
-                    return True
-            return False
+            # 양방향 '완전 포함' 매칭만 허용:
+            #   "정왕동대림성원" ⊇ "대림성원"  → 통과 (위치 prefix 변형)
+            #   "대림성원1차"   ⊇ "대림성원"  → 통과 (차수 변형)
+            #   "현대성원" vs "대림성원"        → 차단 (서로 포함 안 됨)
+            # 짧은 쪽 이름이 3글자 미만이면 degenerate 오매칭 위험으로 제외.
+            shorter = n if len(n) <= len(nf) else nf
+            if len(shorter) < 3:
+                return False
+            return nf in n or n in nf
         all_items = [x for x in all_items if matches(x.get('name', ''))]
     if min_area is not None:
         all_items = [x for x in all_items if x['area'] >= min_area]
@@ -601,16 +599,23 @@ def get_transactions_bulk():
         all_items = [x for x in all_items if x['area'] <= max_area]
 
     # v2.17: 도로명 필터 - 단지명+도로명 교차검증 (지번보다 안정적, 같은 이름 다른 단지 제외)
-    # 도로명 데이터가 없는 거래는 제외하지 않음(안전). 도로명만 비교(단지가 여러 건물번호에 걸칠 수 있음).
+    # 도로명이 '있는데 불일치'하면 다른 단지로 보고 제외.
+    # 도로명이 '비어 있는' 거래는 제외하지 않되, road_verified=False 로 표시 →
+    #   프론트가 '미검증'으로 라벨링. (빈 도로명을 검증된 것처럼 포함하던 오류 수정)
     road_filter = request.args.get('road_nm', '').strip()
     if road_filter:
         rf = road_filter.replace(' ', '')
-        def road_match(x):
+        kept = []
+        for x in all_items:
             xr = (x.get('road', '') or '').replace(' ', '')
             if not xr:
-                return True
-            return rf in xr or xr in rf
-        all_items = [x for x in all_items if road_match(x)]
+                x['road_verified'] = False   # 도로명 없음 → 미검증으로 통과
+                kept.append(x)
+            elif rf in xr or xr in rf:
+                x['road_verified'] = True    # 도로명 일치 → 검증
+                kept.append(x)
+            # else: 도로명이 있는데 불일치 → 다른 단지로 보고 제외
+        all_items = kept
 
     # v2.14: jibun 필터 - 같은 지번(단지)만 통과 (NPL 평가 정확도)
     # 예: 본건 지번 "3278" vs 거래사례 지번 "1008-2" → 다른 단지로 판단해 제외
