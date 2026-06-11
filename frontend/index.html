@@ -3462,6 +3462,8 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
     _prog(35, '단지명·도로명으로 조회 중...');
     let items = await _fetchBulk(true);
     let crossUnverified = false;
+    // 본건 도로명이 없으면 교차검증 자체가 불가 → 이름만 매칭이므로 미검증 처리
+    if (!roadNm) crossUnverified = true;
 
     // 2차: 단지명 + 면적
     if (items.length === 0 && roadNm) {
@@ -3508,7 +3510,7 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
         monthly: item.monthly || undefined,
         jibun: item.jibun || undefined,
         dong: item.dong || undefined,
-        memo: crossUnverified ? '자동수집(미검증)' : '자동수집',
+        memo: (crossUnverified || item.road_verified === false) ? '자동수집(미검증)' : '자동수집',
       });
     });
     newItems.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
