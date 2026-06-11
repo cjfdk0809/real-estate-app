@@ -170,6 +170,25 @@ SYSTEM_INSTRUCTIONS = """당신은 키움에프앤아이 자산관리부의 NPL(
 """
 
 
+# ============================================================
+# 🆕 분석 속도 개선 (모델·입력 최적화)
+# ============================================================
+# 등기부 권리추출은 '정형 데이터 뽑기'라 Haiku로도 충분히 처리되며 Sonnet보다 빠릅니다.
+# ⚠️ 정확도 우선이면 아래 두 줄을 주석 교체해서 Sonnet으로 되돌리세요.
+REGISTRY_MODEL = "claude-haiku-4-5-20251001"   # 빠름·저렴 (실제 등기부 2~3건 검증 후 운영 권장)
+# REGISTRY_MODEL = "claude-sonnet-4-6"          # 정확도 우선(느림)
+
+
+def _clean_registry_text(text):
+    """등기부 텍스트의 정렬용 공백·빈 줄만 축소해 입력 토큰을 줄인다.
+    갑구·을구·표제부의 실제 '내용'은 한 글자도 삭제하지 않는다 (정확도 보존)."""
+    if not text:
+        return text
+    text = re.sub(r'[ \t\u3000]{2,}', ' ', text)   # 연속 공백(전각 포함) → 1칸
+    text = re.sub(r'\n{3,}', '\n\n', text)          # 3줄 이상 빈 줄 → 1줄
+    return text.strip()
+
+
 def analyze_registry_with_claude(registry_text, api_key):
     """Claude API를 호출하여 등기부 권리분석 수행"""
     if not ANTHROPIC_AVAILABLE:
@@ -177,9 +196,13 @@ def analyze_registry_with_claude(registry_text, api_key):
 
     client = Anthropic(api_key=api_key)
 
+    # 🆕 정렬용 공백·빈 줄 축소로 입력 토큰 절감 (내용은 보존)
+    cleaned_text = _clean_registry_text(registry_text)
+
     message = client.messages.create(
-        model="claude-sonnet-4-6",  # 최신 Sonnet 사용 (권리분석 정확도 우선)
-        max_tokens=16000,           # 8000 -> 16000: 항목 많은 등기부도 JSON이 잘리지 않도록 상향
+        model=REGISTRY_MODEL,       # 🆕 Haiku 기본(빠름) — 파일 상단 상수로 전환 가능
+        max_tokens=16000,           # 항목 많은 등기부도 JSON이 잘리지 않도록 상향 유지
+        temperature=0,              # 🆕 정형 추출 → 결정적 출력(정확도·일관성·속도 안정)
         system=SYSTEM_INSTRUCTIONS,
         messages=[
             {
@@ -187,7 +210,7 @@ def analyze_registry_with_claude(registry_text, api_key):
                 "content": (
                     "아래 등기부등본 텍스트를 분석하여 지정된 JSON 스키마로만 응답하세요.\n\n"
                     "[등기부등본 텍스트]\n---\n"
-                    f"{registry_text}\n---"
+                    f"{cleaned_text}\n---"
                 )
             }
         ]
