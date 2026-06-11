@@ -6,7 +6,7 @@ services:
     name: real-estate-asset-manager
     runtime: python
     region: singapore
-    plan: free
+    plan: standard
     rootDir: backend
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app --timeout 120 --workers 1 --threads 4
