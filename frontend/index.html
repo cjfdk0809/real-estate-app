@@ -573,23 +573,27 @@ table { border-collapse: collapse; width: 100%; }
   .card { border: 1px solid #ccc; page-break-inside: avoid; }
   body { background: white; font-size: 11px; }
   .page-head { margin-bottom: 16px; }
-  .print-header { display: flex !important; }   /* 🆕 인쇄 시 CI 머릿말 표시 */
 }
-/* 🆕 리포트 인쇄용 CI 머릿말 — 화면에서는 숨김, 인쇄 시에만 노출 */
+/* 🆕 리포트 인쇄용 CI 머릿말 — 인쇄 시 기본 노출, 화면에서만 숨김 (가장 안정적) */
 .print-header {
-  display: none;
+  display: flex;
   align-items: center;
   gap: 12px;
   padding-bottom: 12px;
   margin-bottom: 18px;
   border-bottom: 2px solid var(--kiwoom-navy);
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
 }
-.print-header img { height: 34px; width: auto; }
+.print-header img { height: 38px; width: auto; }
 .print-header .ph-title {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.06em;
   color: var(--kiwoom-navy);
+}
+@media screen {
+  .print-header { display: none; }   /* 화면에서는 숨김 */
 }
 
 /* ========== MOBILE RESPONSIVE ========== */
@@ -3007,7 +3011,7 @@ function renderReport() {
 
   c.innerHTML = `
     <div class="print-header">
-      <img src="/kiwoom_ci.jpg" alt="키움에프앤아이">
+      <img src="/kiwoom_ci.jpg" alt="키움에프앤아이" onerror="this.style.display='none'">
       <div class="ph-title">키움에프앤아이 · 자산 분석 리포트 · KIWOOM F&amp;I ASSET REPORT</div>
     </div>
     <div class="page-head" style="display: flex; justify-content: space-between; align-items: flex-end; gap: 16px;">
@@ -3465,7 +3469,8 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
       box = document.createElement('div');
       box.id = 'autoProgress';
       box.style.cssText = 'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(440px,92vw);background:#fff;border:1px solid #dde3ee;border-radius:10px;box-shadow:0 6px 24px rgba(0,22,77,0.18);padding:14px 18px;z-index:10001;font-family:Pretendard,sans-serif;';
-      box.innerHTML = '<div style="font-size:11px;font-weight:700;color:#011F8E;letter-spacing:0.04em;margin-bottom:10px;border-bottom:1px solid #eef1f7;padding-bottom:8px;">🔍 물건 검색 · 거래사례·시세 데이터 수집</div>'
+      box.innerHTML = '<div style="font-size:11px;font-weight:700;color:#011F8E;letter-spacing:0.04em;margin-bottom:10px;border-bottom:1px solid #eef1f7;padding-bottom:8px;">'
+        + ((ctx && ctx.hadRegistry) ? '🔍 물건 검색 · 등기부 분석 완료 ✓ · 거래사례 수집' : '🔍 물건 검색 · 거래사례·시세 데이터 수집') + '</div>'
         + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">'
         + '<span style="width:14px;height:14px;border:2px solid #E6EAF5;border-top-color:#011F8E;border-radius:50%;display:inline-block;animation:autoprog-spin 1s linear infinite;"></span>'
         + '<span id="autoProgressMsg" style="font-size:12px;font-weight:600;color:#011F8E;"></span>'
@@ -3598,7 +3603,7 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
     state.comparables[propertyId].push(...newItems);
     await saveState();
 
-    _prog(100, `완료 — 신규 ${newItems.length}건 추가`);
+    _prog(100, `물건검색 완료 — 거래사례 신규 ${newItems.length}건`);
     _progDone(900);
     return {
       added: newItems.length,
@@ -4564,6 +4569,8 @@ document.getElementById('propertyForm').addEventListener('submit', async (e) => 
   if (!state.auctions[id]) state.auctions[id] = [];
   if (!state.rights[id]) state.rights[id] = [];
   state.currentPropertyId = id;
+  // 🆕 등기부 분석 수행 여부 (완료 메시지·진행창 통합용) — _pendingRegistryAnalysis가 곧 null이 되므로 미리 저장
+  const _hadRegistry = !!_pendingRegistryAnalysis;
   
   // 등기부 PDF 분석 결과의 권리관계를 06 권리분석에 자동 등록
   if (_pendingRegistryAnalysis && _pendingRegistryAnalysis.rights_timeline) {
@@ -4584,7 +4591,7 @@ document.getElementById('propertyForm').addEventListener('submit', async (e) => 
     _pendingRegistryAnalysis = null;
   }
   // 거래사례 자동수집에 필요한 값 스냅샷 (closePropertyModal이 전역을 초기화하므로 미리 보관)
-  const _autoCtx = { lawdCd: _currentLawdCd, bun: _currentBun };
+  const _autoCtx = { lawdCd: _currentLawdCd, bun: _currentBun, hadRegistry: _hadRegistry };
 
   await saveState();
   closePropertyModal();
@@ -4597,38 +4604,35 @@ document.getElementById('propertyForm').addEventListener('submit', async (e) => 
   });
   renderView();
 
-  // Phase 3: 거래사례 자동수집 (백그라운드, 사용자 대기 없이)
-  autoFetchComparables(id, state.properties[id], _autoCtx).then(result => {
-    if (result.skipped) {
-      console.log('[Phase 3] 자동수집 건너뜀:', result.reason);
-      return;
-    }
-    if (result.error) {
-      showToast(`⚠️ 거래사례 자동수집 실패: ${result.error}`, 'warn', 5000);
-      return;
-    }
-    if (result.added > 0) {
-      const { min, max } = result.areaRange;
-      const warn = result.crossUnverified
-        ? ' · <span style="color:#ffd; font-weight:700;">⚠️도로명 미검증(단지명·면적 기준 — 확인 권장)</span>'
-        : '';
-      showToast(
-        `✅ <strong>거래사례 ${result.added}건 자동 수집 완료</strong><br>` +
-        `<span style="font-size:11px;opacity:0.9;">${state.properties[id].name} · ${min}~${max}㎡ · 최근 24개월 매매·전세·월세${warn}</span>`,
-        result.crossUnverified ? 'warn' : 'success',
-        6500
-      );
-      renderView();  // 거래사례 비교 탭 갱신
-    } else if (result.total === 0) {
-      showToast(`ℹ️ 같은 단지·면적·기간 조건 거래사례 없음`, 'info', 4000);
-    } else {
-      showToast(
-        `ℹ️ 거래사례 ${result.total}건 조회 완료 (중복 제외, 신규 추가 0건)`,
-        'info',
-        4000
-      );
-    }
-  });
+  // Phase 3: 거래사례 자동수집 — 물건검색의 마지막 단계로 처리 (등기부분석 + 거래사례를 한 흐름으로)
+  const result = await autoFetchComparables(id, state.properties[id], _autoCtx);
+  const _regTag = _hadRegistry ? '등기부 분석 + ' : '';
+  if (result.skipped) {
+    showToast(
+      `✅ <strong>물건검색 완료</strong>` +
+      (_hadRegistry ? `<br><span style="font-size:11px;opacity:0.9;">등기부 분석 완료 · 거래사례 자동수집은 건너뜀 (${result.reason || ''})</span>` : ''),
+      _hadRegistry ? 'success' : 'info', 5000
+    );
+    console.log('[Phase 3] 자동수집 건너뜀:', result.reason);
+  } else if (result.error) {
+    showToast(`⚠️ 물건검색 완료 — 단, 거래사례 자동수집 실패: ${result.error}`, 'warn', 5000);
+  } else if (result.added > 0) {
+    const { min, max } = result.areaRange;
+    const warn = result.crossUnverified
+      ? ' · <span style="color:#ffd; font-weight:700;">⚠️도로명 미검증(단지명·면적 기준 — 확인 권장)</span>'
+      : '';
+    showToast(
+      `✅ <strong>물건검색 완료 — ${_regTag}거래사례 ${result.added}건 수집</strong><br>` +
+      `<span style="font-size:11px;opacity:0.9;">${state.properties[id].name} · ${min}~${max}㎡ · 최근 24개월 매매·전세·월세${warn}</span>`,
+      result.crossUnverified ? 'warn' : 'success',
+      6500
+    );
+    renderView();  // 거래사례 비교 탭 갱신
+  } else if (result.total === 0) {
+    showToast(`✅ 물건검색 완료 — ${_regTag}같은 단지·면적·기간 조건 거래사례 없음`, 'info', 4000);
+  } else {
+    showToast(`✅ 물건검색 완료 — ${_regTag}거래사례 ${result.total}건 확인 (중복 제외, 신규 0건)`, 'info', 4000);
+  }
 });
 
 document.getElementById('deletePropertyBtn').addEventListener('click', async () => {
