@@ -573,6 +573,23 @@ table { border-collapse: collapse; width: 100%; }
   .card { border: 1px solid #ccc; page-break-inside: avoid; }
   body { background: white; font-size: 11px; }
   .page-head { margin-bottom: 16px; }
+  .print-header { display: flex !important; }   /* 🆕 인쇄 시 CI 머릿말 표시 */
+}
+/* 🆕 리포트 인쇄용 CI 머릿말 — 화면에서는 숨김, 인쇄 시에만 노출 */
+.print-header {
+  display: none;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 12px;
+  margin-bottom: 18px;
+  border-bottom: 2px solid var(--kiwoom-navy);
+}
+.print-header img { height: 34px; width: auto; }
+.print-header .ph-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--kiwoom-navy);
 }
 
 /* ========== MOBILE RESPONSIVE ========== */
@@ -1820,6 +1837,42 @@ function duplicateProperty(id) {
 }
 
 // ============================================================
+// 🆕 NPL 회수추정 기준가 산출 (6→12→24개월 확장 + 최고·최저 트림)
+// ============================================================
+// 입력: 매매 거래 배열(해제 제외). date는 'YYYY-MM-DD'.
+// 규칙: ① 최근 6개월 우선 → 거래 없으면 12 → 24개월로 확장 (그래도 없으면 전체)
+//       ② 해당 윈도 표본이 5건 이상이면 최고·최저 1건씩 제외 후 평균 (이상치 제거)
+//       ③ 산출근거(윈도/표본수/제외값) 함께 반환
+function computeRecoveryBasis(sales) {
+  const withDate = (sales || []).filter(x => x && x.date && x.price);
+  if (!withDate.length) {
+    return { avg: 0, windowMonths: 0, windowLabel: '-', total: 0, used: 0, trimmed: false, excHigh: null, excLow: null };
+  }
+  const now = new Date();
+  const monthsAgo = (m) => { const d = new Date(now); d.setMonth(d.getMonth() - m); return d; };
+  let picked = [], usedWindow = 0;
+  for (const m of [6, 12, 24]) {
+    const cutoff = monthsAgo(m);
+    const inWin = withDate.filter(x => new Date(x.date) >= cutoff);
+    if (inWin.length > 0) { picked = inWin; usedWindow = m; break; }
+  }
+  if (!picked.length) { picked = withDate.slice(); usedWindow = 0; }  // 24개월에도 없으면 전체
+
+  const total = picked.length;
+  const prices = picked.map(x => x.price).sort((a, b) => a - b);
+  let used = prices.slice(), trimmed = false, excHigh = null, excLow = null;
+  if (prices.length >= 5) {                       // 표본 5건 이상일 때만 트림
+    excLow = prices[0];
+    excHigh = prices[prices.length - 1];
+    used = prices.slice(1, -1);                    // 최저·최고 1건씩 제외
+    trimmed = true;
+  }
+  const avg = used.length ? Math.round(used.reduce((s, v) => s + v, 0) / used.length) : 0;
+  const windowLabel = usedWindow ? `최근 ${usedWindow}개월` : '전체 기간';
+  return { avg, windowMonths: usedWindow, windowLabel, total, used: used.length, trimmed, excHigh, excLow };
+}
+
+// ============================================================
 // VIEW: COMPARABLES (거래사례)
 // ============================================================
 function renderComparables() {
@@ -1850,7 +1903,9 @@ function renderComparables() {
 
   // ============ NPL 분석 계산 (해제 거래 제외) ============
   const validSales = sales.filter(x => !x.memo || !x.memo.includes('해제'));
-  const avgAllSales = validSales.length ? validSales.reduce((s,x) => s+x.price, 0) / validSales.length : 0;
+  // 🆕 회수추정 기준: 6→12→24개월 윈도 + 표본 5건↑이면 최고·최저 1건씩 제외
+  const recovery = computeRecoveryBasis(validSales);
+  const avgAllSales = recovery.avg;  // 회수추정 기준가 (윈도·트림 반영)
   const avgJeonse = jeonse.length ? jeonse.reduce((s,x) => s+x.price, 0) / jeonse.length : 0;
   const rentRatio = (avgAllSales > 0 && avgJeonse > 0) ? (avgJeonse / avgAllSales * 100) : 0;
   const nplLower = avgAllSales * 0.85;
@@ -1900,9 +1955,9 @@ function renderComparables() {
       <div style="font-family: var(--mono); font-size: 30px; font-weight: 800; color: var(--kiwoom-navy-deep); line-height: 1.2; letter-spacing: -0.02em;">${fmt.won(Math.round(nplMedian))}</div>
       <div style="font-size: 13px; color: var(--ink-soft); margin-top: 6px; font-family: var(--mono);">회수 범위: ${fmt.won(Math.round(nplLower))} ~ ${fmt.won(Math.round(nplUpper))}</div>
       <div style="font-size: 12px; color: var(--ink-soft); margin-top: 14px; line-height: 1.7;">
-        📌 평균 매매가 <strong>${fmt.won(Math.round(avgAllSales))}</strong>의 85~95% 추정 (시장 변동성·처분비용 반영)<br>
+        📌 ${recovery.windowLabel} 매매 <strong>${recovery.total}건</strong>${recovery.trimmed ? ` 중 최고(${fmt.won(recovery.excHigh)})·최저(${fmt.won(recovery.excLow)}) 제외한 ${recovery.used}건` : ''} 평균 <strong>${fmt.won(recovery.avg)}</strong>의 85~95% 추정 (시장 변동성·처분비용 반영)<br>
         ${avgJeonse > 0 ? `💵 전세 보증금 회수 시 약 <strong>${fmt.won(Math.round(avgJeonse))}</strong> 확보 가능 (전세가율 <strong>${rentRatio.toFixed(1)}%</strong>)<br>` : ''}
-        ${validSales.length < 5 ? `⚠️ 매매 거래 ${validSales.length}건으로 추정 신뢰도 낮음. 추가 사례 수집 권장.` : `✅ ${validSales.length}건 매매 거래 기반 추정 (신뢰도 양호)`}
+        ${recovery.total < 5 ? `⚠️ ${recovery.windowLabel} 매매 ${recovery.total}건으로 표본 부족 — 최고·최저 미제외, 신뢰도 낮음 (추가 사례 수집 권장)` : `✅ ${recovery.windowLabel} 매매 ${recovery.total}건 기반 추정 · 최고·최저 제외 (신뢰도 양호)`}
       </div>
     </div>
     ` : ''}
@@ -2824,13 +2879,19 @@ function renderReturns() {
     </div>
 
     <div class="card mb-16">
-      <div class="card-title">시뮬레이션 입력</div>
+      <div class="card-title">시뮬레이션 입력 <span class="text-muted text-small" style="font-weight:400;">· 값 입력 후 매수가 옆 [확인]을 누르면 계산됩니다 (Enter도 가능)</span></div>
       <div class="form-grid">
-        <div class="field"><label>매수가 (만원)</label><input type="number" id="in-purchasePrice" value="${purchasePrice}" oninput="updatePricing()"></div>
-        <div class="field"><label>자기자본 비율 (%)</label><input type="number" id="in-downPayment" value="${downPaymentPct}" oninput="updatePricing()"></div>
-        <div class="field"><label>대출 금리 (% / 연)</label><input type="number" step="0.1" id="in-loanRate" value="${loanRate}" oninput="updatePricing()"></div>
-        <div class="field"><label>임차 보증금 (만원)</label><input type="number" id="in-depositRent" value="${depositRent}" oninput="updatePricing()"></div>
-        <div class="field"><label>월 임대료 (만원)</label><input type="number" id="in-monthlyRent" value="${monthlyRent}" oninput="updatePricing()"></div>
+        <div class="field"><label>매수가 (만원)</label>
+          <div style="display:flex; gap:8px; align-items:stretch;">
+            <input type="number" id="in-purchasePrice" value="${purchasePrice}" style="flex:1; min-width:0;"
+              onkeydown="if(event.key==='Enter'){event.preventDefault();applyPricing();}">
+            <button type="button" class="btn btn-primary" style="white-space:nowrap; padding:0 18px;" onclick="applyPricing()">확인</button>
+          </div>
+        </div>
+        <div class="field"><label>자기자본 비율 (%)</label><input type="number" id="in-downPayment" value="${downPaymentPct}"></div>
+        <div class="field"><label>대출 금리 (% / 연)</label><input type="number" step="0.1" id="in-loanRate" value="${loanRate}"></div>
+        <div class="field"><label>임차 보증금 (만원)</label><input type="number" id="in-depositRent" value="${depositRent}"></div>
+        <div class="field"><label>월 임대료 (만원)</label><input type="number" id="in-monthlyRent" value="${monthlyRent}"></div>
       </div>
     </div>
 
@@ -2905,6 +2966,21 @@ function updatePricing() {
   window._pricingTimer = setTimeout(() => renderReturns(), 300);
 }
 
+// 🆕 [확인] 버튼 전용: 자동계산 없이, 사용자가 입력을 끝내고 누를 때만 즉시 반영
+function applyPricing() {
+  const id = state.currentPropertyId;
+  if (!id) return;
+  state.pricing[id] = {
+    purchasePrice: Number(document.getElementById('in-purchasePrice').value) || 0,
+    downPayment: Number(document.getElementById('in-downPayment').value) || 0,
+    loanRate: Number(document.getElementById('in-loanRate').value) || 0,
+    depositRent: Number(document.getElementById('in-depositRent').value) || 0,
+    monthlyRent: Number(document.getElementById('in-monthlyRent').value) || 0,
+  };
+  saveState();
+  renderReturns();  // 즉시 재계산 (디바운스 없음)
+}
+
 // ============================================================
 // VIEW: REPORT (리포트)
 // ============================================================
@@ -2930,6 +3006,10 @@ function renderReport() {
   const _recovery = (_distributable != null && ra.seniorClaim) ? Math.min(100, _distributable / ra.seniorClaim * 100) : null;
 
   c.innerHTML = `
+    <div class="print-header">
+      <img src="/kiwoom_ci.jpg" alt="키움에프앤아이">
+      <div class="ph-title">키움에프앤아이 · 자산 분석 리포트 · KIWOOM F&amp;I ASSET REPORT</div>
+    </div>
     <div class="page-head" style="display: flex; justify-content: space-between; align-items: flex-end; gap: 16px;">
       <div>
         <div class="page-eyebrow">자산 분석 리포트 · Asset Report</div>
@@ -3385,7 +3465,8 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
       box = document.createElement('div');
       box.id = 'autoProgress';
       box.style.cssText = 'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(440px,92vw);background:#fff;border:1px solid #dde3ee;border-radius:10px;box-shadow:0 6px 24px rgba(0,22,77,0.18);padding:14px 18px;z-index:10001;font-family:Pretendard,sans-serif;';
-      box.innerHTML = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">'
+      box.innerHTML = '<div style="font-size:11px;font-weight:700;color:#011F8E;letter-spacing:0.04em;margin-bottom:10px;border-bottom:1px solid #eef1f7;padding-bottom:8px;">🔍 물건 검색 · 거래사례·시세 데이터 수집</div>'
+        + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">'
         + '<span style="width:14px;height:14px;border:2px solid #E6EAF5;border-top-color:#011F8E;border-radius:50%;display:inline-block;animation:autoprog-spin 1s linear infinite;"></span>'
         + '<span id="autoProgressMsg" style="font-size:12px;font-weight:600;color:#011F8E;"></span>'
         + '<span id="autoProgressPct" style="margin-left:auto;font-family:monospace;font-size:12px;color:#8892A6;"></span></div>'
@@ -3430,7 +3511,7 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
     return { skipped: true, reason: '단지명/전용면적 정보 부족' };
   }
 
-  _prog(15, '거래사례 자동수집 준비 중...');
+  _prog(15, '데이터 수집 준비 중...');
 
   // 전용면적 ±5% 범위
   const area = Number(propertyData.exclusiveArea);
@@ -3459,7 +3540,7 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
 
   try {
     // 1차: 단지명 + 도로명
-    _prog(35, '단지명·도로명으로 조회 중...');
+    _prog(35, '① 단지명·도로명으로 거래사례 조회 중...');
     let items = await _fetchBulk(true);
     let crossUnverified = false;
     // 본건 도로명이 없으면 교차검증 자체가 불가 → 이름만 매칭이므로 미검증 처리
@@ -3467,14 +3548,14 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
 
     // 2차: 단지명 + 면적
     if (items.length === 0 && roadNm) {
-      _prog(55, '면적 기준으로 재조회 중...');
+      _prog(55, '② 전용면적 기준으로 재조회 중...');
       const alt = await _fetchBulk(false);
       if (alt.length > 0) { items = alt; crossUnverified = true; }
     }
 
     // 3차: 지번(본번) 매칭
     if (items.length === 0 && bun) {
-      _prog(75, '지번으로 매칭 조회 중...');
+      _prog(75, '③ 지번으로 정밀 매칭 중...');
       const bonbun = parseInt(String(bun).split('-')[0], 10);
       if (bonbun) {
         const byArea = await _fetchBulk(false, true);
@@ -3490,7 +3571,7 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
     }
     console.log(`[Phase 3] 최종 ${items.length}건 (미검증=${crossUnverified})`);
 
-    _prog(90, '수집 결과 저장 중...');
+    _prog(90, '수집 결과 정리 중...');
     if (!state.comparables[propertyId]) state.comparables[propertyId] = [];
     const existingKeys = new Set(
       state.comparables[propertyId].map(c => `${c.date}_${c.area}_${c.floor}_${c.price}_${c.monthly||0}`)
