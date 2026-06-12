@@ -1063,6 +1063,9 @@ table { border-collapse: collapse; width: 100%; }
         <div class="field"><label>구분</label>
           <select name="type"><option>경매</option><option>공매</option></select>
         </div>
+        <div class="field"><label>용도</label>
+          <select name="use"><option value="">(선택)</option><option>아파트</option><option>오피스텔</option><option>다세대/연립</option><option>단독/다가구</option><option>공장/창고</option><option>토지</option><option>근린상가</option><option>기타</option></select>
+        </div>
         <div class="field"><label>사건번호</label><input name="caseNo" placeholder="2024타경12345" required></div>
         <div class="field"><label>법원·기관</label><input name="court"></div>
         <div class="field"><label>매각기일</label><input name="hearingDate" type="date"></div>
@@ -2545,6 +2548,22 @@ function updateScenario(field, value) {
 }
 
 // 예상 낙찰가 시나리오 + NPL 담보여력 카드 HTML
+// 사례 평균 낙찰가율을 권리분석 시나리오에 반영
+function applyCaseRatesToScenario(midPct) {
+  const id = state.currentPropertyId; if (!id) return;
+  const m = Math.round(Number(midPct));
+  if (!m) return;
+  state.scenarios = state.scenarios || {};
+  const scn = state.scenarios[id] || {};
+  scn.mid = m;
+  scn.con = Math.max(1, m - 5);
+  scn.agg = Math.min(100, m + 5);
+  state.scenarios[id] = scn;
+  saveState();
+  alert(`권리분석 낙찰가율을 사례 평균 기준으로 보정했습니다.\n· 보수 ${scn.con}%\n· 중립 ${scn.mid}%\n· 적극 ${scn.agg}%\n\n권리분석 메뉴에서 확인하세요.`);
+  renderView();
+}
+
 function renderScenarioAndNPL(p, auctions, rights) {
   const sc = (state.scenarios && state.scenarios[p.id]) || {};
   const con = sc.con != null ? sc.con : 85;
@@ -2620,8 +2639,58 @@ function renderAuction() {
   const p = state.properties[state.currentPropertyId];
   const auctions = (state.auctions[p.id] || []).slice().sort((a,b) => (b.hearingDate || '').localeCompare(a.hearingDate || ''));
 
-  const completed = auctions.filter(x => x.winningBid);
+  const completed = auctions.filter(x => x.winningBid && x.appraisal);
   const avgRate = completed.length ? completed.reduce((s,x) => s + (x.winningBid / x.appraisal), 0) / completed.length : 0;
+  const avgRatePct = avgRate * 100;
+  const withBidders = auctions.filter(x => x.bidders);
+  const avgBidders = withBidders.length ? withBidders.reduce((s,x)=>s+Number(x.bidders),0)/withBidders.length : 0;
+  const avgFailed = auctions.length ? auctions.reduce((s,x)=>s+(x.failedCount||0),0)/auctions.length : 0;
+
+  const ap = getActiveAppraisal(p, auctions);
+  const sc = (state.scenarios && state.scenarios[p.id]) || {};
+  const discount = sc.discount != null ? sc.discount : 20;
+  const caseBasedBid = (avgRate && ap.value) ? Math.round(ap.value * avgRate) : null;
+
+  const applyCard = (completed.length && ap.value) ? `
+    <div class="card mb-24" style="border-left:4px solid var(--accent);">
+      <div class="card-title">본건 적용 · 사례 기반 예상 낙찰가</div>
+      <div class="grid grid-2">
+        <div>
+          <div class="info-row"><div class="info-label">본건 감정가</div><div class="info-value mono">${fmt.won(ap.value)} <span class="text-muted text-small">(${ap.source||''})</span></div></div>
+          <div class="info-row"><div class="info-label">사례 평균 낙찰가율</div><div class="info-value mono">${avgRatePct.toFixed(1)}% <span class="text-muted text-small">(낙찰 ${completed.length}건)</span></div></div>
+          <div class="info-row"><div class="info-label">예상 낙찰가(사례기반)</div><div class="info-value mono text-accent">${fmt.won(caseBasedBid)}</div></div>
+        </div>
+        <div style="display:flex;flex-direction:column;justify-content:center;gap:10px;">
+          <button class="btn btn-primary no-print" onclick="applyCaseRatesToScenario(${avgRatePct.toFixed(1)})">권리분석 낙찰가율을 사례 평균(${avgRatePct.toFixed(1)}%)으로 보정</button>
+          <div class="text-small text-muted">중립=사례평균, 보수=−5%p, 적극=+5%p로 권리분석 시나리오에 자동 반영됩니다.</div>
+        </div>
+      </div>
+    </div>` : '';
+
+  let roundsRows = '';
+  if (ap.value) {
+    let price = ap.value;
+    for (let i=0; i<5; i++) {
+      const label = i===0 ? '신건 (1차)' : `${i+1}차 · ${i}회 유찰`;
+      roundsRows += `<tr><td>${label}</td><td class="num">${(price/ap.value*100).toFixed(0)}%</td><td class="price">${fmt.won(Math.round(price))}</td></tr>`;
+      price = price * (100 - discount) / 100;
+    }
+  }
+  const declineCard = ap.value ? `
+    <div class="card mb-24">
+      <div class="card-title">차수별 저감 시뮬레이션 <span class="text-muted text-small" style="font-weight:400;">· 유찰 시 최저매각가 추이</span></div>
+      <div style="margin-bottom:12px;font-size:13px;">
+        <span class="text-muted">감정가</span> <strong class="mono">${fmt.won(ap.value)}</strong>
+        <span class="text-muted" style="margin-left:14px;">회차별 저감률</span>
+        <input type="number" value="${discount}" onchange="updateScenario('discount', this.value)" style="width:56px;padding:5px;">%
+        <span class="text-muted text-small" style="margin-left:6px;">(서울 통상 20%, 일부 법원 30%)</span>
+      </div>
+      <table class="tbl">
+        <thead><tr><th>회차</th><th class="text-right">감정가 대비</th><th class="text-right">최저매각가</th></tr></thead>
+        <tbody>${roundsRows}</tbody>
+      </table>
+      <div class="text-small text-muted" style="margin-top:8px;">※ 직전 회차 최저가에서 ${discount}%씩 저감(복리). 실제 저감률·회차는 관할 법원·물건에 따라 다릅니다.</div>
+    </div>` : '';
 
   c.innerHTML = `
     <div class="page-head">
@@ -2631,48 +2700,38 @@ function renderAuction() {
     </div>
 
     <div class="grid grid-4 mb-24">
-      <div class="stat-card">
-        <div class="stat-label">총 사건</div>
-        <div class="stat-value">${auctions.length}<span class="stat-unit">건</span></div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">낙찰 완료</div>
-        <div class="stat-value">${completed.length}<span class="stat-unit">건</span></div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">평균 낙찰가율</div>
-        <div class="stat-value">${completed.length ? (avgRate*100).toFixed(1) : '-'}<span class="stat-unit">%</span></div>
-        <div class="stat-trend">감정가 대비</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">평균 유찰</div>
-        <div class="stat-value">${auctions.length ? (auctions.reduce((s,x)=>s+(x.failedCount||0),0)/auctions.length).toFixed(1) : '-'}<span class="stat-unit">회</span></div>
-      </div>
+      <div class="stat-card"><div class="stat-label">사례 수</div><div class="stat-value">${auctions.length}<span class="stat-unit">건</span></div><div class="stat-trend">낙찰 ${completed.length}건</div></div>
+      <div class="stat-card"><div class="stat-label">평균 낙찰가율</div><div class="stat-value">${completed.length ? avgRatePct.toFixed(1) : '-'}<span class="stat-unit">%</span></div><div class="stat-trend">감정가 대비</div></div>
+      <div class="stat-card"><div class="stat-label">평균 유찰</div><div class="stat-value">${auctions.length ? avgFailed.toFixed(1) : '-'}<span class="stat-unit">회</span></div></div>
+      <div class="stat-card"><div class="stat-label">평균 응찰자</div><div class="stat-value">${withBidders.length ? avgBidders.toFixed(1) : '-'}<span class="stat-unit">명</span></div></div>
     </div>
+
+    ${applyCard}
+    ${declineCard}
 
     <div class="card">
       <div class="card-title">경공매 낙찰 사례 <button class="btn btn-primary no-print" onclick="openAuctionModal()">＋ 추가</button></div>
-      ${auctions.length === 0 ? '<div class="empty"><div class="empty-text">등록된 경공매 사건이 없습니다.</div></div>' : `
+      ${auctions.length === 0 ? '<div class="empty"><div class="empty-text">등록된 경공매 사례가 없습니다. 유사 물건의 낙찰 사례를 추가하면 평균 낙찰가율·예상 낙찰가가 자동 계산됩니다.</div></div>' : `
       <table class="tbl">
         <thead><tr>
-          <th>구분</th><th>사건번호</th><th>법원</th><th>매각기일</th>
-          <th>물건</th><th class="text-right">감정가</th><th class="text-right">최저가</th>
-          <th class="text-right">낙찰가</th><th class="text-right">낙찰가율</th><th class="text-right">유찰</th><th class="no-print"></th>
+          <th>구분</th><th>용도</th><th>소재지 · 사건번호</th><th class="text-right">면적</th>
+          <th class="text-right">감정가</th><th class="text-right">낙찰가</th><th class="text-right">낙찰가율</th>
+          <th class="text-right">유찰</th><th class="text-right">응찰</th><th class="text-right">매각일</th><th class="no-print"></th>
         </tr></thead>
         <tbody>
           ${auctions.map(x => {
             const rate = (x.winningBid && x.appraisal) ? (x.winningBid / x.appraisal * 100).toFixed(1) : null;
             return `<tr>
               <td><span class="badge badge-${x.type}">${x.type}</span></td>
-              <td class="text-mono text-small">${x.caseNo}</td>
-              <td class="text-small">${x.court || '-'}</td>
-              <td class="num">${fmt.date(x.hearingDate)}</td>
-              <td class="text-small">${x.address}<br><span class="text-muted">${x.area || '-'}㎡ · ${x.floor || '-'}층</span></td>
+              <td class="text-small">${x.use || '-'}</td>
+              <td class="text-small">${x.address}<br><span class="text-muted text-mono">${x.caseNo || ''}</span></td>
+              <td class="num text-small">${x.area ? x.area+'㎡' : '-'}</td>
               <td class="price">${fmt.won(x.appraisal)}</td>
-              <td class="price">${fmt.won(x.minimumBid)}</td>
               <td class="price ${x.winningBid ? 'text-accent' : ''}">${fmt.won(x.winningBid)}</td>
               <td class="num">${rate ? rate + '%' : '-'}</td>
               <td class="num">${x.failedCount || 0}</td>
+              <td class="num">${x.bidders || '-'}</td>
+              <td class="num text-small">${fmt.date(x.hearingDate)}</td>
               <td class="no-print"><span class="tbl-action" onclick="editAuction('${x.id}')">편집</span><span class="tbl-action" onclick="deleteAuction('${x.id}')">삭제</span></td>
             </tr>`;
           }).join('')}
@@ -2680,7 +2739,7 @@ function renderAuction() {
       </table>`}
       <div class="notice" style="margin-top: 16px;">
         <div class="notice-title">사건 조회 안내</div>
-        대법원 법원경매정보 (courtauction.go.kr) → 물건상세검색 → 소재지 입력 / 온비드 (onbid.co.kr) → 부동산 공매에서 직접 조회 후 입력하세요.
+        대법원 법원경매정보 (courtauction.go.kr) → 물건상세검색 / 온비드 (onbid.co.kr) → 부동산 공매에서 유사 물건의 감정가·낙찰가를 조회해 입력하세요. 무료 낙찰 API가 없어 수기 입력입니다.
       </div>
     </div>
   `;
