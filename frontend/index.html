@@ -574,13 +574,15 @@ table { border-collapse: collapse; width: 100%; }
   .card { border: 1px solid #ccc; page-break-inside: avoid; }
   body { background: white; font-size: 11px; }
   .page-head { margin-bottom: 16px; }
-  @page { margin: 0 12mm 14mm 12mm; }
-  /* 리포트 머릿말 모든 페이지 반복(표 thead 기법) */
-  .rpt-wrap { width: 100%; border-collapse: collapse; }
-  .rpt-wrap > thead { display: table-header-group; }
-  .rpt-wrap > tbody > tr > td { padding: 0; border: 0; }
-  .rpt-wrap > thead > tr > td { padding: 13mm 0 0 0; border: 0; }   /* 상단 여백을 머릿말에 포함 → 첫 장도 2·3장과 동일 위치 */
-  .rpt-wrap .print-header { margin-bottom: 14px; }
+  @page { margin: 18mm 12mm 14mm 12mm; }   /* 상단 18mm = 고정 머릿말 자리 확보 */
+  /* 리포트 머릿말: 모든 페이지 상단 고정 반복(첫 장 포함 동일 위치) */
+  .print-header {
+    display: flex !important;
+    position: fixed;
+    top: 6mm; left: 12mm; right: 12mm;
+    margin: 0;
+    background: #fff;
+  }
 }
 /* 🆕 리포트 인쇄용 CI 머릿말 — 인쇄 시 기본 노출, 화면에서만 숨김 (가장 안정적) */
 .print-header {
@@ -593,18 +595,15 @@ table { border-collapse: collapse; width: 100%; }
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
 }
-.print-header img { height: 48px; width: auto; }
+.print-header img { height: 24px; width: auto; }
 .print-header .ph-title {
   font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.06em;
   color: var(--kiwoom-navy);
 }
-.rpt-wrap { width: 100%; border-collapse: collapse; }
-.rpt-wrap > thead > tr > td, .rpt-wrap > tbody > tr > td { padding: 0; border: 0; }
 @media screen {
   .print-header { display: none; }   /* 화면에서는 숨김 */
-  .rpt-wrap > thead { display: none; }
 }
 
 /* ========== MOBILE RESPONSIVE ========== */
@@ -3096,12 +3095,10 @@ function renderReport() {
   const _recovery = (_distributable != null && ra.seniorClaim) ? Math.min(100, _distributable / ra.seniorClaim * 100) : null;
 
   c.innerHTML = `
-    <table class="rpt-wrap"><thead><tr><td>
     <div class="print-header">
       <img src="${CI_LOGO}" alt="키움에프앤아이">
       <div class="ph-title">키움에프앤아이 · 자산 분석 리포트 · KIWOOM F&amp;I ASSET REPORT</div>
     </div>
-    </td></tr></thead><tbody><tr><td>
     <div class="page-head" style="display: flex; justify-content: space-between; align-items: flex-end; gap: 16px;">
       <div>
         <div class="page-eyebrow">자산 분석 리포트 · Asset Report</div>
@@ -3205,7 +3202,6 @@ function renderReport() {
     <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid var(--line); font-size: 10px; color: var(--ink-muted); text-align: center;">
       본 리포트는 입력된 데이터를 기반으로 자동 생성된 자료입니다. 실제 거래 시 등기부등본·매각물건명세서 등 공식 자료를 확인하세요.
     </div>
-    </td></tr></tbody></table>
   `;
 }
 
