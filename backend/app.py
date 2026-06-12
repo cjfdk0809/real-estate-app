@@ -16,6 +16,7 @@ import re
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from functools import lru_cache
+from concurrent.futures import ThreadPoolExecutor  # 🆕 거래사례 월별 병렬 조회
 
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
@@ -556,24 +557,40 @@ def get_transactions_bulk():
     all_items = []
     errors = []
 
-    for ym in year_months:
-        try:
-            # 매매
-            xml_text = fetch_trade_cached(lawd_cd, ym, cache_ts())
-            raw_items, err = parse_xml_items(xml_text)
-            if not err:
-                all_items.extend(normalize_trade_item(x) for x in raw_items)
-            else:
-                errors.append(f'{ym} 매매: {err}')
+    # 🆕 월별 호출을 병렬 처리 (순차 → 동시 최대 8개). 24개월 × 매매·전월세도 몇 초 내 완료.
+    #    워커는 HTTP+파싱만 하고, 결과 누적은 메인 스레드에서 처리 → 경쟁조건 없음.
+    _ts = cache_ts()
 
-            # 전월세
-            if include_rent:
-                xml_text = fetch_rent_cached(lawd_cd, ym, cache_ts())
-                raw_items, err = parse_xml_items(xml_text)
-                if not err:
-                    all_items.extend(normalize_rent_item(x) for x in raw_items)
+    def _fetch_month(task):
+        ym, kind = task
+        try:
+            if kind == 'trade':
+                xml_text = fetch_trade_cached(lawd_cd, ym, _ts)
+                raw, err = parse_xml_items(xml_text)
+                if err:
+                    return ('err', f'{ym} 매매: {err}')
+                return ('ok', [normalize_trade_item(x) for x in raw])
+            else:
+                xml_text = fetch_rent_cached(lawd_cd, ym, _ts)
+                raw, err = parse_xml_items(xml_text)
+                if err:
+                    return ('err', f'{ym} 전월세: {err}')
+                return ('ok', [normalize_rent_item(x) for x in raw])
         except Exception as e:
-            errors.append(f'{ym}: {e}')
+            return ('err', f'{ym} {kind}: {e}')
+
+    tasks = []
+    for ym in year_months:
+        tasks.append((ym, 'trade'))
+        if include_rent:
+            tasks.append((ym, 'rent'))
+
+    with ThreadPoolExecutor(max_workers=8) as _ex:
+        for status, payload in _ex.map(_fetch_month, tasks):
+            if status == 'ok':
+                all_items.extend(payload)
+            else:
+                errors.append(payload)
 
     # 필터링: 단지명 정밀 매칭
     # (위치 prefix/차수 변형은 허용, 브랜드 단편(예: '성원') 오매칭은 차단)
