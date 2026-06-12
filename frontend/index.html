@@ -574,11 +574,12 @@ table { border-collapse: collapse; width: 100%; }
   .card { border: 1px solid #ccc; page-break-inside: avoid; }
   body { background: white; font-size: 11px; }
   .page-head { margin-bottom: 16px; }
-  @page { margin: 12mm 12mm 14mm 12mm; }
+  @page { margin: 0 12mm 14mm 12mm; }
   /* 리포트 머릿말 모든 페이지 반복(표 thead 기법) */
   .rpt-wrap { width: 100%; border-collapse: collapse; }
   .rpt-wrap > thead { display: table-header-group; }
-  .rpt-wrap > thead > tr > td, .rpt-wrap > tbody > tr > td { padding: 0; border: 0; }
+  .rpt-wrap > tbody > tr > td { padding: 0; border: 0; }
+  .rpt-wrap > thead > tr > td { padding: 13mm 0 0 0; border: 0; }   /* 상단 여백을 머릿말에 포함 → 첫 장도 2·3장과 동일 위치 */
   .rpt-wrap .print-header { margin-bottom: 14px; }
 }
 /* 🆕 리포트 인쇄용 CI 머릿말 — 인쇄 시 기본 노출, 화면에서만 숨김 (가장 안정적) */
