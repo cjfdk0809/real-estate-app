@@ -855,7 +855,7 @@ table { border-collapse: collapse; width: 100%; }
       <div class="nav-item active" data-view="overview"><span class="nav-item-num">01</span> 본건 정보</div>
       <div class="nav-item" data-view="comparables"><span class="nav-item-num">02</span> 거래사례 비교</div>
       <div class="nav-item" data-view="listings"><span class="nav-item-num">03</span> 매물현황</div>
-      <div class="nav-item" data-view="auction"><span class="nav-item-num">04</span> 경공매 추적</div>
+      <div class="nav-item" data-view="auction"><span class="nav-item-num">04</span> 경공매 사례</div>
       <div class="nav-item" data-view="valuation"><span class="nav-item-num">05</span> 시세 추정</div>
       <div class="nav-item" data-view="rights"><span class="nav-item-num">06</span> 권리분석</div>
       <div class="nav-item" data-view="returns"><span class="nav-item-num">07</span> 수익률·세금</div>
@@ -2625,9 +2625,9 @@ function renderAuction() {
 
   c.innerHTML = `
     <div class="page-head">
-      <div class="page-eyebrow">경공매 추적 · Auction Tracking</div>
+      <div class="page-eyebrow">경공매 사례 · Auction Cases</div>
       <h1 class="page-title">${p.name}</h1>
-      <div class="page-sub">사건번호별 진행 내역과 낙찰가율을 추적합니다.</div>
+      <div class="page-sub">유사 경·공매 낙찰 사례를 모아 본건 예상 낙찰가율의 근거로 활용합니다.</div>
     </div>
 
     <div class="grid grid-4 mb-24">
@@ -2651,7 +2651,7 @@ function renderAuction() {
     </div>
 
     <div class="card">
-      <div class="card-title">경공매 사건 목록 <button class="btn btn-primary no-print" onclick="openAuctionModal()">＋ 추가</button></div>
+      <div class="card-title">경공매 낙찰 사례 <button class="btn btn-primary no-print" onclick="openAuctionModal()">＋ 추가</button></div>
       ${auctions.length === 0 ? '<div class="empty"><div class="empty-text">등록된 경공매 사건이 없습니다.</div></div>' : `
       <table class="tbl">
         <thead><tr>
