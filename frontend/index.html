@@ -2545,9 +2545,9 @@ function updateScenario(field, value) {
 // 예상 낙찰가 시나리오 + NPL 담보여력 카드 HTML
 function renderScenarioAndNPL(p, auctions, rights) {
   const sc = (state.scenarios && state.scenarios[p.id]) || {};
-  const con = sc.con != null ? sc.con : 92;
-  const mid = sc.mid != null ? sc.mid : 97;
-  const agg = sc.agg != null ? sc.agg : 100;
+  const con = sc.con != null ? sc.con : 85;
+  const mid = sc.mid != null ? sc.mid : 90;
+  const agg = sc.agg != null ? sc.agg : 95;
   const discount = sc.discount != null ? sc.discount : 20;
   const ap = getActiveAppraisal(p, auctions);
   const ra = analyzeRights(rights);
@@ -2581,7 +2581,7 @@ function renderScenarioAndNPL(p, auctions, rights) {
         <tr><td class="text-muted">1회 유찰 시 최저가</td><td class="num">${100 - discount}%</td><td class="price text-muted">${fmt.won(nextFloor)}</td></tr>
       </tbody>
     </table>
-    <div class="text-small text-muted" style="margin-top:8px;">※ 낙찰가율 기본값(보수92·중립97·적극100), 사건별 편집 가능. 무료 공식 낙찰가율 API는 없어 대법원 경매통계·지지옥션 등 최신치 참고 권장.</div>
+    <div class="text-small text-muted" style="margin-top:8px;">※ 낙찰가율 기본값(보수85·중립90·적극95), 사건별 편집 가능. 무료 공식 낙찰가율 API는 없어 대법원 경매통계·지지옥션 등 최신치 참고 권장.</div>
     `}
   </div>`;
 
@@ -2988,6 +2988,20 @@ function applyPricing() {
 // ============================================================
 // VIEW: REPORT (리포트)
 // ============================================================
+// 🆕 리포트 인쇄: CI 이미지가 로딩된 뒤 인쇄해 'CI 됐다 안됐다' 방지
+function printReport() {
+  const img = document.querySelector('.print-header img');
+  if (img && !img.complete) {
+    let done = false;
+    const go = () => { if (done) return; done = true; window.print(); };
+    img.addEventListener('load', go, { once: true });
+    img.addEventListener('error', go, { once: true });
+    setTimeout(go, 1500);  // 안전장치: 1.5초 내 무조건 인쇄
+  } else {
+    window.print();  // 이미 캐시/로딩됨
+  }
+}
+
 function renderReport() {
   const c = document.getElementById('viewContainer');
   const p = state.properties[state.currentPropertyId];
@@ -3021,7 +3035,7 @@ function renderReport() {
         <div class="page-sub">${p.building} ${p.unit} · ${p.addrRoad} · 작성일 ${today}</div>
       </div>
       <div class="btn-row no-print">
-        <button class="btn btn-ghost" onclick="window.print()">📄 PDF 출력 / 인쇄</button>
+        <button class="btn btn-ghost" onclick="printReport()">📄 PDF 출력 / 인쇄</button>
       </div>
     </div>
 
