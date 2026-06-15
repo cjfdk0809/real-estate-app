@@ -580,6 +580,7 @@ table { border-collapse: collapse; width: 100%; }
   .rpt-wrap > thead { display: table-header-group; }
   .rpt-wrap > thead > tr > td, .rpt-wrap > tbody > tr > td { padding: 0; border: 0; }
   .print-header { display: flex !important; position: static; margin: 0 0 12px 0; }
+  .print-header.print-header-first { display: none !important; }   /* 🆕 1페이지 CI 중복 제거 — thead 러닝헤더가 이미 상단에 찍힘 */
 }
 /* 🆕 리포트 인쇄용 CI 머릿말 — 인쇄 시 기본 노출, 화면에서만 숨김 (가장 안정적) */
 .print-header {
@@ -1862,6 +1863,17 @@ function duplicateProperty(id) {
 // 규칙: ① 최근 6개월 우선 → 거래 없으면 12 → 24개월로 확장 (그래도 없으면 전체)
 //       ② 해당 윈도 표본이 5건 이상이면 최고·최저 1건씩 제외 후 평균 (이상치 제거)
 //       ③ 산출근거(윈도/표본수/제외값) 함께 반환
+// 🆕 트림 평균: 표본 5건 이상이면 최고·최저 1건씩 제외한 평균(이상치 영향 제거)
+function trimmedMean(arr) {
+  if (!arr || !arr.length) return 0;
+  if (arr.length >= 5) {
+    const s = arr.slice().sort((a, b) => a - b);
+    const mid = s.slice(1, -1);
+    return mid.reduce((a, b) => a + b, 0) / mid.length;
+  }
+  return arr.reduce((a, b) => a + b, 0) / arr.length;
+}
+
 function computeRecoveryBasis(sales) {
   const withDate = (sales || []).filter(x => x && x.date && x.price);
   if (!withDate.length) {
@@ -1916,7 +1928,7 @@ function renderComparables() {
 
   const targetArea = p.exclusiveArea;
   const sameAreaSales = sales.filter(x => Math.abs((x.area || 0) - targetArea) < 1);
-  const avgSales = sameAreaSales.length ? Math.round(sameAreaSales.reduce((s,x) => s+x.price, 0) / sameAreaSales.length) : 0;
+  const avgSales = sameAreaSales.length ? Math.round(trimmedMean(sameAreaSales.map(x => x.price))) : 0;
   const minSales = sameAreaSales.length ? Math.min(...sameAreaSales.map(x => x.price)) : 0;
   const maxSales = sameAreaSales.length ? Math.max(...sameAreaSales.map(x => x.price)) : 0;
 
@@ -1949,7 +1961,7 @@ function renderComparables() {
       <div class="stat-card">
         <div class="stat-label">평균 매매가</div>
         <div class="stat-value">${avgSales ? fmt.won(avgSales) : '-'}</div>
-        <div class="stat-trend">최근 ${sameAreaSales.length}건 평균</div>
+        <div class="stat-trend">${sameAreaSales.length >= 5 ? '최고·최저 제외 ' + (sameAreaSales.length - 2) + '건 평균' : sameAreaSales.length + '건 평균'}</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">최저~최고</div>
@@ -2767,7 +2779,7 @@ function renderValuation() {
 
   // 면적당 단가 평균
   const ppmsArr = sameArea.map(x => x.price / x.area);
-  const avgPpm = ppmsArr.length ? ppmsArr.reduce((s,n)=>s+n,0) / ppmsArr.length : 0;
+  const avgPpm = ppmsArr.length ? trimmedMean(ppmsArr) : 0;
 
   // 층 보정 (저층 1-5: -3%, 중층 6-15: 0%, 고층 16+: +5%)
   const floor = p.floor || 0;
@@ -3081,7 +3093,7 @@ function renderReport() {
   const rights = state.rights[p.id] || [];
   const sales = comps.filter(x => x.type === '매매');
   const sameArea = sales.filter(x => Math.abs((x.area||0) - p.exclusiveArea) < 1);
-  const avgPrice = sameArea.length ? Math.round(sameArea.reduce((s,x)=>s+x.price,0)/sameArea.length) : 0;
+  const avgPrice = sameArea.length ? Math.round(trimmedMean(sameArea.map(x=>x.price))) : 0;
   const today = new Date().toLocaleDateString('ko-KR');
 
   // 예상 낙찰가 / 권리 자동판정

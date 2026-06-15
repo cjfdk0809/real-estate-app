@@ -73,6 +73,11 @@
   function rateOf(x) { return (x && x.winningBid && x.appraisal) ? (x.winningBid / x.appraisal * 100) : null; }
   function ok(r) { return typeof r === 'number' && !isNaN(r) && r >= CFG.minRate && r <= CFG.maxRate; }
   function round1(v) { return Math.round(v * 10) / 10; }
+  function trimMean(a) {
+    if (!a || !a.length) return 0;
+    if (a.length >= 5) { var s = a.slice().sort(function (x, y) { return x - y; }); var m = s.slice(1, -1); return m.reduce(function (p, q) { return p + q; }, 0) / m.length; }
+    return a.reduce(function (p, q) { return p + q; }, 0) / a.length;
+  }
   function won(m) { return (typeof fmt !== 'undefined' && fmt.won) ? fmt.won(m) : ((m || 0) + '만'); }
   function findByText(root, sel, re) {
     var f = null;
@@ -231,7 +236,7 @@
     var area = p.exclusiveArea || 0;
     var sameArea = comps.filter(function (x) { return x.type === '매매' && Math.abs((x.area || 0) - area) < 1; });
     var prices = sameArea.map(function (x) { return x.price; });
-    var avg = prices.length ? Math.round(prices.reduce(function (s, v) { return s + v; }, 0) / prices.length) : 0;
+    var avg = prices.length ? Math.round(trimMean(prices)) : 0;
     var mn = prices.length ? Math.min.apply(null, prices) : 0;
     var mx = prices.length ? Math.max.apply(null, prices) : 0;
 
@@ -260,7 +265,7 @@
       card.innerHTML =
         '<div style="font-size:11px;letter-spacing:.18em;color:var(--kiwoom-navy);text-transform:uppercase;font-weight:700;margin-bottom:8px;">📊 평균 매매가 · AVERAGE SALE PRICE (동일 면적대)</div>'
         + '<div style="font-family:var(--mono);font-size:32px;font-weight:800;color:var(--kiwoom-navy-deep);line-height:1.15;">' + won(avg) + '</div>'
-        + '<div style="font-size:13px;color:var(--ink-soft,#5b6473);margin-top:6px;font-family:var(--mono);">범위 ' + won(mn) + ' ~ ' + won(mx) + ' · 동일면적 표본 ' + sameArea.length + '건 (단순평균)</div>';
+        + '<div style="font-size:13px;color:var(--ink-soft,#5b6473);margin-top:6px;font-family:var(--mono);">범위 ' + won(mn) + ' ~ ' + won(mx) + ' · ' + (sameArea.length >= 5 ? '최고·최저 제외 ' + (sameArea.length - 2) + '건 평균' : '동일면적 ' + sameArea.length + '건 평균') + '</div>';
       nplCard.replaceWith(card);
     }
   }
