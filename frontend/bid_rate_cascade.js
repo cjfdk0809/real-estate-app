@@ -78,6 +78,29 @@
     if (a.length >= 5) { var s = a.slice().sort(function (x, y) { return x - y; }); var m = s.slice(1, -1); return m.reduce(function (p, q) { return p + q; }, 0) / m.length; }
     return a.reduce(function (p, q) { return p + q; }, 0) / a.length;
   }
+  // 🆕 동일면적 윈도 평균: 3→6→12→24개월 확장, 5건 이상 모이는 첫 구간 채택 + 최고·최저 트림
+  function windowedAvg(rows) {
+    var arr = (rows || []).filter(function (x) { return x && x.price && x.date; });
+    if (!arr.length) return { avg: 0, windowLabel: '-', total: 0, used: 0, trimmed: false, min: 0, max: 0 };
+    var now = new Date();
+    function cut(m) { var d = new Date(now); d.setMonth(d.getMonth() - m); return d; }
+    var picked = [], usedWindow = 0, wins = [3, 6, 12, 24];
+    for (var i = 0; i < wins.length; i++) {
+      var inWin = arr.filter(function (x) { return new Date(x.date) >= cut(wins[i]); });
+      picked = inWin; usedWindow = wins[i];
+      if (inWin.length >= 5) break;
+    }
+    if (!picked.length) { picked = arr.slice(); usedWindow = 0; }
+    var prices = picked.map(function (x) { return x.price; }).sort(function (a, b) { return a - b; });
+    var used = prices.slice(), trimmed = false;
+    if (prices.length >= 5) { used = prices.slice(1, -1); trimmed = true; }
+    var avg = used.length ? Math.round(used.reduce(function (s, v) { return s + v; }, 0) / used.length) : 0;
+    return {
+      avg: avg, windowLabel: usedWindow ? ('최근 ' + usedWindow + '개월') : '전체 기간',
+      total: picked.length, used: used.length, trimmed: trimmed,
+      min: prices.length ? prices[0] : 0, max: prices.length ? prices[prices.length - 1] : 0
+    };
+  }
   function won(m) { return (typeof fmt !== 'undefined' && fmt.won) ? fmt.won(m) : ((m || 0) + '만'); }
   function findByText(root, sel, re) {
     var f = null;
@@ -232,13 +255,21 @@
     var vc = document.getElementById('viewContainer'); if (!vc) return;
     var pid = state.currentPropertyId; if (!pid) return;
     var p = ((state.properties) || {})[pid]; if (!p) return;
-    var comps = ((state.comparables) || {})[pid] || [];
+    var allComps = ((state.comparables) || {})[pid] || [];
     var area = p.exclusiveArea || 0;
-    var sameArea = comps.filter(function (x) { return x.type === '매매' && Math.abs((x.area || 0) - area) < 1; });
-    var prices = sameArea.map(function (x) { return x.price; });
-    var avg = prices.length ? Math.round(trimMean(prices)) : 0;
-    var mn = prices.length ? Math.min.apply(null, prices) : 0;
-    var mx = prices.length ? Math.max.apply(null, prices) : 0;
+
+    // index.html과 동일한 단지 필터 적용
+    var danjiList = [];
+    allComps.forEach(function (x) { if (x.name && danjiList.indexOf(x.name) < 0) danjiList.push(x.name); });
+    var curDanji = window._compsDanjiFilter || (danjiList.indexOf(p.name) >= 0 ? p.name : '전체');
+    if (curDanji !== '전체' && danjiList.indexOf(curDanji) < 0) curDanji = '전체';
+    var comps = (curDanji === '전체') ? allComps : allComps.filter(function (x) { return x.name === curDanji; });
+
+    // 동일면적(전용 ±1㎡) 매매, 해제 제외 → 3→6→12→24개월 윈도 평균
+    var sameArea = comps.filter(function (x) {
+      return x.type === '매매' && Math.abs((x.area || 0) - area) < 1 && (!x.memo || x.memo.indexOf('해제') < 0);
+    });
+    var info = windowedAvg(sameArea);
 
     var grid = vc.querySelector('.grid.grid-4');
     if (grid && grid.children.length >= 2 && !grid.getAttribute('data-boxes-patched')) {
@@ -260,12 +291,17 @@
       if (/linear-gradient/.test(st) && /NPL 회수 가능 금액 추정/.test(d.textContent)) nplCard = d;
     });
     if (nplCard) {
+      var sub = info.total
+        ? (info.windowLabel + ' 매매 ' + info.total + '건'
+            + (info.trimmed ? ' 중 최고·최저 제외 ' + info.used + '건' : '')
+            + ' 평균 · 범위 ' + won(info.min) + ' ~ ' + won(info.max))
+        : '동일면적 거래 없음';
       var card = document.createElement('div');
       card.style.cssText = 'background:linear-gradient(135deg, var(--kiwoom-navy-soft) 0%, #d4dcf0 100%);border:1px solid rgba(30,42,68,.18);border-left:4px solid var(--kiwoom-navy);border-radius:8px;padding:22px 26px;margin-bottom:16px;';
       card.innerHTML =
         '<div style="font-size:11px;letter-spacing:.18em;color:var(--kiwoom-navy);text-transform:uppercase;font-weight:700;margin-bottom:8px;">📊 평균 매매가 · AVERAGE SALE PRICE (동일 면적대)</div>'
-        + '<div style="font-family:var(--mono);font-size:32px;font-weight:800;color:var(--kiwoom-navy-deep);line-height:1.15;">' + won(avg) + '</div>'
-        + '<div style="font-size:13px;color:var(--ink-soft,#5b6473);margin-top:6px;font-family:var(--mono);">범위 ' + won(mn) + ' ~ ' + won(mx) + ' · ' + (sameArea.length >= 5 ? '최고·최저 제외 ' + (sameArea.length - 2) + '건 평균' : '동일면적 ' + sameArea.length + '건 평균') + '</div>';
+        + '<div style="font-family:var(--mono);font-size:32px;font-weight:800;color:var(--kiwoom-navy-deep);line-height:1.15;">' + won(info.avg) + '</div>'
+        + '<div style="font-size:13px;color:var(--ink-soft,#5b6473);margin-top:6px;font-family:var(--mono);">' + sub + '</div>';
       nplCard.replaceWith(card);
     }
   }

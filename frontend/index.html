@@ -577,10 +577,9 @@ table { border-collapse: collapse; width: 100%; }
   @page { margin: 14mm 12mm 14mm 12mm; }   /* 첫 장=본문 흐름 머릿말, 2장~=thead 머릿말 */
   /* 리포트 머릿말: 표 thead로 모든 페이지 상단 반복 */
   .rpt-wrap { width: 100%; border-collapse: collapse; }
-  .rpt-wrap > thead { display: table-header-group; }
+  .rpt-wrap > thead { display: none; }   /* 🆕 러닝헤더 비활성 — 1페이지 본문 머릿말(print-header-first)만 사용 */
   .rpt-wrap > thead > tr > td, .rpt-wrap > tbody > tr > td { padding: 0; border: 0; }
   .print-header { display: flex !important; position: static; margin: 0 0 12px 0; }
-  .print-header.print-header-first { display: none !important; }   /* 🆕 1페이지 CI 중복 제거 — thead 러닝헤더가 이미 상단에 찍힘 */
 }
 /* 🆕 리포트 인쇄용 CI 머릿말 — 인쇄 시 기본 노출, 화면에서만 숨김 (가장 안정적) */
 .print-header {
@@ -867,18 +866,9 @@ table { border-collapse: collapse; width: 100%; }
       <div class="nav-item" data-view="comparables"><span class="nav-item-num">02</span> 거래사례 비교</div>
       <div class="nav-item" data-view="listings"><span class="nav-item-num">03</span> 매물현황</div>
       <div class="nav-item" data-view="auction"><span class="nav-item-num">04</span> 경공매 사례</div>
-      <div class="nav-item" data-view="valuation"><span class="nav-item-num">05</span> 시세 추정</div>
-      <div class="nav-item" data-view="rights"><span class="nav-item-num">06</span> 권리분석</div>
-      <div class="nav-item" data-view="returns"><span class="nav-item-num">07</span> 수익률·세금</div>
-      <div class="nav-item" data-view="report"><span class="nav-item-num">08</span> 리포트</div>
-    </div>
-
-    <div class="nav-section" style="padding-top: 8px;">
-      <div class="nav-label">분석 도구</div>
-      <a href="/npl" target="_blank" rel="noopener noreferrer" class="nav-item" style="text-decoration: none; color: inherit; display: flex; align-items: center; justify-content: space-between;">
-        <span><span class="nav-item-num">🔍</span> NPL 자산 분석</span>
-        <span style="font-size: 10px; color: var(--ink-muted); opacity: 0.7;">↗</span>
-      </a>
+      <div class="nav-item" data-view="rights"><span class="nav-item-num">05</span> 권리분석</div>
+      <div class="nav-item" data-view="returns"><span class="nav-item-num">06</span> 수익률·세금</div>
+      <div class="nav-item" data-view="report"><span class="nav-item-num">07</span> 리포트</div>
     </div>
 
     <div class="nav-section" style="padding-top: 8px;">
@@ -1762,7 +1752,7 @@ function renderOverview() {
   const auctions = state.auctions[p.id] || [];
   const rights = state.rights[p.id] || [];
   const recentSales = comps.filter(x => x.type === '매매').slice(-5);
-  const avgPrice = recentSales.length ? Math.round(recentSales.reduce((s,x) => s+x.price, 0) / recentSales.length) : null;
+  const avgPrice = recentSales.length ? Math.round(trimmedMean(recentSales.map(x => x.price))) : null;
   const inheritedDebt = rights.filter(r => r.assumed === 'true' || r.assumed === true).reduce((s,r) => s + (r.amount || 0), 0);
 
   c.innerHTML = `
@@ -1874,6 +1864,33 @@ function trimmedMean(arr) {
   return arr.reduce((a, b) => a + b, 0) / arr.length;
 }
 
+// 🆕 동일면적 윈도 평균: 3→6→12→24개월 순으로 확장, 매매 5건 이상 모이는 첫 구간 채택
+//    (24개월에도 5건 미만이면 24개월 구간 그대로 / 24개월 내 거래 없으면 전체 기간)
+//    채택 구간이 5건 이상이면 최고·최저 1건씩 제외하고 평균(이상치 제거)
+function windowedSameAreaAvg(rows) {
+  const arr = (rows || []).filter(x => x && x.price && x.date);
+  if (!arr.length) return { avg: 0, windowMonths: 0, windowLabel: '-', total: 0, used: 0, trimmed: false, excHigh: null, excLow: null, min: 0, max: 0 };
+  const now = new Date();
+  const cut = m => { const d = new Date(now); d.setMonth(d.getMonth() - m); return d; };
+  let picked = [], usedWindow = 0;
+  for (const m of [3, 6, 12, 24]) {
+    const inWin = arr.filter(x => new Date(x.date) >= cut(m));
+    picked = inWin; usedWindow = m;
+    if (inWin.length >= 5) break;            // 5건 이상 모이면 그 구간 채택
+  }
+  if (!picked.length) { picked = arr.slice(); usedWindow = 0; }   // 24개월 내 거래 없으면 전체
+  const prices = picked.map(x => x.price).sort((a, b) => a - b);
+  let used = prices.slice(), trimmed = false, excHigh = null, excLow = null;
+  if (prices.length >= 5) { excLow = prices[0]; excHigh = prices[prices.length - 1]; used = prices.slice(1, -1); trimmed = true; }
+  const avg = used.length ? Math.round(used.reduce((s, v) => s + v, 0) / used.length) : 0;
+  return {
+    avg, windowMonths: usedWindow,
+    windowLabel: usedWindow ? `최근 ${usedWindow}개월` : '전체 기간',
+    total: picked.length, used: used.length, trimmed, excHigh, excLow,
+    min: prices.length ? prices[0] : 0, max: prices.length ? prices[prices.length - 1] : 0
+  };
+}
+
 function computeRecoveryBasis(sales) {
   const withDate = (sales || []).filter(x => x && x.date && x.price);
   if (!withDate.length) {
@@ -1927,16 +1944,18 @@ function renderComparables() {
   const wolse = comps.filter(x => x.type === '월세');
 
   const targetArea = p.exclusiveArea;
-  const sameAreaSales = sales.filter(x => Math.abs((x.area || 0) - targetArea) < 1);
-  const avgSales = sameAreaSales.length ? Math.round(trimmedMean(sameAreaSales.map(x => x.price))) : 0;
-  const minSales = sameAreaSales.length ? Math.min(...sameAreaSales.map(x => x.price)) : 0;
-  const maxSales = sameAreaSales.length ? Math.max(...sameAreaSales.map(x => x.price)) : 0;
-
-  // ============ NPL 분석 계산 (해제 거래 제외) ============
+  // 해제 거래 제외한 매매 (평형별 분석·차트용 = 전체 면적)
   const validSales = sales.filter(x => !x.memo || !x.memo.includes('해제'));
-  // 🆕 회수추정 기준: 6→12→24개월 윈도 + 표본 5건↑이면 최고·최저 1건씩 제외
-  const recovery = computeRecoveryBasis(validSales);
-  const avgAllSales = recovery.avg;  // 회수추정 기준가 (윈도·트림 반영)
+  // 동일면적(전용 ±1㎡)만 추려 3→6→12→24개월 윈도 평균 적용
+  const sameAreaSales = validSales.filter(x => Math.abs((x.area || 0) - targetArea) < 1);
+  const avgInfo = windowedSameAreaAvg(sameAreaSales);
+  const avgSales = avgInfo.avg;
+  const minSales = avgInfo.min;   // 채택 구간 내 실제 최저
+  const maxSales = avgInfo.max;   // 채택 구간 내 실제 최고
+
+  // ============ NPL 분석 계산 (표시 평균과 동일 기준) ============
+  const recovery = avgInfo;
+  const avgAllSales = recovery.avg;  // 동일면적 윈도 평균 = NPL 추정 기준가
   const avgJeonse = jeonse.length ? jeonse.reduce((s,x) => s+x.price, 0) / jeonse.length : 0;
   const rentRatio = (avgAllSales > 0 && avgJeonse > 0) ? (avgJeonse / avgAllSales * 100) : 0;
   const nplLower = avgAllSales * 0.85;
@@ -1961,7 +1980,7 @@ function renderComparables() {
       <div class="stat-card">
         <div class="stat-label">평균 매매가</div>
         <div class="stat-value">${avgSales ? fmt.won(avgSales) : '-'}</div>
-        <div class="stat-trend">${sameAreaSales.length >= 5 ? '최고·최저 제외 ' + (sameAreaSales.length - 2) + '건 평균' : sameAreaSales.length + '건 평균'}</div>
+        <div class="stat-trend">${avgInfo.windowLabel} · ${avgInfo.trimmed ? '최고·최저 제외 ' + avgInfo.used + '건' : avgInfo.total + '건'} 평균</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">최저~최고</div>
@@ -1995,7 +2014,7 @@ function renderComparables() {
 
     <!-- ========== 평형별 시세 분석 (매매/전세/월세) ========== -->
     <div class="grid grid-3 mb-16">
-      ${renderAreaAnalysisTable(validSales, '매매', false)}
+      ${renderAreaAnalysisTable(validSales, '매매', false, true)}
       ${renderAreaAnalysisTable(jeonse, '전세', false)}
       ${renderAreaAnalysisTable(wolse, '월세', true)}
     </div>
@@ -2083,7 +2102,7 @@ function renderListings() {
   const sales = comps.filter(x => x.type === '매매' && (!x.memo || !x.memo.includes('해제')));
   const jeonse = comps.filter(x => x.type === '전세');
   const wolse = comps.filter(x => x.type === '월세');
-  const avgAllSales = sales.length ? sales.reduce((s,x) => s+x.price, 0) / sales.length : 0;
+  const avgAllSales = sales.length ? trimmedMean(sales.map(x => x.price)) : 0;
   const avgJeonse = jeonse.length ? jeonse.reduce((s,x) => s+x.price, 0) / jeonse.length : 0;
   
   c.innerHTML = `
@@ -2240,7 +2259,7 @@ function renderExternalPortalLinks(p) {
 // ============================================================
 // NPL 분석: 평형별 시세 분석 테이블
 // ============================================================
-function renderAreaAnalysisTable(items, label, isWolse) {
+function renderAreaAnalysisTable(items, label, isWolse, trim) {
   if (items.length === 0) {
     return `<div class="card">
       <div class="card-title" style="font-size: 13px;">📐 평형별 ${label}</div>
@@ -2274,7 +2293,7 @@ function renderAreaAnalysisTable(items, label, isWolse) {
       <tbody>
         ${sortedKeys.map(k => {
           const arr = groups[k];
-          const avgPrice = arr.reduce((s,x) => s+x.price, 0) / arr.length;
+          const avgPrice = trim ? trimmedMean(arr.map(x => x.price)) : arr.reduce((s,x) => s+x.price, 0) / arr.length;
           if (isWolse) {
             const monthlyArr = arr.filter(x => x.monthly && x.monthly > 0);
             const avgMonthly = monthlyArr.length ? monthlyArr.reduce((s,x) => s+x.monthly, 0) / monthlyArr.length : 0;
