@@ -576,30 +576,31 @@ table { border-collapse: collapse; width: 100%; }
   .page-head { margin-bottom: 16px; }
   @page { margin: 14mm 12mm 14mm 12mm; }
   /* 리포트 머릿말: 표 thead(table-header-group)로 전 페이지 상단 반복 */
-  .rpt-wrap { width: 100%; border-collapse: collapse; }
+  .rpt-wrap { width: 100%; border-collapse: separate; border-spacing: 0; }   /* separate = Edge 세로 1페이지 thead 머릿말 누락 버그 회피 */
   .rpt-wrap > thead { display: table-header-group; }   /* 🆕 표 머릿말 — 전 페이지 상단 반복 (인쇄 렌더링 검증 완료) */
   .rpt-wrap > thead > tr > td, .rpt-wrap > tbody > tr > td { padding: 0; border: 0; }
-  .print-header { display: flex !important; position: static; margin: 0 0 12px 0; }
+  .print-header { display: block !important; position: static; margin: 0 0 12px 0; }
 }
 /* 🆕 리포트 인쇄용 CI 머릿말 — 인쇄 시 기본 노출, 화면에서만 숨김 (가장 안정적) */
 .print-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+  display: block;
   padding-bottom: 12px;
   margin-bottom: 18px;
   border-bottom: 2px solid var(--kiwoom-navy);
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
+  white-space: nowrap;
 }
-.print-header img { height: 24px; width: auto; }
+.print-header img { height: 24px; width: auto; vertical-align: middle; margin-right: 12px; }
 .print-header .ph-title {
+  display: inline-block;
+  vertical-align: middle;
   font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.06em;
   color: var(--kiwoom-navy);
 }
-.rpt-wrap { width: 100%; border-collapse: collapse; }
+.rpt-wrap { width: 100%; border-collapse: separate; border-spacing: 0; }
 @media screen {
   .print-header { display: none; }   /* 화면에서는 숨김 */
   .rpt-wrap > thead { display: none; }
