@@ -574,10 +574,10 @@ table { border-collapse: collapse; width: 100%; }
   .card { border: 1px solid #ccc; page-break-inside: avoid; }
   body { background: white; font-size: 11px; }
   .page-head { margin-bottom: 16px; }
-  @page { margin: 14mm 12mm 14mm 12mm; }   /* 첫 장=본문 흐름 머릿말, 2장~=thead 머릿말 */
-  /* 리포트 머릿말: 표 thead로 모든 페이지 상단 반복 */
+  @page { margin: 14mm 12mm 14mm 12mm; }
+  /* 리포트 머릿말: 표 thead(table-header-group)로 전 페이지 상단 반복 */
   .rpt-wrap { width: 100%; border-collapse: collapse; }
-  .rpt-wrap > thead { display: none; }   /* 🆕 러닝헤더 비활성 — 1페이지 본문 머릿말(print-header-first)만 사용 */
+  .rpt-wrap > thead { display: table-header-group; }   /* 🆕 표 머릿말 — 전 페이지 상단 반복 (인쇄 렌더링 검증 완료) */
   .rpt-wrap > thead > tr > td, .rpt-wrap > tbody > tr > td { padding: 0; border: 0; }
   .print-header { display: flex !important; position: static; margin: 0 0 12px 0; }
 }
@@ -3126,16 +3126,14 @@ function renderReport() {
   const _recovery = (_distributable != null && ra.seniorClaim) ? Math.min(100, _distributable / ra.seniorClaim * 100) : null;
 
   c.innerHTML = `
-    <table class="rpt-wrap"><thead><tr><td>
+    <table class="rpt-wrap">
+    <thead><tr><td>
     <div class="print-header">
       <img src="${CI_LOGO}" alt="키움에프앤아이">
       <div class="ph-title">키움에프앤아이 · 자산 분석 리포트 · KIWOOM F&amp;I ASSET REPORT</div>
     </div>
-    </td></tr></thead><tbody><tr><td>
-    <div class="print-header print-header-first">
-      <img src="${CI_LOGO}" alt="키움에프앤아이">
-      <div class="ph-title">키움에프앤아이 · 자산 분석 리포트 · KIWOOM F&amp;I ASSET REPORT</div>
-    </div>
+    </td></tr></thead>
+    <tbody><tr><td>
     <div class="page-head" style="display: flex; justify-content: space-between; align-items: flex-end; gap: 16px;">
       <div>
         <div class="page-eyebrow">자산 분석 리포트 · Asset Report</div>
