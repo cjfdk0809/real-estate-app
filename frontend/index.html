@@ -1006,6 +1006,10 @@ table { border-collapse: collapse; width: 100%; }
                onmouseout="this.style.background='white'">
               🏢 공동주택 공시가격 조회 <span style="font-size: 11px; opacity: 0.7;">↗</span>
             </a>
+            <button type="button" onclick="autoFillPublicPrice()"
+               style="display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; background: var(--kiwoom-navy); border: 1px solid var(--kiwoom-navy); border-radius: 5px; color: white; font-size: 12px; font-weight: 600; cursor: pointer;">
+              ⚡ 공시가격 자동입력
+            </button>
           </div>
         </div>
         <div style="margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); font-size: 10px; color: var(--ink-muted);">
@@ -3448,6 +3452,61 @@ let _currentLawdCd = null;    // Phase 3: 거래사례 자동수집용 시군구
 let _currentBun = null;       // Phase 3.1: 본건 지번 (NPL 평가 정확도 - 다른 단지 매칭 방지)
 let _pdfBunHint = null;       // v2.18: 등기부(PDF) 지번 본번 - 표제부 조회 폴백 힌트
 let _autoLookupTimer = null;  // 디바운스 타이머
+
+// ============================================================
+// 공시가격 자동입력 (housing_price API: 지번주소+동+호+전용면적 → 공시가격)
+// ============================================================
+async function autoFillPublicPrice() {
+  const form = document.getElementById('propertyForm');
+  const addr = form.elements.addrLot?.value?.trim() || '';
+  const dong = form.elements.building?.value?.trim() || '';
+  const ho   = form.elements.unit?.value?.trim() || '';
+  const area = form.elements.exclusiveArea?.value?.trim() || '';
+
+  // 상태 표시 영역 (공시가격 칸 아래)
+  let statusDiv = document.getElementById('publicPriceStatus');
+  if (!statusDiv) {
+    statusDiv = document.createElement('div');
+    statusDiv.id = 'publicPriceStatus';
+    statusDiv.style.cssText = 'grid-column: 1 / -1; margin-top: 8px; padding: 8px 12px; border-radius: 6px; font-size: 12px; line-height: 1.5;';
+    const ppField = form.querySelector('input[name="publicPrice"]')?.closest('.field');
+    (ppField?.parentNode || form).appendChild(statusDiv);
+  }
+
+  if (!addr) {
+    statusDiv.style.background = '#fff0f3';
+    statusDiv.style.color = 'var(--kiwoom-pink)';
+    statusDiv.innerHTML = '⚠️ 지번주소를 먼저 입력하세요. (예: 경기 하남시 감이동 530)';
+    return;
+  }
+
+  statusDiv.style.background = 'var(--kiwoom-navy-soft)';
+  statusDiv.style.color = 'var(--kiwoom-navy)';
+  statusDiv.innerHTML = '⏳ 공시가격 조회 중...';
+
+  try {
+    const params = new URLSearchParams({ addr, dong, ho, area });
+    const r = await fetch(`${BACKEND_URL}/api/housing-price?${params.toString()}`);
+    const d = await r.json();
+
+    if (d.found && d.housing_price) {
+      form.elements.publicPrice.value = d.housing_price;
+      const m = d.matched || {};
+      statusDiv.style.background = '#eef6ee';
+      statusDiv.style.color = 'var(--kiwoom-navy)';
+      statusDiv.innerHTML = `✅ 공시가격 <strong>${Number(d.housing_price).toLocaleString()}원</strong> 입력됨 `
+        + `<span style="color: var(--ink-muted); font-size: 11px;">(${m.danji_name || ''} ${m.dong_name || ''} ${m.ho_name || ''}호 / 전용 ${m.exclusive_area || ''}㎡)</span>`;
+    } else {
+      statusDiv.style.background = '#fff0f3';
+      statusDiv.style.color = 'var(--kiwoom-pink)';
+      statusDiv.innerHTML = `⚠️ 공시가격을 찾지 못했습니다. <span style="font-size: 11px;">(${d.reason || '지번·동·호·전용면적을 확인하세요'})</span>`;
+    }
+  } catch (e) {
+    statusDiv.style.background = '#fff0f3';
+    statusDiv.style.color = 'var(--kiwoom-pink)';
+    statusDiv.innerHTML = '⚠️ 조회 실패. 잠시 후 다시 시도하세요.';
+  }
+}
 
 function _onBuildingInputChange() {
   clearTimeout(_autoLookupTimer);
