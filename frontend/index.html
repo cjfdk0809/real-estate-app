@@ -881,8 +881,8 @@ table { border-collapse: collapse; width: 100%; }
       <div class="nav-item" data-view="auction"><span class="nav-item-num">04</span> 경공매 사례</div>
       <div class="nav-item" data-view="rights"><span class="nav-item-num">05</span> 권리분석</div>
       <div class="nav-item" data-view="returns"><span class="nav-item-num">06</span> 수익률·세금</div>
-      <div class="nav-item" data-view="report"><span class="nav-item-num">07</span> 리포트</div>
-      <div class="nav-item" data-view="opinion"><span class="nav-item-num">08</span> 담당자 의견</div>
+      <div class="nav-item" data-view="opinion"><span class="nav-item-num">07</span> 담당자 의견</div>
+      <div class="nav-item" data-view="report"><span class="nav-item-num">08</span> 리포트</div>
     </div>
 
     <div class="nav-section" style="padding-top: 8px;">
@@ -3244,6 +3244,27 @@ function renderReport() {
   const ap = getActiveAppraisal(p, auctions);
   const sc = (state.scenarios && state.scenarios[p.id]) || {};
   const _cas = (typeof resolveBidRateCascade === 'function') ? resolveBidRateCascade(p.id) : null;
+  // 담당자 의견 (07 모듈 값 — 입력값 우선, 없으면 자동값. 내용 있을 때만 리포트에 출력)
+  const _op = (state.opinion && state.opinion[p.id]) || {};
+  const _opCourt = (_op.courtAppraisal != null) ? _op.courtAppraisal : (ap.value || null);
+  const _opBid = (_op.expectedBid != null) ? _op.expectedBid : ((_opCourt && _cas) ? Math.round(_opCourt * _cas.center / 100) : null);
+  const _opSenior = (_op.seniorLien != null) ? _op.seniorLien : (ra.seniorClaim || null);
+  const _opRec = (_op.expectedRecovery != null) ? _op.expectedRecovery : (_opBid != null ? Math.max(0, _opBid - (ra.assumedTotal || 0)) : null);
+  const _opCmt = _op.comment || '';
+  const _opSection = (_opCourt || _opSenior || _opBid || _opRec != null || _opCmt) ? `
+    <div class="section-h">6. 담당자 의견</div>
+    <table style="width:100%; border-collapse:collapse; margin-bottom:14px;">
+      <tr>
+        <td style="padding:7px 0; color:var(--ink-muted); width:130px;">법사가(법원감정가)</td><td style="padding:7px 0;" class="mono">${_opCourt ? fmt.won(_opCourt) : '-'}</td>
+        <td style="padding:7px 0; color:var(--ink-muted); width:130px;">선순위 채권</td><td style="padding:7px 0;" class="mono">${_opSenior ? fmt.won(_opSenior) : '-'}</td>
+      </tr>
+      <tr>
+        <td style="padding:7px 0; color:var(--ink-muted);">낙찰예상가</td><td style="padding:7px 0;" class="mono">${_opBid ? fmt.won(_opBid) : '-'}</td>
+        <td style="padding:7px 0; color:var(--ink-muted);">회수예상가</td><td style="padding:7px 0;" class="mono">${_opRec != null ? fmt.won(_opRec) : '-'}</td>
+      </tr>
+    </table>
+    ${_opCmt ? `<div style="line-height:1.8; color:var(--ink-soft); white-space:pre-wrap;">${_opCmt.replace(/</g, '&lt;')}</div>` : '<div style="color:var(--ink-muted);">의견 미입력</div>'}
+  ` : '';
   const _con = _cas ? _cas.scenarios.con : (sc.con != null ? sc.con : 92);
   const _mid = _cas ? _cas.scenarios.mid : (sc.mid != null ? sc.mid : 97);
   const _agg = _cas ? _cas.scenarios.agg : (sc.agg != null ? sc.agg : 100);
@@ -3364,6 +3385,8 @@ function renderReport() {
       등록된 권리는 ${rights.length}건(말소기준 ${ra.baseRight ? ra.baseRight.type + ' ' + fmt.date(ra.baseRight.date) : '미확정'}, 인수금액 ${fmt.won(ra.assumedTotal)})입니다.${(ap.value && ra.seniorClaim) ? ` 중립 시나리오 예상 낙찰가 <strong>${fmt.won(_midBid)}</strong> 기준 1순위 회수율은 약 <strong class="text-accent">${_recovery != null ? _recovery.toFixed(1) + '%' : '-'}</strong>로 추정됩니다.` : ''}
       ${p.notes ? '<br><br><strong>실사 메모:</strong> ' + p.notes : ''}
     </div>
+
+    ${_opSection}
 
     <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid var(--line); font-size: 10px; color: var(--ink-muted); text-align: center;">
       본 리포트는 입력된 데이터를 기반으로 자동 생성된 자료입니다. 실제 거래 시 등기부등본·매각물건명세서 등 공식 자료를 확인하세요.
