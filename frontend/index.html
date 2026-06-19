@@ -2585,8 +2585,11 @@ function getActiveAppraisal(p, auctions) {
   const active = (auctions || []).find(x => !x.winningBid) || (auctions || [])[0];
   if (active && active.appraisal) return { value: active.appraisal, source: `사건 ${active.caseNo || ''} 감정가` };
   if (sc.appraisal) return { value: sc.appraisal, source: '직접 입력 감정가' };
-  const comps = (state.comparables[p.id] || []).filter(x => x.type === '매매' && Math.abs((x.area || 0) - (p.exclusiveArea || 0)) < 5);
-  if (comps.length) { const avg = Math.round(comps.reduce((s, x) => s + x.price, 0) / comps.length); return { value: avg, source: '거래사례 평균(감정가 대용 추정)' }; }
+  // 거래사례 평균(감정가 대용): 본건정보 '평균매매가'와 동일 방식 — 매매·해제제외·동일면적±1㎡·windowed
+  const _validAP = (state.comparables[p.id] || []).filter(x => x.type === '매매' && (!x.memo || !x.memo.includes('해제')));
+  const _sameAP = _validAP.filter(x => Math.abs((x.area || 0) - (p.exclusiveArea || 0)) < 1);
+  const _wAP = (typeof windowedSameAreaAvg === 'function') ? windowedSameAreaAvg(_sameAP) : null;
+  if (_wAP && _wAP.avg) { return { value: _wAP.avg, source: '거래사례 평균(감정가 대용 추정)' }; }
   return { value: null, source: null };
 }
 

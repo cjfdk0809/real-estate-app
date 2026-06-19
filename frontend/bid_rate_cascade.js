@@ -122,6 +122,16 @@
     var addr = p.addrLot || p.addrRoad || '';
     var targetSg = parseSigungu(addr), targetSido = parseSido(addr);
 
+    // ★ 최우선: 본건별 낙찰가율 직접입력 (인포케어 아파트 낙찰율 등)
+    var _sc0 = (state && state.scenarios && state.scenarios[pid]) || {};
+    if (_sc0.manualBidRate != null && _sc0.manualBidRate !== '' && !isNaN(parseFloat(_sc0.manualBidRate))) {
+      var _mr = round1(parseFloat(_sc0.manualBidRate));
+      var _clm = function (v) { return round1(Math.max(CFG.minRate, Math.min(CFG.maxRate, v))); };
+      return { tier: 'manual', center: _mr, scenarios: { con: _clm(_mr - CFG.spread), mid: _mr, agg: _clm(_mr + CFG.spread) },
+        isStat: false, asof: null, sampleN: 0, scope: '본건 직접입력', targetSigungu: targetSg, targetSido: targetSido,
+        sameComplexN: 0, sigunguN: 0 };
+    }
+
     var same = (aucs[pid] || []).map(rateOf).filter(ok);
     var sg = [];
     Object.keys(aucs).forEach(function (k) {
@@ -180,6 +190,7 @@
   window.resolveBidRateCascade = resolveBidRateCascade;
 
   var TIER = {
+    manual: ['#7c3aed', '✏️ 직접입력'],
     same_complex: ['#0f6e5c', '1단계 · 동일단지'], sigungu: ['#1e2a44', '2단계 · 시군구 사례'],
     stat_sigungu: ['#1e3a5f', '3단계 · 시군구 통계'], stat_sido: ['#2A4FBE', '4단계 · 시도 통계'],
     stat_national: ['#5a6b8c', '5단계 · 전국 통계'], default: ['#a8884a', '디폴트']
@@ -216,9 +227,13 @@
     var cas = resolveBidRateCascade(pid);
     var bid = Math.round(ap.value * cas.center / 100);
     var badge = TIER[cas.tier];
+    var _scV = ((state && state.scenarios) || {})[pid] || {};
+    var manualVal = (_scV.manualBidRate != null && _scV.manualBidRate !== '') ? _scV.manualBidRate : null;
 
     var note;
-    if (cas.isStat) {
+    if (cas.tier === 'manual') {
+      note = '<div class="text-small text-muted">✏️ 본건에 <strong>직접 입력</strong>한 낙찰가율입니다. 칸을 비우면 시군구 통계로 자동 복귀합니다.</div>';
+    } else if (cas.isStat) {
       note = '<div class="text-small text-muted">📊 위 낙찰가율은 <strong>' + cas.scope + '</strong> 낙찰가율입니다 (한국부동산원 법원경매통계 ' + cas.asof + ', 용도무관 종합). '
         + '아파트 등 특정 용도는 다소 높을 수 있어, 필요 시 본건별 직접입력으로 보정하세요.</div>';
     } else if (cas.tier === 'default') {
@@ -234,7 +249,13 @@
       + '<div class="grid grid-2">'
       + '<div>'
       + '<div class="info-row"><div class="info-label">적용 지역</div><div class="info-value"><strong>' + cas.scope + '</strong>' + (cas.asof ? ' <span class="text-muted text-small">(한국부동산원 ' + cas.asof + ')</span>' : '') + '</div></div>'
-      + '<div class="info-row"><div class="info-label">아파트 평균 낙찰가율</div><div class="info-value mono text-accent">' + cas.center + '%</div></div>'
+      + '<div class="info-row"><div class="info-label">적용 낙찰가율</div><div class="info-value mono text-accent">' + cas.center + '%</div></div>'
+      + '<div class="info-row no-print"><div class="info-label">낙찰가율 직접입력</div><div class="info-value">'
+      + '<input type="number" step="0.1" min="0" max="200" value="' + (manualVal != null ? manualVal : '') + '" placeholder="예: 96.5"'
+      + ' style="width:84px;padding:4px 8px;border:1px solid var(--line,#d0d5dd);border-radius:6px;text-align:right;font-family:inherit;font-size:14px;"'
+      + ' onchange="setManualBidRate(\'' + pid + '\', this.value)"> %'
+      + (manualVal != null ? ' <button class="no-print" style="margin-left:8px;border:none;background:none;color:var(--ink-muted,#888);font-size:12px;cursor:pointer;text-decoration:underline;" onclick="setManualBidRate(\'' + pid + '\',\'\')">자동으로</button>' : '')
+      + '</div></div>'
       + '<div class="info-row"><div class="info-label">본건 예상감정가</div><div class="info-value mono">' + won(ap.value) + ' <span class="text-muted text-small">(' + (ap.source || '') + ')</span></div></div>'
       + '<div class="info-row" style="align-items:center;"><div class="info-label">예상 낙찰가</div><div class="info-value mono" style="font-size:26px;font-weight:800;color:' + PINK + ';line-height:1.1;">' + won(bid) + '</div></div>'
       + '</div>'
@@ -263,6 +284,17 @@
     if (grid && grid.parentNode) grid.parentNode.insertBefore(node, grid.nextSibling);
     else vc.insertBefore(node, vc.children[1] || null);
   }
+
+  window.setManualBidRate = function (pid, val) {
+    if (!pid) return;
+    state.scenarios = state.scenarios || {};
+    state.scenarios[pid] = state.scenarios[pid] || {};
+    var v = parseFloat(val);
+    if (val === '' || val == null || isNaN(v)) delete state.scenarios[pid].manualBidRate;
+    else state.scenarios[pid].manualBidRate = round1(Math.max(CFG.minRate, Math.min(CFG.maxRate, v)));
+    if (typeof saveState === 'function') { try { saveState(); } catch (e) {} }
+    injectAuction();
+  };
 
   /* ===== 02 거래사례 비교 보정 ===== */
   function patchComparables() {
