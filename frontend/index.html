@@ -565,6 +565,17 @@ table { border-collapse: collapse; width: 100%; }
 }
 .notice-title { font-weight: 700; color: var(--kiwoom-navy); margin-bottom: 4px; }
 
+/* 담당자 의견 모듈 */
+.opinion-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.op-field label { display: block; font-size: 12px; color: var(--ink-muted); margin-bottom: 6px; font-weight: 600; }
+.op-input { display: flex; align-items: center; gap: 6px; }
+.op-input input { flex: 1; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; text-align: right; font-family: inherit; font-size: 14px; color: var(--ink); }
+.op-input input:focus { outline: none; border-color: var(--line-strong); }
+.op-hint { font-size: 12px; color: var(--ink-muted); margin-top: 5px; min-height: 15px; }
+.op-textarea { width: 100%; min-height: 150px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; font-family: inherit; font-size: 14px; line-height: 1.7; color: var(--ink); resize: vertical; box-sizing: border-box; }
+.op-textarea:focus { outline: none; border-color: var(--line-strong); }
+@media (max-width: 760px) { .opinion-grid { grid-template-columns: 1fr; } }
+
 /* Print Styles */
 @media print {
   .sidebar, .no-print { display: none !important; }
@@ -871,6 +882,7 @@ table { border-collapse: collapse; width: 100%; }
       <div class="nav-item" data-view="rights"><span class="nav-item-num">05</span> 권리분석</div>
       <div class="nav-item" data-view="returns"><span class="nav-item-num">06</span> 수익률·세금</div>
       <div class="nav-item" data-view="report"><span class="nav-item-num">07</span> 리포트</div>
+      <div class="nav-item" data-view="opinion"><span class="nav-item-num">08</span> 담당자 의견</div>
     </div>
 
     <div class="nav-section" style="padding-top: 8px;">
@@ -1431,6 +1443,7 @@ let state = {
   rights: {},       // by propertyId
   pricing: {},      // by propertyId (수익률 시뮬레이션 입력값)
   scenarios: {},    // by propertyId (예상 낙찰가율 보수/중립/적극 + 유찰저감)
+  opinion: {},      // by propertyId (담당자 의견: 법사가/선순위/낙찰예상가/회수예상가/코멘트)
 };
 
 let editingComparableId = null;
@@ -1730,7 +1743,101 @@ function renderView() {
     case 'rights': renderRights(); break;
     case 'returns': renderReturns(); break;
     case 'report': renderReport(); break;
+    case 'opinion': renderOpinion(); break;
   }
+}
+
+// ============================================================
+// VIEW: OPINION (담당자 의견 — NPL 매수 검토 요약)
+// ============================================================
+function updateOpinion(field, value) {
+  const id = state.currentPropertyId;
+  if (!id) return;
+  state.opinion = state.opinion || {};
+  state.opinion[id] = state.opinion[id] || {};
+  if (field === 'comment') {
+    state.opinion[id][field] = value;
+  } else {
+    const n = parseFloat(String(value).replace(/[, ]/g, ''));
+    state.opinion[id][field] = (isNaN(n) ? null : n);
+  }
+  saveState();
+  if (field !== 'comment') renderView();  // 숫자 변경 시 회수예상가 등 자동값 갱신
+}
+
+function renderOpinion() {
+  const c = document.getElementById('viewContainer');
+  const p = state.properties[state.currentPropertyId];
+  if (!p) { c.innerHTML = `<div class="empty"><div class="empty-title">등록된 물건이 없습니다</div></div>`; return; }
+  const auctions = state.auctions[p.id] || [];
+  const rights = state.rights[p.id] || [];
+  const op = (state.opinion && state.opinion[p.id]) || {};
+
+  const ap = getActiveAppraisal(p, auctions);
+  const cas = (typeof resolveBidRateCascade === 'function') ? resolveBidRateCascade(p.id) : null;
+  const ra = analyzeRights(rights);
+
+  // 자동 프리필 (저장값 우선)
+  const courtAppraisal = (op.courtAppraisal != null) ? op.courtAppraisal : (ap.value || null);
+  const baseBid = (courtAppraisal && cas) ? Math.round(courtAppraisal * cas.center / 100) : null;
+  const expectedBid = (op.expectedBid != null) ? op.expectedBid : baseBid;
+  const seniorLien = (op.seniorLien != null) ? op.seniorLien : (ra.seniorClaim || null);
+  const autoRecovery = (expectedBid != null) ? Math.max(0, expectedBid - (ra.assumedTotal || 0)) : null;
+  const expectedRecovery = (op.expectedRecovery != null) ? op.expectedRecovery : autoRecovery;
+  const comment = op.comment || '';
+
+  const won = (v) => (v != null && v !== '') ? Number(v).toLocaleString() + '원' : '-';
+  const eok = (v) => (v != null && v !== '') ? '약 ' + (Number(v) / 100000000).toFixed(2).replace(/\.?0+$/, '') + '억원' : '';
+  const numVal = (v) => (v != null && v !== '') ? Number(v) : '';
+
+  c.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">담당자 의견 · MANAGER OPINION</div>
+      <h1 class="page-title">${p.name || '본건'}</h1>
+      <div class="page-sub">본건 핵심 수치와 담당자 검토 의견을 한 곳에 정리합니다. (선순위·법사가·낙찰예상가는 자동 연계, 직접 수정 가능)</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">◆ 본건 기본정보</div>
+      <div class="info-row"><div class="info-label">단지명</div><div class="info-value">${p.name || '-'}</div></div>
+      <div class="info-row"><div class="info-label">소재지</div><div class="info-value">${p.addrRoad || p.addrLot || '-'}</div></div>
+      <div class="info-row"><div class="info-label">동·호</div><div class="info-value">${(p.building || '-')} ${(p.unit || '')}</div></div>
+      <div class="info-row"><div class="info-label">전용면적</div><div class="info-value">${p.exclusiveArea ? p.exclusiveArea + '㎡ (' + (p.exclusiveArea / 3.3058).toFixed(1) + '평)' : '-'}</div></div>
+      <div class="info-row"><div class="info-label">공시가격</div><div class="info-value mono">${won(p.publicPrice)}</div></div>
+      <div class="info-row"><div class="info-label">말소기준권리</div><div class="info-value">${ra.baseRight ? (ra.baseRight.type + (ra.baseDate ? ' · ' + ra.baseDate : '')) : '-'}</div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">◆ NPL 핵심 수치 <span class="text-muted text-small" style="font-weight:400;">· 빈칸은 자동값, 입력 시 입력값 우선</span></div>
+      <div class="opinion-grid">
+        <div class="op-field">
+          <label>법사가 (법원 감정가)</label>
+          <div class="op-input"><input type="number" value="${numVal(courtAppraisal)}" placeholder="자동: ${ap.value ? ap.value.toLocaleString() : '미산정'}" onchange="updateOpinion('courtAppraisal', this.value)"> 원</div>
+          <div class="op-hint">${eok(courtAppraisal)}</div>
+        </div>
+        <div class="op-field">
+          <label>선순위 채권 (인수·우선)</label>
+          <div class="op-input"><input type="number" value="${numVal(seniorLien)}" placeholder="자동: ${ra.seniorClaim ? ra.seniorClaim.toLocaleString() : '미산정'}" onchange="updateOpinion('seniorLien', this.value)"> 원</div>
+          <div class="op-hint">${ra.seniorHolder ? ra.seniorHolder + ' · ' : ''}${eok(seniorLien)}</div>
+        </div>
+        <div class="op-field">
+          <label>낙찰예상가</label>
+          <div class="op-input"><input type="number" value="${numVal(expectedBid)}" placeholder="자동: ${baseBid ? baseBid.toLocaleString() : '미산정'}" onchange="updateOpinion('expectedBid', this.value)"> 원</div>
+          <div class="op-hint">${cas ? '적용 낙찰가율 ' + cas.center + '% · ' : ''}${eok(expectedBid)}</div>
+        </div>
+        <div class="op-field">
+          <label>회수예상가</label>
+          <div class="op-input"><input type="number" value="${numVal(expectedRecovery)}" placeholder="자동: ${autoRecovery != null ? autoRecovery.toLocaleString() : '미산정'}" onchange="updateOpinion('expectedRecovery', this.value)"> 원</div>
+          <div class="op-hint">낙찰예상가 − 인수금액 · ${eok(expectedRecovery)}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">◆ 담당자 의견</div>
+      <textarea class="op-textarea" placeholder="본건 매수 검토 의견을 입력하세요. (예: 권리관계 정리 가능 여부, 명도 난이도, 시세 대비 매력도, 회수 시나리오, 리스크 등)" onchange="updateOpinion('comment', this.value)">${comment.replace(/</g, '&lt;')}</textarea>
+    </div>
+  `;
 }
 
 // ============================================================
@@ -3154,6 +3261,10 @@ function renderReport() {
     </div>
     </td></tr></thead>
     <tbody><tr><td>
+    <div class="print-header print-first">
+      <img src="${CI_LOGO}" alt="키움에프앤아이">
+      <div class="ph-title">키움에프앤아이 · 자산 분석 리포트 · KIWOOM F&amp;I ASSET REPORT</div>
+    </div>
     <div class="page-head" style="display: flex; justify-content: space-between; align-items: flex-end; gap: 16px;">
       <div>
         <div class="page-eyebrow">자산 분석 리포트 · Asset Report</div>
