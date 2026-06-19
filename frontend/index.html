@@ -1756,8 +1756,10 @@ function renderOverview() {
   const comps = state.comparables[p.id] || [];
   const auctions = state.auctions[p.id] || [];
   const rights = state.rights[p.id] || [];
-  const recentSales = comps.filter(x => x.type === '매매').slice(-5);
-  const avgPrice = recentSales.length ? Math.round(trimmedMean(recentSales.map(x => x.price))) : null;
+  const _validSalesPM = comps.filter(x => x.type === '매매' && (!x.memo || !x.memo.includes('해제')));
+  const _sameAreaPM = _validSalesPM.filter(x => Math.abs((x.area || 0) - (p.exclusiveArea || 0)) < 1);
+  const _avgInfoPM = windowedSameAreaAvg(_sameAreaPM);
+  const avgPrice = _avgInfoPM.avg || null;
   const inheritedDebt = rights.filter(r => r.assumed === 'true' || r.assumed === true).reduce((s,r) => s + (r.amount || 0), 0);
 
   c.innerHTML = `
@@ -1781,7 +1783,7 @@ function renderOverview() {
       <div class="stat-card">
         <div class="stat-label">최근 거래 평균</div>
         <div class="stat-value">${avgPrice ? fmt.won(avgPrice) : '-'}</div>
-        <div class="stat-trend">최근 ${recentSales.length}건 매매</div>
+        <div class="stat-trend">${_avgInfoPM.windowLabel} · ${_avgInfoPM.used || _avgInfoPM.total}건 평균</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">공시가격</div>
@@ -2107,7 +2109,9 @@ function renderListings() {
   const sales = comps.filter(x => x.type === '매매' && (!x.memo || !x.memo.includes('해제')));
   const jeonse = comps.filter(x => x.type === '전세');
   const wolse = comps.filter(x => x.type === '월세');
-  const avgAllSales = sales.length ? trimmedMean(sales.map(x => x.price)) : 0;
+  const _sameAreaCL = sales.filter(x => Math.abs((x.area || 0) - (p.exclusiveArea || 0)) < 1);
+  const _avgInfoCL = windowedSameAreaAvg(_sameAreaCL);
+  const avgAllSales = _avgInfoCL.avg || 0;
   const avgJeonse = jeonse.length ? jeonse.reduce((s,x) => s+x.price, 0) / jeonse.length : 0;
   
   c.innerHTML = `
@@ -2122,7 +2126,7 @@ function renderListings() {
       <div class="stat-card">
         <div class="stat-label">실거래 평균 매매가</div>
         <div class="stat-value">${avgAllSales > 0 ? fmt.won(Math.round(avgAllSales)) : '-'}</div>
-        <div class="stat-trend">최근 ${sales.length}건 · 거래사례 모듈 참조</div>
+        <div class="stat-trend">${_avgInfoCL.windowLabel} · ${_avgInfoCL.used || _avgInfoCL.total}건 · 거래사례 기준</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">실거래 평균 전세가</div>
@@ -3115,9 +3119,10 @@ function renderReport() {
   const comps = state.comparables[p.id] || [];
   const auctions = state.auctions[p.id] || [];
   const rights = state.rights[p.id] || [];
-  const sales = comps.filter(x => x.type === '매매');
+  const sales = comps.filter(x => x.type === '매매' && (!x.memo || !x.memo.includes('해제')));
   const sameArea = sales.filter(x => Math.abs((x.area||0) - p.exclusiveArea) < 1);
-  const avgPrice = sameArea.length ? Math.round(trimmedMean(sameArea.map(x=>x.price))) : 0;
+  const _avgInfoRP = windowedSameAreaAvg(sameArea);
+  const avgPrice = _avgInfoRP.avg || 0;
   const today = new Date().toLocaleDateString('ko-KR');
 
   // 예상 낙찰가 / 권리 자동판정
@@ -3170,8 +3175,8 @@ function renderReport() {
 
     <div class="section-h">2. 거래사례 분석</div>
     <div class="info-row"><div class="info-label">동일면적 매매 건수</div><div class="info-value mono">${sameArea.length}건 (전용 ${p.exclusiveArea}㎡ ±1㎡)</div></div>
-    <div class="info-row"><div class="info-label">평균 매매가</div><div class="info-value mono text-accent">${fmt.won(avgPrice)}</div></div>
-    <div class="info-row"><div class="info-label">최저~최고</div><div class="info-value mono">${sameArea.length ? fmt.won(Math.min(...sameArea.map(x=>x.price))) + ' ~ ' + fmt.won(Math.max(...sameArea.map(x=>x.price))) : '-'}</div></div>
+    <div class="info-row"><div class="info-label">평균 매매가</div><div class="info-value mono text-accent">${fmt.won(avgPrice)} <span style="font-size:11px;color:var(--ink-muted);font-weight:400;">(${_avgInfoRP.windowLabel} ${_avgInfoRP.used || _avgInfoRP.total}건 평균)</span></div></div>
+    <div class="info-row"><div class="info-label">최저~최고</div><div class="info-value mono">${_avgInfoRP.max ? fmt.won(_avgInfoRP.min) + ' ~ ' + fmt.won(_avgInfoRP.max) : '-'}</div></div>
     <table class="tbl mb-24" style="margin-top: 12px;">
       <thead><tr><th>거래일</th><th>유형</th><th class="text-right">면적</th><th class="text-right">층</th><th class="text-right">금액</th></tr></thead>
       <tbody>
