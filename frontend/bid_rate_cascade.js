@@ -132,9 +132,23 @@
       });
     });
 
-    var extSg = (targetSg && REGION_RATES.sigungu[targetSg]) || null;
-    var extSido = (targetSido && REGION_RATES.sido[targetSido]) || null;
-    var extNat = REGION_RATES.national || null;
+    function _statSgg(sido, sgg) {
+      var R = window.AUCTION_RATES;
+      if (!R || !R.sigungu || !sido || !sgg) return null;
+      var m = R.sigungu[sido]; if (!m) return null;
+      if (m[sgg] != null) return { rate: m[sgg], asof: R.asof };
+      for (var k in m) { if (k.length >= sgg.length && k.slice(-sgg.length) === sgg) return { rate: m[k], asof: R.asof }; }
+      return null;
+    }
+    function _statSido(sido) {
+      var R = window.AUCTION_RATES;
+      if (!R || !R.sido_avg || !sido) return null;
+      var v = R.sido_avg[sido];
+      return (v != null && v !== '-') ? { rate: parseFloat(v), asof: R.asof } : null;
+    }
+    var extSg = _statSgg(targetSido, targetSg);
+    var extSido = _statSido(targetSido);
+    var extNat = _statSido('전국');
 
     var tier, center, asof = null, isStat = false, sampleN = null;
     if (same.length >= CFG.minSameComplex) { tier = 'same_complex'; sampleN = same.length; center = median(same); }
@@ -153,7 +167,7 @@
     switch (tier) {
       case 'same_complex': scope = '본건 동일단지 낙찰사례'; break;
       case 'sigungu':      scope = (targetSg || '시군구') + ' 낙찰사례'; break;
-      case 'stat_sigungu': scope = (targetSg || '시군구') + ' 평균'; break;
+      case 'stat_sigungu': scope = (targetSg || '시군구') + ' 종합'; break;
       case 'stat_sido':    scope = (targetSido || '시도') + ' 전체 평균'; break;
       case 'stat_national':scope = '전국 평균'; break;
       default:             scope = '기본값(지역 미확인)';
@@ -205,8 +219,8 @@
 
     var note;
     if (cas.isStat) {
-      note = '<div class="text-small text-muted">📊 위 낙찰가율은 <strong>' + cas.scope + '</strong> 아파트 경매 낙찰가율입니다 (지지옥션 ' + cas.asof + '). '
-        + '본건 자치구(' + (cas.targetSigungu || '-') + ') 통계를 채우면 더 구체적으로 적용됩니다.</div>';
+      note = '<div class="text-small text-muted">📊 위 낙찰가율은 <strong>' + cas.scope + '</strong> 낙찰가율입니다 (한국부동산원 법원경매통계 ' + cas.asof + ', 용도무관 종합). '
+        + '아파트 등 특정 용도는 다소 높을 수 있어, 필요 시 본건별 직접입력으로 보정하세요.</div>';
     } else if (cas.tier === 'default') {
       note = '<div class="text-small" style="color:var(--warn);">⚠️ 소재지에서 지역을 못 읽어 기본값(90%)을 적용했습니다. 주소를 확인하세요.</div>';
     } else {
@@ -219,7 +233,7 @@
       + '<span class="badge" style="background:' + badge[0] + ';color:#fff;">' + badge[1] + '</span></div>'
       + '<div class="grid grid-2">'
       + '<div>'
-      + '<div class="info-row"><div class="info-label">적용 지역</div><div class="info-value"><strong>' + cas.scope + '</strong>' + (cas.asof ? ' <span class="text-muted text-small">(지지옥션 ' + cas.asof + ')</span>' : '') + '</div></div>'
+      + '<div class="info-row"><div class="info-label">적용 지역</div><div class="info-value"><strong>' + cas.scope + '</strong>' + (cas.asof ? ' <span class="text-muted text-small">(한국부동산원 ' + cas.asof + ')</span>' : '') + '</div></div>'
       + '<div class="info-row"><div class="info-label">아파트 평균 낙찰가율</div><div class="info-value mono text-accent">' + cas.center + '%</div></div>'
       + '<div class="info-row"><div class="info-label">본건 예상감정가</div><div class="info-value mono">' + won(ap.value) + ' <span class="text-muted text-small">(' + (ap.source || '') + ')</span></div></div>'
       + '<div class="info-row" style="align-items:center;"><div class="info-label">예상 낙찰가</div><div class="info-value mono" style="font-size:26px;font-weight:800;color:' + PINK + ';line-height:1.1;">' + won(bid) + '</div></div>'
@@ -461,7 +475,7 @@
     reorderNav();
     removeNplMenu();
     inject();
-    console.log('[낙찰가율 캐스케이드] v5 활성화됨 · 기준월(수도권) ' + REGION_RATES._asof);
+    console.log('[낙찰가율 캐스케이드] v6 · 한국부동산원 시군구 종합 ' + (window.AUCTION_RATES ? window.AUCTION_RATES.asof : '미로드'));
   }
 
   if (document.readyState !== 'loading') setTimeout(hook, 300);
