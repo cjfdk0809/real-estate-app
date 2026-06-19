@@ -3416,6 +3416,13 @@ function applyRegistryToModalForm(a) {
 // 성공 시 fillFromKaptApt()가 세대수·시공사·시행사를 채우고, 이어지는 동·호 자동조회가
 // 공급/공용면적을 채우며 시군구코드·지번이 설정되어 저장 시 거래사례 자동수집까지 작동한다.
 // 주소로 단정할 수 없으면(동명이단지) 목록만 띄워 사용자가 직접 선택하게 한다.
+// 도로명주소에서 "도로명 + 번호"만 추출 (예: "경기도 하남시 위례중앙로 185" → "위례중앙로 185")
+function _extractRoadCore(road) {
+  if (!road) return '';
+  const m = String(road).match(/([가-힣A-Za-z0-9]+(?:로|길))\s*(\d+(?:-\d+)?)/);
+  return m ? (m[1] + ' ' + m[2]) : '';
+}
+
 async function autoLinkBuildingLedger(a) {
   const name = ((a && a.property && a.property.complex_name) || '').trim();
   if (!name) return;
@@ -3428,6 +3435,19 @@ async function autoLinkBuildingLedger(a) {
     const r = await fetch(`${BACKEND_URL}/api/search/apt?q=${encodeURIComponent(name)}&limit=30`);
     const d = await r.json();
     let items = (d && d.items) ? d.items.map(it => ({ ...it, name: it.name || it.kapt_name || '' })) : [];
+
+    // 단지명으로 0건 → 도로명주소로 재검색 (분양명·띄어쓰기가 K-apt 등록명과 달라도 도로명은 일치)
+    if (items.length === 0 && a.property && a.property.address_road) {
+      const roadQ = _extractRoadCore(a.property.address_road);
+      if (roadQ) {
+        try {
+          const r2 = await fetch(`${BACKEND_URL}/api/search/apt?q=${encodeURIComponent(roadQ)}&limit=30`);
+          const d2 = await r2.json();
+          items = (d2 && d2.items) ? d2.items.map(it => ({ ...it, name: it.name || it.kapt_name || '' })) : [];
+        } catch (e) { /* 폴백 실패 시 아래 빈 결과 처리로 진행 */ }
+      }
+    }
+
     if (items.length === 0) {
       if (ds) ds.value = name;  // 결과 없음: 단지명만 채워두고 사용자가 시군구로 좁혀 찾도록
       return;
