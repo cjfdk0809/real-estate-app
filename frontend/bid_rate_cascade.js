@@ -260,8 +260,7 @@
       + '<div class="info-row" style="align-items:center;"><div class="info-label">예상 낙찰가</div><div class="info-value mono" style="font-size:26px;font-weight:800;color:' + PINK + ';line-height:1.1;">' + won(bid) + '</div></div>'
       + '</div>'
       + '<div style="display:flex;flex-direction:column;justify-content:center;gap:10px;">'
-      + '<button class="btn btn-primary no-print" onclick="applyCaseRatesToScenario(' + cas.center + ')">권리분석 낙찰가율을 이 기준(' + cas.center + '%)으로 보정</button>'
-      + '<div class="text-small text-muted">중립 ' + cas.scenarios.mid + '%(평균) · 보수 ' + cas.scenarios.con + '%(-5) · 적극 ' + cas.scenarios.agg + '%(+5) 로 반영</div>'
+      + '<div class="text-small text-muted" style="padding:6px 0;">✅ 이 적용 낙찰가율은 <strong>05 권리분석</strong> · <strong>리포트</strong>에 자동 반영됩니다.<br>중립 ' + cas.scenarios.mid + '% · 보수 ' + cas.scenarios.con + '%(−5) · 적극 ' + cas.scenarios.agg + '%(+5)</div>'
       + note
       + '</div>'
       + '</div>'

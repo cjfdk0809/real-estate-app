@@ -2624,9 +2624,11 @@ function applyCaseRatesToScenario(midPct) {
 
 function renderScenarioAndNPL(p, auctions, rights) {
   const sc = (state.scenarios && state.scenarios[p.id]) || {};
-  const con = sc.con != null ? sc.con : 85;
-  const mid = sc.mid != null ? sc.mid : 90;
-  const agg = sc.agg != null ? sc.agg : 95;
+  // 권리분석 낙찰가율 = 04 경공매 '적용 낙찰가율'(캐스케이드)에 자동 연계
+  const cas = (typeof resolveBidRateCascade === 'function') ? resolveBidRateCascade(p.id) : null;
+  const con = cas ? cas.scenarios.con : (sc.con != null ? sc.con : 85);
+  const mid = cas ? cas.scenarios.mid : (sc.mid != null ? sc.mid : 90);
+  const agg = cas ? cas.scenarios.agg : (sc.agg != null ? sc.agg : 95);
   const discount = sc.discount != null ? sc.discount : 20;
   const ap = getActiveAppraisal(p, auctions);
   const ra = analyzeRights(rights);
@@ -2639,15 +2641,14 @@ function renderScenarioAndNPL(p, auctions, rights) {
 
   const scenarioCard = `
   <div class="card mb-24">
-    <div class="card-title">예상 낙찰가 시나리오 <span class="text-muted text-small" style="font-weight:400;">· ${ap.source || '감정가 미입력'}</span></div>
+    <div class="card-title">예상 낙찰가 시나리오 <span class="text-muted text-small" style="font-weight:400;">· ${ap.source || '감정가 미입력'}${cas ? ' · 적용낙찰가율 ' + (cas.scope || '') + ' ' + mid + '%' : ''}</span></div>
     ${!ap.value ? `<div class="empty"><div class="empty-text">감정가가 없습니다. 아래 경공매 사건에 감정가를 입력하거나 여기에 직접 입력하세요.<br>
       <input type="number" placeholder="감정가 (만원)" onchange="updateScenario('appraisal', this.value)" style="margin-top:10px;padding:8px;width:220px;"></div></div>` : `
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:16px;font-size:13px;">
       <span class="text-muted">감정가</span> <strong class="mono">${fmt.won(ap.value)}</strong>
-      <span class="text-muted" style="margin-left:12px;">낙찰가율%</span>
-      보수<input type="number" value="${con}" onchange="updateScenario('con', this.value)" style="width:56px;padding:5px;">
-      중립<input type="number" value="${mid}" onchange="updateScenario('mid', this.value)" style="width:56px;padding:5px;">
-      적극<input type="number" value="${agg}" onchange="updateScenario('agg', this.value)" style="width:56px;padding:5px;">
+      <span class="text-muted" style="margin-left:12px;">낙찰가율</span>
+      보수 <strong class="mono">${con}%</strong> · 중립 <strong class="mono text-accent">${mid}%</strong> · 적극 <strong class="mono">${agg}%</strong>
+      <span class="text-small text-muted">(04 경공매 적용 낙찰가율 연계 · 조정은 경공매 ‘낙찰가율 직접입력’)</span>
       <span class="text-muted" style="margin-left:12px;">유찰저감</span>
       <input type="number" value="${discount}" onchange="updateScenario('discount', this.value)" style="width:52px;padding:5px;">%
     </div>
@@ -2660,7 +2661,7 @@ function renderScenarioAndNPL(p, auctions, rights) {
         <tr><td class="text-muted">1회 유찰 시 최저가</td><td class="num">${100 - discount}%</td><td class="price text-muted">${fmt.won(nextFloor)}</td></tr>
       </tbody>
     </table>
-    <div class="text-small text-muted" style="margin-top:8px;">※ 낙찰가율 기본값(보수85·중립90·적극95), 사건별 편집 가능. 무료 공식 낙찰가율 API는 없어 대법원 경매통계·지지옥션 등 최신치 참고 권장.</div>
+    <div class="text-small text-muted" style="margin-top:8px;">※ 낙찰가율은 04 경공매 <strong>적용 낙찰가율</strong>(한국부동산원 시군구 종합 또는 본건 직접입력)과 자동 연계됩니다. 보수 −5%p · 적극 +5%p.</div>
     `}
   </div>`;
 
@@ -3137,7 +3138,10 @@ function renderReport() {
   const ra = analyzeRights(rights);
   const ap = getActiveAppraisal(p, auctions);
   const sc = (state.scenarios && state.scenarios[p.id]) || {};
-  const _con = sc.con != null ? sc.con : 92, _mid = sc.mid != null ? sc.mid : 97, _agg = sc.agg != null ? sc.agg : 100;
+  const _cas = (typeof resolveBidRateCascade === 'function') ? resolveBidRateCascade(p.id) : null;
+  const _con = _cas ? _cas.scenarios.con : (sc.con != null ? sc.con : 92);
+  const _mid = _cas ? _cas.scenarios.mid : (sc.mid != null ? sc.mid : 97);
+  const _agg = _cas ? _cas.scenarios.agg : (sc.agg != null ? sc.agg : 100);
   const _bid = (rate) => ap.value ? Math.round(ap.value * rate / 100) : null;
   const _midBid = _bid(_mid);
   const _distributable = _midBid != null ? Math.max(0, _midBid - ra.assumedTotal) : null;
