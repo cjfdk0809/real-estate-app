@@ -989,7 +989,6 @@ table { border-collapse: collapse; width: 100%; }
         <div class="field"><label>소유자</label><input name="owner"></div>
         <div class="field"><label>취득일</label><input name="acquisitionDate" type="date"></div>
         <div class="field"><label>공시가격 (원)</label><input name="publicPrice" type="number"></div>
-        <div class="field"><label>개별공시지가 (원/㎡)</label><input name="landPrice" type="number"></div>
       </div>
       
       <!-- 부동산공시가격알리미 빠른 조회 -->
@@ -1826,7 +1825,6 @@ function renderOverview() {
         <div class="info-row"><div class="info-label">소유자</div><div class="info-value">${p.owner || '-'}</div></div>
         <div class="info-row"><div class="info-label">취득일</div><div class="info-value mono">${fmt.date(p.acquisitionDate)}</div></div>
         <div class="info-row"><div class="info-label">공시가격</div><div class="info-value mono">${p.publicPrice ? p.publicPrice.toLocaleString() + '원' : '-'}</div></div>
-        <div class="info-row"><div class="info-label">공시지가</div><div class="info-value mono">${p.landPrice ? p.landPrice.toLocaleString() + '원/㎡' : '-'}</div></div>
         <div class="info-row"><div class="info-label">예상 재산세</div><div class="info-value mono text-accent">${calcPropertyTax(p.publicPrice).toLocaleString()}만원/년</div></div>
       </div>
 
@@ -3405,6 +3403,13 @@ function applyRegistryToModalForm(a) {
       form.elements.notes.value = notes.join('\n') + (existing ? '\n\n' + existing : '');
     }
   }
+
+  // 공시가격 자동조회: PDF로 지번주소·동·호·전용면적이 확보되면 버튼 없이 자동입력
+  if (form.elements.addrLot && form.elements.addrLot.value && form.elements.building && form.elements.building.value
+      && form.elements.unit && form.elements.unit.value && form.elements.exclusiveArea && form.elements.exclusiveArea.value
+      && typeof autoFillPublicPrice === 'function') {
+    setTimeout(function () { autoFillPublicPrice(); }, 500);
+  }
 }
 
 // PDF 등기부 분석 후, 단지명+주소로 K-apt 단지를 자동 식별하여 선택한다.
@@ -4759,7 +4764,7 @@ function closeModal(id) { document.getElementById(id).classList.remove('show'); 
 document.getElementById('propertyForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const data = Object.fromEntries(new FormData(e.target));
-  const numericFields = ['exclusiveArea','supplyArea','commonArea','landShare','floor','totalFloors','totalUnits','publicPrice','landPrice'];
+  const numericFields = ['exclusiveArea','supplyArea','commonArea','landShare','floor','totalFloors','totalUnits','publicPrice'];
   numericFields.forEach(k => { if (data[k]) data[k] = Number(data[k]); });
   const id = editingPropertyId || uid();
   state.properties[id] = { id, ...data };
