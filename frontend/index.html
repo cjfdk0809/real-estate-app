@@ -1779,10 +1779,14 @@ function renderOpinion() {
 
   // 자동 프리필 (저장값 우선)
   const be = (typeof window.resolveBidEstimate === 'function') ? window.resolveBidEstimate(p.id) : null;
-  const _facProd = be ? (be.mExt * be.mInt * be.mHo) : 1;
-  const _useFac = (be && be.decision === 'mgr') ? _facProd : 1;
   const courtAppraisal = (op.courtAppraisal != null) ? op.courtAppraisal : (ap.value || null);
-  const baseBid = (courtAppraisal && cas) ? Math.round(courtAppraisal * _useFac * cas.center / 100) : (be ? be.finalBid : null);
+  let baseBid;
+  if (be) {
+    // 법사가를 담당자가 덮어쓰면 최종 채택안의 전체배율(요인×낙찰가율)을 그대로 적용
+    baseBid = (op.courtAppraisal != null && be.baseAi) ? Math.round(op.courtAppraisal * (be.finalBid / be.baseAi)) : be.finalBid;
+  } else {
+    baseBid = (courtAppraisal && cas) ? Math.round(courtAppraisal * cas.center / 100) : null;
+  }
   const expectedBid = (op.expectedBid != null) ? op.expectedBid : baseBid;
   const seniorLien = (op.seniorLien != null) ? op.seniorLien : (ra.seniorClaim || null);
   const autoRecovery = (expectedBid != null) ? Math.max(0, expectedBid - (ra.assumedTotal || 0)) : null;
@@ -1826,7 +1830,7 @@ function renderOpinion() {
         <div class="op-field">
           <label>낙찰예상가</label>
           <div class="op-input"><input type="number" value="${numVal(expectedBid)}" placeholder="자동: ${baseBid ? baseBid.toLocaleString() : '미산정'}" onchange="updateOpinion('expectedBid', this.value)"> 원</div>
-          <div class="op-hint">${be ? be.decisionLabel + ' 채택 · ' : ''}${cas ? '낙찰가율 ' + cas.center + '% · ' : ''}${eok(expectedBid)}</div>
+          <div class="op-hint">${be ? be.decisionLabel + ' 채택 · 낙찰가율 ' + (be.decision === 'mgr' ? be.mRatePct : be.aiRatePct) + '% · ' : (cas ? '낙찰가율 ' + cas.center + '% · ' : '')}${eok(expectedBid)}</div>
         </div>
         <div class="op-field">
           <label>회수예상가</label>
@@ -3373,16 +3377,16 @@ function renderReport() {
     ${_be ? `
     <div class="section-h">3-2. 낙찰가 산정 결정 (거래사례비교법)</div>
     <table class="tbl" style="margin-bottom:12px;">
-      <thead><tr><th>구분</th><th class="text-right">가치형성요인(곱)</th><th class="text-right">예상 낙찰가</th><th style="text-align:center;">채택</th></tr></thead>
+      <thead><tr><th>구분</th><th class="text-right">요인 곱</th><th class="text-right">낙찰가율</th><th class="text-right">예상 낙찰가</th><th style="text-align:center;">채택</th></tr></thead>
       <tbody>
-        <tr><td>AI안 <span class="text-muted text-small">(요인 1.00)</span></td><td class="num">1.00</td><td class="price">${fmt.won(_be.aiBid)}</td><td style="text-align:center;font-weight:800;">${_be.decision === 'ai' ? '✅' : ''}</td></tr>
-        <tr><td>담당자안 <span class="text-muted text-small">(요인 보정)</span></td><td class="num">${(_be.mExt * _be.mInt * _be.mHo).toFixed(2)}</td><td class="price">${fmt.won(_be.mgrBid)}</td><td style="text-align:center;font-weight:800;">${_be.decision === 'mgr' ? '✅' : ''}</td></tr>
+        <tr><td>AI안 <span class="text-muted text-small">(요인 1.00)</span></td><td class="num">1.00</td><td class="num">${_be.aiRatePct}%</td><td class="price">${fmt.won(_be.aiBid)}</td><td style="text-align:center;font-weight:800;">${_be.decision === 'ai' ? '✅' : ''}</td></tr>
+        <tr><td>담당자안 <span class="text-muted text-small">(요인 보정)</span></td><td class="num">${_be.factorProd.toFixed(2)}</td><td class="num">${_be.mRatePct}%</td><td class="price">${fmt.won(_be.mgrBid)}</td><td style="text-align:center;font-weight:800;">${_be.decision === 'mgr' ? '✅' : ''}</td></tr>
       </tbody>
     </table>
     <div class="info-row"><div class="info-label">최종 채택 낙찰예상가</div><div class="info-value mono text-accent" style="font-weight:800;">${fmt.won(_be.finalBid)} <span class="text-muted text-small">(${_decLabel} 채택)</span></div></div>
-    <div class="info-row"><div class="info-label">기준시세 · 적용 낙찰가율</div><div class="info-value mono">${fmt.won(_be.baseAi)} · ${_be.cas.center}% <span class="text-muted text-small">(${_be.cas.scope})</span></div></div>
+    <div class="info-row"><div class="info-label">기준시세</div><div class="info-value mono">${fmt.won(_be.baseAi)} <span class="text-muted text-small">(${ap.source || ''})</span></div></div>
     ${ra.seniorClaim ? `<div class="info-row"><div class="info-label">최종 기준 1순위 회수율</div><div class="info-value mono text-accent">${_finalRecovery != null ? _finalRecovery.toFixed(1) + '%' : '-'}</div></div>` : ''}
-    <div class="text-small text-muted" style="margin-top:6px;">※ 담당자안은 가치형성요인 직접 보정 — 단지외부 ${_be.mExt.toFixed(2)} · 단지내부 ${_be.mInt.toFixed(2)} · 호별 ${_be.mHo.toFixed(2)}. (04 경공매 탭에서 조정)</div>
+    <div class="text-small text-muted" style="margin-top:6px;">※ 담당자안 보정값 — 단지외부 ${_be.mExt.toFixed(2)} · 단지내부 ${_be.mInt.toFixed(2)} · 호별 ${_be.mHo.toFixed(2)} · 기타 ${_be.mEtc.toFixed(2)} · 낙찰가율 ${_be.mRatePct}%. (04 경공매 탭에서 조정)</div>
     ` : ''}
 
     ${rights.length > 0 ? `

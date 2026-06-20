@@ -182,6 +182,7 @@
   /* ===== 낙찰가 산정: AI안(요인1.00) vs 담당자안(요인보정) → 최종 채택 =====
      04 카드·07 담당자의견·리포트가 모두 이 한 곳의 숫자를 사용한다. */
   function clampFactor(v) { v = parseFloat(v); if (isNaN(v)) return 1.00; return Math.max(0.5, Math.min(1.5, Math.round(v * 100) / 100)); }
+  function clampRate(v) { v = parseFloat(v); if (isNaN(v)) return null; return round1(Math.max(CFG.minRate, Math.min(CFG.maxRate, v))); }
   function resolveBidEstimate(pid) {
     var props = (state && state.properties) || {}, aucs = (state && state.auctions) || {};
     var p = props[pid]; if (!p) return null;
@@ -190,21 +191,28 @@
     if (!ap || !ap.value) return null;
     var area = p.exclusiveArea || 0;
     var cas = resolveBidRateCascade(pid);
-    var rate = cas.center / 100;
     var sc = (state.scenarios && state.scenarios[pid]) || {};
+    // 가치형성요인(0.50~1.50)
     var mExt = clampFactor(sc.mgrFactorExt != null ? sc.mgrFactorExt : 1.00);
     var mInt = clampFactor(sc.mgrFactorInt != null ? sc.mgrFactorInt : 1.00);
     var mHo  = clampFactor(sc.mgrFactorHo  != null ? sc.mgrFactorHo  : 1.00);
-    var baseAi = ap.value;                                  // 요인 1.00 = 기준시세
-    var baseMgr = Math.round(ap.value * mExt * mInt * mHo);  // 담당자 보정 기준시세
-    var aiBid = Math.round(baseAi * rate);
-    var mgrBid = Math.round(baseMgr * rate);
+    var mEtc = clampFactor(sc.mgrFactorEtc != null ? sc.mgrFactorEtc : 1.00);
+    var factorProd = +(mExt * mInt * mHo * mEtc).toFixed(4);  // 낙찰가율 제외 요인 곱
+    // 낙찰가율(%) — AI는 캐스케이드값, 담당자는 직접 조정
+    var aiRatePct = cas.center;
+    var mRatePct = clampRate(sc.mgrBidRate); if (mRatePct == null) mRatePct = aiRatePct;
+    var aiRate = aiRatePct / 100, mRate = mRatePct / 100;
+    var baseAi = ap.value;                              // 기준시세 (요인 1.00)
+    var baseMgr = Math.round(ap.value * factorProd);    // 담당자 보정 기준시세 (요인 적용)
+    var aiBid = Math.round(baseAi * aiRate);            // 기준시세 × 낙찰가율(AI)
+    var mgrBid = Math.round(baseMgr * mRate);           // 보정시세 × 낙찰가율(담당자)
     var decision = (sc.bidDecision === 'mgr') ? 'mgr' : 'ai';
     var finalBid = decision === 'mgr' ? mgrBid : aiBid;
     return {
-      ap: ap, area: area, cas: cas, rate: rate,
+      ap: ap, area: area, cas: cas, rate: aiRate,
       unitPrice: area ? Math.round(ap.value / area) : 0,
-      mExt: mExt, mInt: mInt, mHo: mHo,
+      mExt: mExt, mInt: mInt, mHo: mHo, mEtc: mEtc, factorProd: factorProd,
+      aiRatePct: aiRatePct, mRatePct: mRatePct,
       baseAi: baseAi, baseMgr: baseMgr,
       aiBid: aiBid, mgrBid: mgrBid,
       decision: decision, decisionLabel: (decision === 'mgr' ? '담당자안' : 'AI안'),
@@ -248,7 +256,7 @@
     var unitPrice = be.unitPrice, baseValue = be.baseAi, bidRate = be.rate;
     var badge = TIER[cas.tier];
     var dec = be.decision;
-    var mgrProduct = be.mExt * be.mInt * be.mHo;
+    var factorProd = be.factorProd;
 
     var note;
     if (cas.isStat) {
@@ -279,6 +287,17 @@
         + '<td style="padding:6px 0 6px 8px;text-align:right;">' + facInput(which, mgrVal) + '</td>'
         + '</tr>';
     };
+    var rateRow = function (label, desc, aiPct, mgrPct) {
+      return '<tr style="background:var(--kiwoom-pink-soft,#FFF0FF);">'
+        + '<td style="padding:6px 0;color:var(--ink-soft);font-size:13px;font-weight:600;">' + label + '<div style="color:var(--ink-muted);font-size:11px;font-weight:400;">' + desc + '</div></td>'
+        + '<td style="padding:6px 8px;text-align:right;color:var(--ink-muted);font-variant-numeric:tabular-nums;font-size:13px;">' + aiPct + '%</td>'
+        + '<td style="padding:6px 0 6px 8px;text-align:right;white-space:nowrap;">'
+        + '<input type="number" min="' + CFG.minRate + '" max="' + CFG.maxRate + '" step="0.1" value="' + (Math.round(mgrPct * 10) / 10) + '" '
+        + 'onchange="window.updateBidFactor(\'rate\', this.value)" '
+        + 'style="width:60px;padding:4px 6px;text-align:right;font-variant-numeric:tabular-nums;border:1px solid var(--line-strong,#c2cad9);border-radius:6px;font-size:13px;font-weight:700;color:var(--ink);">'
+        + ' <span style="font-size:12px;color:var(--ink-muted);">%</span></td>'
+        + '</tr>';
+    };
     var priceBox = function (key, title, amount, sub, active) {
       return '<label style="flex:1;min-width:158px;cursor:pointer;display:block;border:2px solid ' + (active ? PINK : 'var(--line,#dfe4ee)') + ';background:' + (active ? 'var(--kiwoom-pink-soft,#FFE6FF)' : 'transparent') + ';border-radius:10px;padding:12px 14px;">'
         + '<div style="display:flex;align-items:center;gap:8px;">'
@@ -291,27 +310,31 @@
 
     return ''
       + '<div class="card mb-24" data-cascade="1" style="border-left:4px solid var(--accent);">'
-      + '<div class="card-title">AI 추정 낙찰가액 '
+      + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">'
+      + '<div class="card-title" style="margin:0;">AI 추정 낙찰가액 '
       + '<span class="badge" style="background:' + badge[0] + ';color:#fff;">' + badge[1] + '</span></div>'
-      + '<div class="text-small text-muted" style="margin:-4px 0 14px;">거래사례비교법 — 기준시세 × 가치형성요인 × 낙찰가율. <strong>AI안</strong>(요인 1.00)과 <strong>담당자안</strong>(요인 직접보정)을 산출해 둘 중 하나를 최종 채택합니다.</div>'
+      + '<a href="https://www.auction1.co.kr/" target="_blank" rel="noopener" class="no-print" style="flex:none;display:inline-flex;align-items:center;gap:6px;text-decoration:none;font-size:12px;font-weight:700;color:#fff;background:' + PINK + ';padding:6px 12px;border-radius:8px;">🔗 옥션원에서 낙찰사례 검색</a>'
+      + '</div>'
+      + '<div class="text-small text-muted" style="margin:6px 0 14px;">거래사례비교법 — 기준시세 × 가치형성요인 × 낙찰가율. <strong>AI안</strong>(요인 1.00·낙찰가율 캐스케이드)과 <strong>담당자안</strong>(요인·낙찰가율 직접보정)을 산출해 둘 중 하나를 최종 채택합니다.</div>'
       + '<table style="width:100%;border-collapse:collapse;font-size:14px;">'
       + row('거래사례 평균단가', won(unitPrice) + '/㎡', '거래사례 평균매매가 ÷ 전용면적')
       + row('× 전용면적', (area ? area.toFixed(2) : '-') + '㎡', ap.source || '')
-      + row('= 기준시세', won(baseValue), '요인 보정 전', true)
-      + row('× 기타요인 (낙찰가율)', bidRate.toFixed(3), cas.scope + ' ' + cas.center + '%' + (cas.asof ? ' · 한국부동산원 ' + cas.asof : ''))
+      + row('= 기준시세', won(baseValue), '요인·낙찰가율 적용 전', true)
       + '</table>'
-      + '<div style="margin-top:16px;font-weight:700;color:var(--ink);font-size:13px;">가치형성요인 보정 <span class="text-muted" style="font-weight:400;font-size:11px;">· 담당자안은 0.50~1.50 직접 입력</span></div>'
+      + '<div style="margin-top:16px;font-weight:700;color:var(--ink);font-size:13px;">보정 요인 <span class="text-muted" style="font-weight:400;font-size:11px;">· 담당자안: 요인 0.50~1.50, 낙찰가율 ' + CFG.minRate + '~' + CFG.maxRate + '% 직접 입력</span></div>'
       + '<table style="width:100%;border-collapse:collapse;margin-top:6px;">'
-      + '<thead><tr><th style="text-align:left;font-size:11px;color:var(--ink-muted);font-weight:600;padding-bottom:4px;">요인</th><th style="text-align:right;font-size:11px;color:var(--ink-muted);font-weight:600;">AI안</th><th style="text-align:right;font-size:11px;color:var(--ink-muted);font-weight:600;">담당자안</th></tr></thead>'
+      + '<thead><tr><th style="text-align:left;font-size:11px;color:var(--ink-muted);font-weight:600;padding-bottom:4px;">항목</th><th style="text-align:right;font-size:11px;color:var(--ink-muted);font-weight:600;">AI안</th><th style="text-align:right;font-size:11px;color:var(--ink-muted);font-weight:600;">담당자안</th></tr></thead>'
       + '<tbody>'
       + facRow('단지외부요인', '교통·입지·학군·환경', be.mExt, 'ext')
       + facRow('단지내부요인', '브랜드·세대수·구조·노후도', be.mInt, 'int')
       + facRow('호별요인', '층·향·위치별 효용', be.mHo, 'ho')
-      + '<tr style="border-top:1px solid var(--line,#dfe4ee);"><td style="padding:6px 0;font-weight:700;font-size:13px;color:var(--ink-soft);">요인 합계(곱)</td><td style="padding:6px 8px;text-align:right;font-weight:700;font-size:13px;">1.00</td><td style="padding:6px 0;text-align:right;font-weight:700;font-size:13px;color:' + PINK + ';">' + mgrProduct.toFixed(2) + '</td></tr>'
+      + rateRow('낙찰가율', cas.scope + (cas.asof ? ' · 한국부동산원 ' + cas.asof : ''), be.aiRatePct, be.mRatePct)
+      + facRow('기타요인', '명도난이도·시장상황·급매 등 개별조정', be.mEtc, 'etc')
+      + '<tr style="border-top:1px solid var(--line,#dfe4ee);"><td style="padding:6px 0;font-weight:700;font-size:13px;color:var(--ink-soft);">요인 곱 <span style="font-weight:400;color:var(--ink-muted);font-size:11px;">(낙찰가율 제외)</span></td><td style="padding:6px 8px;text-align:right;font-weight:700;font-size:13px;">1.00</td><td style="padding:6px 0;text-align:right;font-weight:700;font-size:13px;color:' + PINK + ';">' + factorProd.toFixed(2) + '</td></tr>'
       + '</tbody></table>'
       + '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;">'
-      + priceBox('ai', 'AI안 채택', be.aiBid, '요인 1.00 적용', dec === 'ai')
-      + priceBox('mgr', '담당자안 채택', be.mgrBid, '보정요인 ' + mgrProduct.toFixed(2) + ' 적용', dec === 'mgr')
+      + priceBox('ai', 'AI안 채택', be.aiBid, '요인 1.00 · 낙찰가율 ' + be.aiRatePct + '%', dec === 'ai')
+      + priceBox('mgr', '담당자안 채택', be.mgrBid, '요인 ' + factorProd.toFixed(2) + ' · 낙찰가율 ' + be.mRatePct + '%', dec === 'mgr')
       + '</div>'
       + '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:16px;padding-top:14px;border-top:2px solid var(--line-strong,#c2cad9);">'
       + '<div style="font-weight:800;color:var(--ink);font-size:15px;">= 최종 낙찰예상가 <span style="font-size:12px;font-weight:600;color:' + PINK + ';">(' + be.decisionLabel + ' 채택)</span></div>'
@@ -350,14 +373,20 @@
     injectAuction();
   };
 
-  /* 담당자 가치형성요인 보정(0.50~1.50) → 담당자안 재산출 */
+  /* 담당자 보정: 가치형성요인(0.50~1.50) / 낙찰가율(%) → 담당자안 재산출 */
   window.updateBidFactor = function (which, val) {
     var pid = state && state.currentPropertyId; if (!pid) return;
     state.scenarios = state.scenarios || {};
     state.scenarios[pid] = state.scenarios[pid] || {};
-    var key = which === 'ext' ? 'mgrFactorExt' : which === 'int' ? 'mgrFactorInt' : which === 'ho' ? 'mgrFactorHo' : null;
-    if (!key) return;
-    state.scenarios[pid][key] = clampFactor(val);
+    if (which === 'rate') {
+      var r = clampRate(val);
+      if (r == null) delete state.scenarios[pid].mgrBidRate;
+      else state.scenarios[pid].mgrBidRate = r;
+    } else {
+      var key = which === 'ext' ? 'mgrFactorExt' : which === 'int' ? 'mgrFactorInt' : which === 'ho' ? 'mgrFactorHo' : which === 'etc' ? 'mgrFactorEtc' : null;
+      if (!key) return;
+      state.scenarios[pid][key] = clampFactor(val);
+    }
     if (typeof saveState === 'function') { try { saveState(); } catch (e) {} }
     injectAuction();
   };
