@@ -146,13 +146,11 @@
       var v = R.sido_avg[sido];
       return (v != null && v !== '-') ? { rate: parseFloat(v), asof: R.asof } : null;
     }
-    var extSido = _statSido(targetSido);
     var extNat = _statSido('전국');
 
     var tier, center, asof = null, isStat = false, sampleN = null;
     if (same.length >= CFG.minSameComplex) { tier = 'same_complex'; sampleN = same.length; center = median(same); }
     else if (sg.length >= CFG.minSigungu) { tier = 'sigungu'; sampleN = sg.length; center = median(sg); }
-    else if (extSido) { tier = 'stat_sido'; center = extSido.rate; asof = extSido.asof; isStat = true; }
     else if (extNat) { tier = 'stat_national'; center = extNat.rate; asof = extNat.asof; isStat = true; }
     else { tier = 'default'; center = CFG.def.mid; }
 
@@ -165,7 +163,6 @@
     switch (tier) {
       case 'same_complex': scope = '본건 동일단지 낙찰사례'; break;
       case 'sigungu':      scope = (targetSg || '시군구') + ' 낙찰사례'; break;
-      case 'stat_sido':    scope = (targetSido || '시도') + ' 전체 평균'; break;
       case 'stat_national':scope = '전국 평균'; break;
       default:             scope = '기본값(지역 미확인)';
     }
@@ -221,8 +218,7 @@
   var TIER = {
     manual: ['#7c3aed', '✏️ 직접입력'],
     same_complex: ['#0f6e5c', '1단계 · 동일단지'], sigungu: ['#1e2a44', '2단계 · 시군구 사례'],
-    stat_sido: ['#2A4FBE', '3단계 · 시도 통계'],
-    stat_national: ['#5a6b8c', '4단계 · 전국 통계'], default: ['#a8884a', '디폴트']
+    stat_national: ['#5a6b8c', '3단계 · 전국 통계'], default: ['#a8884a', '디폴트']
   };
 
   /* ===== 시나리오 자동정렬: 중립=평균, 보수=평균-5, 적극=평균+5 ===== */
@@ -285,7 +281,7 @@
         + '</tr>';
     };
     var rateRow = function (label, desc, aiPct, mgrPct) {
-      return '<tr style="background:var(--kiwoom-pink-soft,#FFF0FF);">'
+      return '<tr>'
         + '<td style="padding:6px 0;color:var(--ink-soft);font-size:13px;font-weight:600;">' + label + '<div style="color:var(--ink-muted);font-size:11px;font-weight:400;">' + desc + '</div></td>'
         + '<td style="padding:6px 8px;text-align:right;color:var(--ink-muted);font-variant-numeric:tabular-nums;font-size:13px;">' + aiPct + '%</td>'
         + '<td style="padding:6px 0 6px 8px;text-align:right;white-space:nowrap;">'
@@ -307,7 +303,7 @@
 
     return ''
       + '<div class="card mb-24" data-cascade="1" style="border-left:4px solid var(--accent);">'
-      + '<div class="card-title">AI 추정 낙찰가액 '
+      + '<div class="card-title">추정 낙찰가액 '
       + '<span class="badge" style="background:' + badge[0] + ';color:#fff;">' + badge[1] + '</span></div>'
       + '<div class="text-small text-muted" style="margin:-4px 0 14px;">거래사례비교법 — 기준시세 × 가치형성요인 × 낙찰가율. <strong>AI안</strong>(요인 1.00·낙찰가율 캐스케이드)과 <strong>담당자안</strong>(요인·낙찰가율 직접보정)을 산출해 둘 중 하나를 최종 채택합니다.</div>'
       + '<table style="width:100%;border-collapse:collapse;font-size:14px;">'
@@ -317,7 +313,7 @@
       + '</table>'
       + '<div style="margin-top:16px;font-weight:700;color:var(--ink);font-size:13px;">보정 요인 <span class="text-muted" style="font-weight:400;font-size:11px;">· 담당자안: 요인 0.50~1.50, 낙찰가율 ' + CFG.minRate + '~' + CFG.maxRate + '% 직접 입력</span></div>'
       + '<table style="width:100%;border-collapse:collapse;margin-top:6px;">'
-      + '<thead><tr><th style="text-align:left;font-size:11px;color:var(--ink-muted);font-weight:600;padding-bottom:4px;">항목</th><th style="text-align:right;font-size:11px;color:var(--ink-muted);font-weight:600;">AI안</th><th style="text-align:right;font-size:11px;color:var(--ink-muted);font-weight:600;">담당자안</th></tr></thead>'
+      + '<thead><tr><th style="text-align:left;font-size:11px;color:var(--ink-muted);font-weight:600;padding-bottom:6px;">항목</th><th style="text-align:center;font-size:15px;color:var(--ink);font-weight:800;padding-bottom:6px;">AI안</th><th style="text-align:center;font-size:15px;color:' + PINK + ';font-weight:800;padding-bottom:6px;">담당자안</th></tr></thead>'
       + '<tbody>'
       + facRow('단지외부요인', '교통·입지·학군·환경', be.mExt, 'ext')
       + facRow('단지내부요인', '브랜드·세대수·구조·노후도', be.mInt, 'int')

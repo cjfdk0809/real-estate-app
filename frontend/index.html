@@ -1775,19 +1775,19 @@ function renderOpinion() {
   const be = (typeof window.resolveBidEstimate === 'function') ? window.resolveBidEstimate(p.id) : null;
   const comment = op.comment || '';
 
-  const won = (v) => (v != null && v !== '') ? Number(v).toLocaleString() + '원' : '-';
-  const eok = (v) => (v != null && v !== '') ? '약 ' + (Number(v) / 100000000).toFixed(2).replace(/\.?0+$/, '') + '억원' : '';
+  const won = (manwon) => (manwon != null && manwon !== '' && !isNaN(manwon)) ? fmt.won(Number(manwon)) : '-';  // 만원 단위 → 억/만 표기
 
   const estCard = be ? `
     <div class="card">
       <div class="card-title">◆ 낙찰가 산정 결과</div>
+      <div class="info-row"><div class="info-label">기준 시세</div><div class="info-value mono">${won(be.baseAi)} <span class="text-muted text-small">(${be.ap && be.ap.source ? be.ap.source : '평균매매가/감정가'})</span></div></div>
       <div class="info-row"><div class="info-label">AI 산정가</div><div class="info-value mono">${won(be.aiBid)} <span class="text-muted text-small">(요인 1.00 · 낙찰가율 ${be.aiRatePct}%)</span></div></div>
       <div class="info-row"><div class="info-label">담당자 산정가</div><div class="info-value mono">${won(be.mgrBid)} <span class="text-muted text-small">(요인 곱 ${be.factorProd.toFixed(2)} · 낙찰가율 ${be.mRatePct}%)</span></div></div>
       <div class="info-row" style="border-top:2px solid var(--line-strong,#c2cad9);margin-top:6px;padding-top:12px;">
         <div class="info-label" style="font-weight:800;color:var(--ink);">채택가</div>
         <div class="info-value mono" style="font-weight:800;color:var(--kiwoom-pink-deep,#CC00CC);font-size:18px;">${won(be.finalBid)} <span class="text-small" style="font-weight:600;">(${be.decisionLabel} 채택)</span></div>
       </div>
-      <div class="text-small text-muted" style="margin-top:8px;">${eok(be.finalBid)} · 채택안(AI/담당자) 선택은 <strong>05 추정낙찰가</strong> 탭에서 합니다.</div>
+      <div class="text-small text-muted" style="margin-top:8px;">채택안(AI/담당자) 선택은 <strong>05 추정낙찰가</strong> 탭에서 합니다.</div>
     </div>` : `
     <div class="card">
       <div class="card-title">◆ 낙찰가 산정 결과</div>
@@ -1807,7 +1807,7 @@ function renderOpinion() {
       <div class="info-row"><div class="info-label">소재지</div><div class="info-value">${p.addrRoad || p.addrLot || '-'}</div></div>
       <div class="info-row"><div class="info-label">동·호</div><div class="info-value">${(p.building || '-')} ${(p.unit || '')}</div></div>
       <div class="info-row"><div class="info-label">전용면적</div><div class="info-value">${p.exclusiveArea ? p.exclusiveArea + '㎡ (' + (p.exclusiveArea / 3.3058).toFixed(1) + '평)' : '-'}</div></div>
-      <div class="info-row"><div class="info-label">공시가격</div><div class="info-value mono">${won(p.publicPrice)}</div></div>
+      <div class="info-row"><div class="info-label">공시가격</div><div class="info-value mono">${p.publicPrice ? fmt.wonShort(p.publicPrice) : '-'}</div></div>
     </div>
 
     ${estCard}
@@ -2663,6 +2663,33 @@ function analyzeRights(rightsInput) {
   return { baseRight, baseDate, classified, assumedTotal, extinctTotal, seniorClaim, seniorHolder, hasTaxLien };
 }
 
+// 당사(키움) 근저당권 회수 분석: 순위·선순위 잠식·예상 회수액
+function computeOursRecovery(classified, distributable) {
+  const ours = (classified || []).find(r => r.isOurs);
+  if (!ours) return null;
+  const oursDate = ours.date || '';
+  const oursClaim = ours.amount || 0;  // 만원 (채권최고액)
+  // 당사보다 선순위(설정일 빠른) 배당대상 담보권(근저당) 채권최고액 합
+  const seniorMortgages = (classified || []).filter(r =>
+    !r.isOurs && (r.type || '').includes('근저당') && r.status !== '인수' && (r.date || '') !== '' && (r.date || '') < oursDate);
+  const seniorSum = seniorMortgages.reduce((s, r) => s + (r.amount || 0), 0);
+  const priority = seniorMortgages.length + 1;  // 담보권 기준 순위
+  const availForOurs = (distributable != null) ? Math.max(0, distributable - seniorSum) : null;
+  const recovered = (availForOurs != null) ? Math.min(oursClaim, availForOurs) : null;
+  const recoveryRate = (recovered != null && oursClaim) ? Math.min(100, recovered / oursClaim * 100) : null;
+  const shortfall = (recovered != null) ? Math.max(0, oursClaim - recovered) : null;
+  return { ours, oursClaim, priority, seniorSum, availForOurs, recovered, recoveryRate, shortfall };
+}
+
+// 권리관계 목록: 당사 근저당권 지정(단일 선택)
+function updateRightOurs(id, checked) {
+  const pid = state.currentPropertyId; if (!pid) return;
+  const list = state.rights[pid] || [];
+  list.forEach(r => { r.isOurs = (checked && r.id === id); });
+  saveState();
+  renderView();
+}
+
 // 감정가 확보: 경공매 사건 → 직접입력 → 거래사례 평균(대용) 순
 function getActiveAppraisal(p, auctions) {
   const sc = (state.scenarios && state.scenarios[p.id]) || {};
@@ -2722,6 +2749,7 @@ function renderScenarioAndNPL(p, auctions, rights) {
   const distributable = (midBid != null) ? Math.max(0, midBid - ra.assumedTotal) : null;
   const recoveryRate = (distributable != null && ra.seniorClaim) ? Math.min(100, distributable / ra.seniorClaim * 100) : null;
   const surplus = (distributable != null && ra.seniorClaim) ? (distributable - ra.seniorClaim) : null;
+  const oursRec = computeOursRecovery(ra.classified, distributable);
 
   const scenarioCard = `
   <div class="card mb-24">
@@ -2771,7 +2799,33 @@ function renderScenarioAndNPL(p, auctions, rights) {
     </div>
   </div>` : '';
 
-  return scenarioCard + nplCard;
+  const oursCard = (oursRec && ap.value) ? `
+  <div class="card mb-24" style="border-left:4px solid var(--kiwoom-pink-deep,#CC00CC);">
+    <div class="card-title">NPL 담보여력 분석 · 당사 채권 회수 <span class="text-muted text-small" style="font-weight:400;">· 중립 시나리오 기준</span></div>
+    <div class="grid grid-2">
+      <div>
+        <div class="info-row"><div class="info-label">당사 근저당권</div><div class="info-value">${oursRec.ours.holder || '-'} <span class="text-muted text-small">(${fmt.date(oursRec.ours.date)})</span></div></div>
+        <div class="info-row"><div class="info-label">당사 채권최고액</div><div class="info-value mono">${fmt.won(oursRec.oursClaim)}</div></div>
+        <div class="info-row"><div class="info-label">담보권 순위</div><div class="info-value">${oursRec.priority}순위${oursRec.priority === 1 ? ' <span class="text-accent text-small">(최선순위)</span>' : ''}</div></div>
+        <div class="info-row"><div class="info-label">선순위 담보 합계</div><div class="info-value mono">${fmt.won(oursRec.seniorSum)}</div></div>
+      </div>
+      <div>
+        <div class="info-row"><div class="info-label">배당가능재원</div><div class="info-value mono">${fmt.won(distributable)}</div></div>
+        <div class="info-row"><div class="info-label">당사 배당가능액</div><div class="info-value mono">${fmt.won(oursRec.availForOurs)}</div></div>
+        <div class="info-row"><div class="info-label">당사 예상 회수액</div><div class="info-value mono text-accent" style="font-weight:800;">${fmt.won(oursRec.recovered)}</div></div>
+        <div class="info-row"><div class="info-label">당사 회수율</div><div class="info-value mono ${oursRec.recoveryRate >= 100 ? '' : 'text-accent'}">${oursRec.recoveryRate != null ? oursRec.recoveryRate.toFixed(1) + '%' : '-'}</div></div>
+      </div>
+    </div>
+    <div class="notice" style="margin-top:12px;">
+      <div class="notice-title">${oursRec.recoveryRate >= 100 ? '✅ 당사 채권 전액 회수 가능 구간' : (oursRec.recoveryRate > 0 ? '⚠️ 당사 채권 일부 회수 — 부족분 ' + fmt.won(oursRec.shortfall) : '❌ 당사 채권 회수 불가 구간 (선순위 잠식)')}</div>
+      ${oursRec.priority === 1
+        ? '당사가 <strong>1순위(최선순위) 근저당권자</strong>입니다. 예상 낙찰가에서 선순위 인수금액을 제한 배당가능재원으로 당사 채권을 가장 먼저 배당받습니다.'
+        : '당사보다 선순위 담보권 ' + (oursRec.priority - 1) + '건(합계 ' + fmt.won(oursRec.seniorSum) + ')이 먼저 배당된 뒤, 잔여 재원에서 당사 채권이 배당됩니다.'}
+      ${ra.hasTaxLien ? '<br><strong style="color:var(--accent);">당해세 우선배당 리스크:</strong> 압류 등기가 있어 당해세(재산세·종부세 등)가 당사 근저당보다 우선 배당될 수 있습니다. 실제 회수액은 교부청구액(체납세액) 확인 후 재산정이 필요합니다.' : ''}
+    </div>
+  </div>` : '';
+
+  return scenarioCard + nplCard + oursCard;
 }
 
 // ============================================================
@@ -2849,8 +2903,12 @@ function renderAuction() {
       <div class="stat-card"><div class="stat-label">평균 응찰자</div><div class="stat-value">${withBidders.length ? avgBidders.toFixed(1) : '-'}<span class="stat-unit">명</span></div></div>
     </div>
 
-    ${applyCard}
-    ${declineCard}
+    <div class="card">
+      <div class="card-title">경공매 낙찰사례 검색 · 옥션원</div>
+      <div class="text-small text-muted" style="margin-bottom:16px;">옥션원(구 굿옥션)에서 유사 물건의 낙찰가·낙찰가율·매각통계를 조회해 아래 표에 입력하세요. 전국 법원경매·공매·NPL 낙찰 사례를 제공합니다.</div>
+      <a href="https://www.auction1.co.kr/" target="_blank" rel="noopener" class="btn btn-primary no-print" style="text-decoration:none;display:inline-flex;align-items:center;gap:8px;">🔗 옥션원 바로가기 <span style="font-weight:400;opacity:.85;">(새 창)</span></a>
+      <div class="text-small text-muted" style="margin-top:14px;line-height:1.7;">※ 유료 회원 로그인이 필요한 사이트입니다. <strong>Edge에서 옥션원에 한 번 로그인해두면</strong> 위 버튼을 누를 때 같은 브라우저 세션으로 로그인된 화면이 바로 열립니다. (보안상 앱에는 계정정보를 저장하지 않습니다.)</div>
+    </div>
 
     <div class="card">
       <div class="card-title">경공매 낙찰 사례 <button class="btn btn-primary no-print" onclick="openAuctionModal()">＋ 추가</button></div>
@@ -2886,12 +2944,7 @@ function renderAuction() {
       </div>
     </div>
 
-    <div class="card">
-      <div class="card-title">경공매 낙찰사례 검색 · 옥션원</div>
-      <div class="text-small text-muted" style="margin-bottom:16px;">옥션원(구 굿옥션)에서 유사 물건의 낙찰가·낙찰가율·매각통계를 조회해 위 표에 입력하세요. 전국 법원경매·공매·NPL 낙찰 사례를 제공합니다.</div>
-      <a href="https://www.auction1.co.kr/" target="_blank" rel="noopener" class="btn btn-primary no-print" style="text-decoration:none;display:inline-flex;align-items:center;gap:8px;">🔗 옥션원 바로가기 <span style="font-weight:400;opacity:.85;">(새 창)</span></a>
-      <div class="text-small text-muted" style="margin-top:14px;line-height:1.7;">※ 유료 회원 로그인이 필요한 사이트입니다. <strong>Edge에서 옥션원에 한 번 로그인해두면</strong> 위 버튼을 누를 때 같은 브라우저 세션으로 로그인된 화면이 바로 열립니다. (보안상 앱에는 계정정보를 저장하지 않습니다.)</div>
-    </div>
+    ${declineCard}
   `;
 }
 
@@ -3054,13 +3107,14 @@ function renderRights() {
       <div class="card-title">권리관계 목록 <button class="btn btn-primary no-print" onclick="openRightModal()">＋ 추가</button></div>
       ${rights.length === 0 ? '<div class="empty"><div class="empty-text">등록된 권리가 없습니다. 등기부등본을 발급하여 입력하세요.</div></div>' : `
       <table class="tbl">
-        <thead><tr><th>설정일</th><th>유형</th><th>권리자</th><th class="text-right">금액</th><th>월세</th><th>확정일자</th><th>인수여부</th><th>비고</th><th class="no-print"></th></tr></thead>
+        <thead><tr><th>설정일</th><th>유형</th><th class="no-print" style="text-align:center;">당사<br>근저당</th><th>권리자</th><th class="text-right">금액</th><th>월세</th><th>확정일자</th><th>인수여부</th><th>비고</th><th class="no-print"></th></tr></thead>
         <tbody>
           ${rights.map(r => {
             const isAssumed = r.status === '인수';
             return `<tr>
               <td class="num">${fmt.date(r.date)}</td>
               <td><span class="badge" style="background: ${r.type === '근저당권' ? '#1e2a44' : r.type === '임차권' ? '#2d5a3d' : '#a8884a'}; color: white;">${r.type}</span></td>
+              <td class="no-print" style="text-align:center;">${(r.type || '').includes('근저당') ? `<input type="checkbox" ${r.isOurs ? 'checked' : ''} onchange="updateRightOurs('${r.id}', this.checked)" style="width:16px;height:16px;cursor:pointer;accent-color:var(--kiwoom-pink-deep,#CC00CC);" title="당사가 보유한 근저당권으로 지정">` : '<span class="text-muted">-</span>'}</td>
               <td>${r.holder}</td>
               <td class="price">${fmt.won(r.amount)}</td>
               <td class="num">${r.monthly ? r.monthly + '만' : '-'}</td>
@@ -3072,6 +3126,7 @@ function renderRights() {
           }).join('')}
         </tbody>
       </table>`}
+      <div class="text-small text-muted no-print" style="margin-top:10px;">※ 당사가 보유(매입)한 NPL 근저당권을 <strong>당사근저당</strong>에 체크하면, 아래 <strong>NPL 담보여력 분석</strong>에서 해당 채권의 순위와 회수 가능 여부(1순위면 전액 회수 가능 등)가 자동으로 표시됩니다.</div>
     </div>
 
     ${renderScenarioAndNPL(p, auctions, state.rights[p.id] || [])}
