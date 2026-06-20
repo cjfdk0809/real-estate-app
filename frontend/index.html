@@ -879,10 +879,11 @@ table { border-collapse: collapse; width: 100%; }
       <div class="nav-item" data-view="comparables"><span class="nav-item-num">02</span> 거래사례 비교</div>
       <div class="nav-item" data-view="listings"><span class="nav-item-num">03</span> 매물현황</div>
       <div class="nav-item" data-view="auction"><span class="nav-item-num">04</span> 경공매 사례</div>
-      <div class="nav-item" data-view="rights"><span class="nav-item-num">05</span> 권리분석</div>
-      <div class="nav-item" data-view="returns"><span class="nav-item-num">06</span> 수익률·세금</div>
-      <div class="nav-item" data-view="opinion"><span class="nav-item-num">07</span> 담당자 의견</div>
-      <div class="nav-item" data-view="report"><span class="nav-item-num">08</span> 리포트</div>
+      <div class="nav-item" data-view="bidest"><span class="nav-item-num">05</span> 추정낙찰가</div>
+      <div class="nav-item" data-view="rights"><span class="nav-item-num">06</span> 권리분석</div>
+      <div class="nav-item" data-view="returns"><span class="nav-item-num">07</span> 수익률·세금</div>
+      <div class="nav-item" data-view="opinion"><span class="nav-item-num">08</span> 담당자 의견</div>
+      <div class="nav-item" data-view="report"><span class="nav-item-num">09</span> 리포트</div>
     </div>
 
     <div class="nav-section" style="padding-top: 8px;">
@@ -1739,6 +1740,7 @@ function renderView() {
     case 'comparables': renderComparables(); break;
     case 'listings': renderListings(); break;
     case 'auction': renderAuction(); break;
+    case 'bidest': renderBidEst(); break;
     case 'valuation': renderValuation(); break;
     case 'rights': renderRights(); break;
     case 'returns': renderReturns(); break;
@@ -1785,7 +1787,7 @@ function renderOpinion() {
         <div class="info-label" style="font-weight:800;color:var(--ink);">채택가</div>
         <div class="info-value mono" style="font-weight:800;color:var(--kiwoom-pink-deep,#CC00CC);font-size:18px;">${won(be.finalBid)} <span class="text-small" style="font-weight:600;">(${be.decisionLabel} 채택)</span></div>
       </div>
-      <div class="text-small text-muted" style="margin-top:8px;">${eok(be.finalBid)} · 채택안(AI/담당자) 변경은 <strong>04 경공매</strong> 탭에서 합니다.</div>
+      <div class="text-small text-muted" style="margin-top:8px;">${eok(be.finalBid)} · 채택안(AI/담당자) 선택은 <strong>05 추정낙찰가</strong> 탭에서 합니다.</div>
     </div>` : `
     <div class="card">
       <div class="card-title">◆ 낙찰가 산정 결과</div>
@@ -2894,6 +2896,25 @@ function renderAuction() {
 }
 
 // ============================================================
+// VIEW: BID ESTIMATE (추정 낙찰가 — AI안/담당자안 → 최종 채택)
+// ============================================================
+function renderBidEst() {
+  const c = document.getElementById('viewContainer');
+  const p = state.properties[state.currentPropertyId];
+  if (!p) { c.innerHTML = `<div class="empty"><div class="empty-title">등록된 물건이 없습니다</div></div>`; return; }
+  c.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">추정 낙찰가 · Bid Estimate</div>
+      <h1 class="page-title">${p.name || '본건'}</h1>
+      <div class="page-sub">거래사례비교법으로 AI안·담당자안을 산출하고, 둘 중 하나를 최종 낙찰예상가로 채택합니다.</div>
+    </div>
+    <div id="bidEstHost"><div class="card"><div class="text-muted">불러오는 중…</div></div></div>
+  `;
+  // AI 추정 낙찰가액 카드는 bid_rate_cascade.js가 #bidEstHost에 주입합니다.
+  if (typeof window.injectBidEst === 'function') { try { window.injectBidEst(); } catch (e) {} }
+}
+
+// ============================================================
 // VIEW: VALUATION (시세 추정)
 // ============================================================
 function renderValuation() {
@@ -3351,7 +3372,7 @@ function renderReport() {
     <div class="info-row"><div class="info-label">최종 채택 낙찰예상가</div><div class="info-value mono text-accent" style="font-weight:800;">${fmt.won(_be.finalBid)} <span class="text-muted text-small">(${_decLabel} 채택)</span></div></div>
     <div class="info-row"><div class="info-label">기준시세</div><div class="info-value mono">${fmt.won(_be.baseAi)} <span class="text-muted text-small">(${ap.source || ''})</span></div></div>
     ${ra.seniorClaim ? `<div class="info-row"><div class="info-label">최종 기준 1순위 회수율</div><div class="info-value mono text-accent">${_finalRecovery != null ? _finalRecovery.toFixed(1) + '%' : '-'}</div></div>` : ''}
-    <div class="text-small text-muted" style="margin-top:6px;">※ 담당자안 보정값 — 단지외부 ${_be.mExt.toFixed(2)} · 단지내부 ${_be.mInt.toFixed(2)} · 호별 ${_be.mHo.toFixed(2)} · 기타 ${_be.mEtc.toFixed(2)} · 낙찰가율 ${_be.mRatePct}%. (04 경공매 탭에서 조정)</div>
+    <div class="text-small text-muted" style="margin-top:6px;">※ 담당자안 보정값 — 단지외부 ${_be.mExt.toFixed(2)} · 단지내부 ${_be.mInt.toFixed(2)} · 호별 ${_be.mHo.toFixed(2)} · 기타 ${_be.mEtc.toFixed(2)} · 낙찰가율 ${_be.mRatePct}%. (05 추정낙찰가 탭에서 조정)</div>
     ` : ''}
 
     ${rights.length > 0 ? `

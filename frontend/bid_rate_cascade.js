@@ -334,27 +334,25 @@
       + '<div style="font-weight:800;color:var(--ink);font-size:15px;">= 최종 낙찰예상가 <span style="font-size:12px;font-weight:600;color:' + PINK + ';">(' + be.decisionLabel + ' 채택)</span></div>'
       + '<div class="mono" style="font-size:26px;font-weight:800;color:' + PINK + ';line-height:1.1;">' + won(be.finalBid) + '</div>'
       + '</div>'
-      + '<div class="text-small text-muted" style="margin-top:12px;">✅ 최종 채택값은 <strong>07 담당자 의견</strong> · <strong>리포트(3-2 낙찰가 산정 결정·분석요약)</strong>에 자동 반영됩니다.</div>'
+      + '<div class="text-small text-muted" style="margin-top:12px;">✅ 최종 채택값은 <strong>08 담당자 의견</strong> · <strong>리포트(3-2 낙찰가 산정 결정·분석요약)</strong>에 자동 반영됩니다.</div>'
       + note
       + '</div>';
   }
 
-  function injectAuction() {
+  function injectBidEst() {
     var vc = document.getElementById('viewContainer'); if (!vc) return;
     var pid = state.currentPropertyId; if (!pid) return;
+    var host = document.getElementById('bidEstHost');
+    var html = cardHTML(pid);
+    var empty = '<div class="card"><div class="text-muted">감정가 또는 거래사례가 없어 추정할 수 없습니다. 02 거래사례 / 04 경공매 사례 탭에서 데이터를 채워주세요.</div></div>';
+    if (host) { host.innerHTML = html || empty; return; }
+    // host가 아직 없으면(렌더 타이밍) viewContainer 끝에 주입
     Array.prototype.forEach.call(vc.querySelectorAll('[data-cascade="1"]'), function (n) { n.remove(); });
-    var html = cardHTML(pid); if (!html) return;
+    if (!html) return;
     var tmp = document.createElement('div'); tmp.innerHTML = html;
-    var node = tmp.firstElementChild;
-    var orig = null;
-    Array.prototype.forEach.call(vc.querySelectorAll('.card'), function (c) {
-      if (!orig && /본건 적용 · 사례 기반/.test(c.textContent)) orig = c;
-    });
-    if (orig) { orig.replaceWith(node); return; }
-    var grid = vc.querySelector('.grid.grid-4');
-    if (grid && grid.parentNode) grid.parentNode.insertBefore(node, grid.nextSibling);
-    else vc.insertBefore(node, vc.children[1] || null);
+    vc.appendChild(tmp.firstElementChild);
   }
+  window.injectBidEst = injectBidEst;
 
   window.setManualBidRate = function (pid, val) {
     if (!pid) return;
@@ -364,7 +362,7 @@
     if (val === '' || val == null || isNaN(v)) delete state.scenarios[pid].manualBidRate;
     else state.scenarios[pid].manualBidRate = round1(Math.max(CFG.minRate, Math.min(CFG.maxRate, v)));
     if (typeof saveState === 'function') { try { saveState(); } catch (e) {} }
-    injectAuction();
+    injectBidEst();
   };
 
   /* 담당자 보정: 가치형성요인(0.50~1.50) / 낙찰가율(%) → 담당자안 재산출 */
@@ -382,7 +380,7 @@
       state.scenarios[pid][key] = clampFactor(val);
     }
     if (typeof saveState === 'function') { try { saveState(); } catch (e) {} }
-    injectAuction();
+    injectBidEst();
   };
 
   /* AI안 / 담당자안 최종 채택 */
@@ -392,7 +390,7 @@
     state.scenarios[pid] = state.scenarios[pid] || {};
     state.scenarios[pid].bidDecision = (val === 'mgr') ? 'mgr' : 'ai';
     if (typeof saveState === 'function') { try { saveState(); } catch (e) {} }
-    injectAuction();
+    injectBidEst();
   };
 
   /* ===== 02 거래사례 비교 보정 ===== */
@@ -596,7 +594,7 @@
       var pid = state.currentPropertyId;
       if (autoAlign(pid)) { window.renderView(); return; }
       var v = state.currentView;
-      if (v === 'auction') injectAuction();
+      if (v === 'bidest') injectBidEst();
       else if (v === 'comparables') patchComparables();
       else if (v === 'valuation') patchValuation();
       else if (v === 'report') patchReport();
