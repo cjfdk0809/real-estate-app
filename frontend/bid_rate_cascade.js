@@ -122,16 +122,6 @@
     var addr = p.addrLot || p.addrRoad || '';
     var targetSg = parseSigungu(addr), targetSido = parseSido(addr);
 
-    // ★ 최우선: 본건별 낙찰가율 직접입력 (인포케어 아파트 낙찰율 등)
-    var _sc0 = (state && state.scenarios && state.scenarios[pid]) || {};
-    if (_sc0.manualBidRate != null && _sc0.manualBidRate !== '' && !isNaN(parseFloat(_sc0.manualBidRate))) {
-      var _mr = round1(parseFloat(_sc0.manualBidRate));
-      var _clm = function (v) { return round1(Math.max(CFG.minRate, Math.min(CFG.maxRate, v))); };
-      return { tier: 'manual', center: _mr, scenarios: { con: _clm(_mr - CFG.spread), mid: _mr, agg: _clm(_mr + CFG.spread) },
-        isStat: false, asof: null, sampleN: 0, scope: '본건 직접입력', targetSigungu: targetSg, targetSido: targetSido,
-        sameComplexN: 0, sigunguN: 0 };
-    }
-
     var same = (aucs[pid] || []).map(rateOf).filter(ok);
     var sg = [];
     Object.keys(aucs).forEach(function (k) {
@@ -225,45 +215,51 @@
     if (!ap.value) return '';
 
     var cas = resolveBidRateCascade(pid);
-    var bid = Math.round(ap.value * cas.center / 100);
+    var area = p.exclusiveArea || 0;
+    var unitPrice = area ? Math.round(ap.value / area) : 0;           // 거래사례 평균단가(원/㎡)
+    var fExt = 1.00, fInt = 1.00, fHo = 1.00;                          // 가치형성요인(기본 1.00)
+    var baseValue = Math.round(unitPrice * area * fExt * fInt * fHo);  // 거래사례 기준시세
+    var bidRate = cas.center / 100;                                    // 기타요인(낙찰가율)
+    var bid = Math.round(baseValue * bidRate);                         // AI 예상낙찰가
     var badge = TIER[cas.tier];
-    var _scV = ((state && state.scenarios) || {})[pid] || {};
-    var manualVal = (_scV.manualBidRate != null && _scV.manualBidRate !== '') ? _scV.manualBidRate : null;
 
     var note;
-    if (cas.tier === 'manual') {
-      note = '<div class="text-small text-muted">✏️ 본건에 <strong>직접 입력</strong>한 낙찰가율입니다. 칸을 비우면 시군구 통계로 자동 복귀합니다.</div>';
-    } else if (cas.isStat) {
-      note = '<div class="text-small text-muted">📊 위 낙찰가율은 <strong>' + cas.scope + '</strong> 낙찰가율입니다 (한국부동산원 법원경매통계 ' + cas.asof + ', 용도무관 종합). '
-        + '아파트 등 특정 용도는 다소 높을 수 있어, 필요 시 본건별 직접입력으로 보정하세요.</div>';
+    if (cas.isStat) {
+      note = '<div class="text-small text-muted">📊 낙찰가율은 <strong>' + cas.scope + '</strong> 종합 낙찰가율입니다 (한국부동산원 법원경매통계 ' + cas.asof + ', 용도무관). 아파트는 종합보다 다소 높을 수 있습니다.</div>';
     } else if (cas.tier === 'default') {
       note = '<div class="text-small" style="color:var(--warn);">⚠️ 소재지에서 지역을 못 읽어 기본값(90%)을 적용했습니다. 주소를 확인하세요.</div>';
     } else {
       note = '<div class="text-small text-muted">📍 본건 <strong>' + cas.scope + '</strong> ' + cas.sampleN + '건의 중앙값입니다.</div>';
     }
 
+    var row = function (label, val, desc, strong) {
+      return '<tr>'
+        + '<td style="padding:7px 0;color:var(--ink-soft);' + (strong ? 'font-weight:700;' : '') + '">' + label + '</td>'
+        + '<td style="padding:7px 0;text-align:right;font-variant-numeric:tabular-nums;font-weight:' + (strong ? '700' : '600') + ';white-space:nowrap;">' + val + '</td>'
+        + '<td style="padding:7px 0 7px 14px;color:var(--ink-muted);font-size:12px;">' + (desc || '') + '</td>'
+        + '</tr>';
+    };
+
     return ''
       + '<div class="card mb-24" data-cascade="1" style="border-left:4px solid var(--accent);">'
-      + '<div class="card-title">본건 적용 · 낙찰가율 캐스케이드 '
+      + '<div class="card-title">AI 추정 낙찰가액 '
       + '<span class="badge" style="background:' + badge[0] + ';color:#fff;">' + badge[1] + '</span></div>'
-      + '<div class="grid grid-2">'
-      + '<div>'
-      + '<div class="info-row"><div class="info-label">적용 지역</div><div class="info-value"><strong>' + cas.scope + '</strong>' + (cas.asof ? ' <span class="text-muted text-small">(한국부동산원 ' + cas.asof + ')</span>' : '') + '</div></div>'
-      + '<div class="info-row"><div class="info-label">적용 낙찰가율</div><div class="info-value mono text-accent">' + cas.center + '%</div></div>'
-      + '<div class="info-row no-print"><div class="info-label">낙찰가율 직접입력</div><div class="info-value">'
-      + '<input type="number" step="0.1" min="0" max="200" value="' + (manualVal != null ? manualVal : '') + '" placeholder="예: 96.5"'
-      + ' style="width:84px;padding:4px 8px;border:1px solid var(--line,#d0d5dd);border-radius:6px;text-align:right;font-family:inherit;font-size:14px;"'
-      + ' onchange="setManualBidRate(\'' + pid + '\', this.value)"> %'
-      + (manualVal != null ? ' <button class="no-print" style="margin-left:8px;border:none;background:none;color:var(--ink-muted,#888);font-size:12px;cursor:pointer;text-decoration:underline;" onclick="setManualBidRate(\'' + pid + '\',\'\')">자동으로</button>' : '')
-      + '</div></div>'
-      + '<div class="info-row"><div class="info-label">본건 예상감정가</div><div class="info-value mono">' + won(ap.value) + ' <span class="text-muted text-small">(' + (ap.source || '') + ')</span></div></div>'
-      + '<div class="info-row" style="align-items:center;"><div class="info-label">예상 낙찰가</div><div class="info-value mono" style="font-size:26px;font-weight:800;color:' + PINK + ';line-height:1.1;">' + won(bid) + '</div></div>'
+      + '<div class="text-small text-muted" style="margin:-4px 0 14px;">거래사례비교법 기반 — 거래사례 평균단가에 가치형성요인과 시군구 낙찰가율(한국부동산원)을 적용해 산출합니다.</div>'
+      + '<table style="width:100%;border-collapse:collapse;font-size:14px;">'
+      + row('거래사례 평균단가', won(unitPrice) + '/㎡', '거래사례 평균매매가 ÷ 전용면적')
+      + row('× 전용면적', (area ? area.toFixed(2) : '-') + '㎡', ap.source || '')
+      + row('= 거래사례 기준시세', won(baseValue), '', true)
+      + row('× 단지외부요인', fExt.toFixed(2), '교통·입지·학군·환경')
+      + row('× 단지내부요인', fInt.toFixed(2), '브랜드·세대수·구조·노후도')
+      + row('× 호별요인', fHo.toFixed(2), '층·향·위치별 효용')
+      + row('× 기타요인 (낙찰가율)', bidRate.toFixed(3), cas.scope + ' ' + cas.center + '%' + (cas.asof ? ' · 한국부동산원 ' + cas.asof : ''))
+      + '</table>'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding-top:14px;border-top:2px solid var(--line-strong,#c2cad9);">'
+      + '<div style="font-weight:800;color:var(--ink);font-size:15px;">= AI 예상낙찰가</div>'
+      + '<div class="mono" style="font-size:26px;font-weight:800;color:' + PINK + ';line-height:1.1;">' + won(bid) + '</div>'
       + '</div>'
-      + '<div style="display:flex;flex-direction:column;justify-content:center;gap:10px;">'
-      + '<div class="text-small text-muted" style="padding:6px 0;">✅ 이 적용 낙찰가율은 <strong>05 권리분석</strong> · <strong>리포트</strong>에 자동 반영됩니다.<br>중립 ' + cas.scenarios.mid + '% · 보수 ' + cas.scenarios.con + '%(−5) · 적극 ' + cas.scenarios.agg + '%(+5)</div>'
+      + '<div class="text-small text-muted" style="margin-top:12px;">✅ 이 낙찰가율(' + cas.center + '%)은 <strong>05 권리분석</strong> · <strong>리포트</strong>에 자동 반영됩니다. <span class="text-muted">(중립 ' + cas.scenarios.mid + '% · 보수 ' + cas.scenarios.con + '% · 적극 ' + cas.scenarios.agg + '%)</span></div>'
       + note
-      + '</div>'
-      + '</div>'
       + '</div>';
   }
 
