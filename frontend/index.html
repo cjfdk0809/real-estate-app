@@ -1769,39 +1769,34 @@ function renderOpinion() {
   const c = document.getElementById('viewContainer');
   const p = state.properties[state.currentPropertyId];
   if (!p) { c.innerHTML = `<div class="empty"><div class="empty-title">등록된 물건이 없습니다</div></div>`; return; }
-  const auctions = state.auctions[p.id] || [];
-  const rights = state.rights[p.id] || [];
   const op = (state.opinion && state.opinion[p.id]) || {};
-
-  const ap = getActiveAppraisal(p, auctions);
-  const cas = (typeof resolveBidRateCascade === 'function') ? resolveBidRateCascade(p.id) : null;
-  const ra = analyzeRights(rights);
-
-  // 자동 프리필 (저장값 우선)
   const be = (typeof window.resolveBidEstimate === 'function') ? window.resolveBidEstimate(p.id) : null;
-  const courtAppraisal = (op.courtAppraisal != null) ? op.courtAppraisal : (ap.value || null);
-  let baseBid;
-  if (be) {
-    // 법사가를 담당자가 덮어쓰면 최종 채택안의 전체배율(요인×낙찰가율)을 그대로 적용
-    baseBid = (op.courtAppraisal != null && be.baseAi) ? Math.round(op.courtAppraisal * (be.finalBid / be.baseAi)) : be.finalBid;
-  } else {
-    baseBid = (courtAppraisal && cas) ? Math.round(courtAppraisal * cas.center / 100) : null;
-  }
-  const expectedBid = (op.expectedBid != null) ? op.expectedBid : baseBid;
-  const seniorLien = (op.seniorLien != null) ? op.seniorLien : (ra.seniorClaim || null);
-  const autoRecovery = (expectedBid != null) ? Math.max(0, expectedBid - (ra.assumedTotal || 0)) : null;
-  const expectedRecovery = (op.expectedRecovery != null) ? op.expectedRecovery : autoRecovery;
   const comment = op.comment || '';
 
   const won = (v) => (v != null && v !== '') ? Number(v).toLocaleString() + '원' : '-';
   const eok = (v) => (v != null && v !== '') ? '약 ' + (Number(v) / 100000000).toFixed(2).replace(/\.?0+$/, '') + '억원' : '';
-  const numVal = (v) => (v != null && v !== '') ? Number(v) : '';
+
+  const estCard = be ? `
+    <div class="card">
+      <div class="card-title">◆ 낙찰가 산정 결과</div>
+      <div class="info-row"><div class="info-label">AI 산정가</div><div class="info-value mono">${won(be.aiBid)} <span class="text-muted text-small">(요인 1.00 · 낙찰가율 ${be.aiRatePct}%)</span></div></div>
+      <div class="info-row"><div class="info-label">담당자 산정가</div><div class="info-value mono">${won(be.mgrBid)} <span class="text-muted text-small">(요인 곱 ${be.factorProd.toFixed(2)} · 낙찰가율 ${be.mRatePct}%)</span></div></div>
+      <div class="info-row" style="border-top:2px solid var(--line-strong,#c2cad9);margin-top:6px;padding-top:12px;">
+        <div class="info-label" style="font-weight:800;color:var(--ink);">채택가</div>
+        <div class="info-value mono" style="font-weight:800;color:var(--kiwoom-pink-deep,#CC00CC);font-size:18px;">${won(be.finalBid)} <span class="text-small" style="font-weight:600;">(${be.decisionLabel} 채택)</span></div>
+      </div>
+      <div class="text-small text-muted" style="margin-top:8px;">${eok(be.finalBid)} · 채택안(AI/담당자) 변경은 <strong>04 경공매</strong> 탭에서 합니다.</div>
+    </div>` : `
+    <div class="card">
+      <div class="card-title">◆ 낙찰가 산정 결과</div>
+      <div class="text-muted">감정가 또는 거래사례가 없어 아직 산정할 수 없습니다. 02 거래사례 / 04 경공매 탭에서 데이터를 채워주세요.</div>
+    </div>`;
 
   c.innerHTML = `
     <div class="page-head">
       <div class="page-eyebrow">담당자 의견 · MANAGER OPINION</div>
       <h1 class="page-title">${p.name || '본건'}</h1>
-      <div class="page-sub">본건 핵심 수치와 담당자 검토 의견을 한 곳에 정리합니다. (선순위·법사가·낙찰예상가는 자동 연계, 직접 수정 가능)</div>
+      <div class="page-sub">AI·담당자 산정가와 채택가를 확인하고, 채택 사유를 기록합니다.</div>
     </div>
 
     <div class="card">
@@ -1811,38 +1806,13 @@ function renderOpinion() {
       <div class="info-row"><div class="info-label">동·호</div><div class="info-value">${(p.building || '-')} ${(p.unit || '')}</div></div>
       <div class="info-row"><div class="info-label">전용면적</div><div class="info-value">${p.exclusiveArea ? p.exclusiveArea + '㎡ (' + (p.exclusiveArea / 3.3058).toFixed(1) + '평)' : '-'}</div></div>
       <div class="info-row"><div class="info-label">공시가격</div><div class="info-value mono">${won(p.publicPrice)}</div></div>
-      <div class="info-row"><div class="info-label">말소기준권리</div><div class="info-value">${ra.baseRight ? (ra.baseRight.type + (ra.baseDate ? ' · ' + ra.baseDate : '')) : '-'}</div></div>
     </div>
 
-    <div class="card">
-      <div class="card-title">◆ NPL 핵심 수치 <span class="text-muted text-small" style="font-weight:400;">· 빈칸은 자동값, 입력 시 입력값 우선</span></div>
-      <div class="opinion-grid">
-        <div class="op-field">
-          <label>법사가 (법원 감정가)</label>
-          <div class="op-input"><input type="number" value="${numVal(courtAppraisal)}" placeholder="자동: ${ap.value ? ap.value.toLocaleString() : '미산정'}" onchange="updateOpinion('courtAppraisal', this.value)"> 원</div>
-          <div class="op-hint">${eok(courtAppraisal)}</div>
-        </div>
-        <div class="op-field">
-          <label>선순위 채권 (인수·우선)</label>
-          <div class="op-input"><input type="number" value="${numVal(seniorLien)}" placeholder="자동: ${ra.seniorClaim ? ra.seniorClaim.toLocaleString() : '미산정'}" onchange="updateOpinion('seniorLien', this.value)"> 원</div>
-          <div class="op-hint">${ra.seniorHolder ? ra.seniorHolder + ' · ' : ''}${eok(seniorLien)}</div>
-        </div>
-        <div class="op-field">
-          <label>낙찰예상가</label>
-          <div class="op-input"><input type="number" value="${numVal(expectedBid)}" placeholder="자동: ${baseBid ? baseBid.toLocaleString() : '미산정'}" onchange="updateOpinion('expectedBid', this.value)"> 원</div>
-          <div class="op-hint">${be ? be.decisionLabel + ' 채택 · 낙찰가율 ' + (be.decision === 'mgr' ? be.mRatePct : be.aiRatePct) + '% · ' : (cas ? '낙찰가율 ' + cas.center + '% · ' : '')}${eok(expectedBid)}</div>
-        </div>
-        <div class="op-field">
-          <label>회수예상가</label>
-          <div class="op-input"><input type="number" value="${numVal(expectedRecovery)}" placeholder="자동: ${autoRecovery != null ? autoRecovery.toLocaleString() : '미산정'}" onchange="updateOpinion('expectedRecovery', this.value)"> 원</div>
-          <div class="op-hint">낙찰예상가 − 인수금액 · ${eok(expectedRecovery)}</div>
-        </div>
-      </div>
-    </div>
+    ${estCard}
 
     <div class="card">
-      <div class="card-title">◆ 담당자 의견</div>
-      <textarea class="op-textarea" placeholder="본건 매수 검토 의견을 입력하세요. (예: 권리관계 정리 가능 여부, 명도 난이도, 시세 대비 매력도, 회수 시나리오, 리스크 등)" onchange="updateOpinion('comment', this.value)">${comment.replace(/</g, '&lt;')}</textarea>
+      <div class="card-title">◆ 담당자 의견 <span class="text-muted text-small" style="font-weight:400;">· 채택가 선택 사유</span></div>
+      <textarea class="op-textarea" placeholder="채택가를 선택한 사유를 간략히 적어주세요. (예: 인근 대비 명도 난이도가 높아 낙찰가율을 보수적으로 보정 / 호별요인 하향 반영 등)" onchange="updateOpinion('comment', this.value)">${comment.replace(/</g, '&lt;')}</textarea>
     </div>
   `;
 }
@@ -3257,26 +3227,14 @@ function renderReport() {
   const _decLabel = _be ? _be.decisionLabel : 'AI안';
   const _finalDist = _finalBid != null ? Math.max(0, _finalBid - ra.assumedTotal) : null;
   const _finalRecovery = (_finalDist != null && ra.seniorClaim) ? Math.min(100, _finalDist / ra.seniorClaim * 100) : null;
-  // 담당자 의견 (07 모듈 값 — 입력값 우선, 없으면 자동값. 내용 있을 때만 리포트에 출력)
+  // 담당자 의견 (07 모듈 — 채택가 + 채택 사유)
   const _op = (state.opinion && state.opinion[p.id]) || {};
-  const _opCourt = (_op.courtAppraisal != null) ? _op.courtAppraisal : (ap.value || null);
-  const _opBid = (_op.expectedBid != null) ? _op.expectedBid : (_finalBid != null ? _finalBid : ((_opCourt && _cas) ? Math.round(_opCourt * _cas.center / 100) : null));
-  const _opSenior = (_op.seniorLien != null) ? _op.seniorLien : (ra.seniorClaim || null);
-  const _opRec = (_op.expectedRecovery != null) ? _op.expectedRecovery : (_opBid != null ? Math.max(0, _opBid - (ra.assumedTotal || 0)) : null);
   const _opCmt = _op.comment || '';
-  const _opSection = (_opCourt || _opSenior || _opBid || _opRec != null || _opCmt) ? `
+  const _opSection = (_be || _opCmt) ? `
     <div class="section-h">6. 담당자 의견</div>
-    <table style="width:100%; border-collapse:collapse; margin-bottom:14px;">
-      <tr>
-        <td style="padding:7px 0; color:var(--ink-muted); width:130px;">법사가(법원감정가)</td><td style="padding:7px 0;" class="mono">${_opCourt ? fmt.won(_opCourt) : '-'}</td>
-        <td style="padding:7px 0; color:var(--ink-muted); width:130px;">선순위 채권</td><td style="padding:7px 0;" class="mono">${_opSenior ? fmt.won(_opSenior) : '-'}</td>
-      </tr>
-      <tr>
-        <td style="padding:7px 0; color:var(--ink-muted);">낙찰예상가</td><td style="padding:7px 0;" class="mono">${_opBid ? fmt.won(_opBid) : '-'}</td>
-        <td style="padding:7px 0; color:var(--ink-muted);">회수예상가</td><td style="padding:7px 0;" class="mono">${_opRec != null ? fmt.won(_opRec) : '-'}</td>
-      </tr>
-    </table>
-    ${_opCmt ? `<div style="line-height:1.8; color:var(--ink-soft); white-space:pre-wrap;">${_opCmt.replace(/</g, '&lt;')}</div>` : '<div style="color:var(--ink-muted);">의견 미입력</div>'}
+    ${_be ? `<div class="info-row"><div class="info-label">채택가</div><div class="info-value mono text-accent" style="font-weight:800;">${fmt.won(_be.finalBid)} <span class="text-muted text-small">(${_be.decisionLabel} 채택)</span></div></div>
+    <div class="info-row"><div class="info-label">AI 산정가 / 담당자 산정가</div><div class="info-value mono">${fmt.won(_be.aiBid)} / ${fmt.won(_be.mgrBid)}</div></div>` : ''}
+    <div style="margin-top:10px; line-height:1.8; color:var(--ink-soft); white-space:pre-wrap;">${_opCmt ? _opCmt.replace(/</g, '&lt;') : '<span style="color:var(--ink-muted);">채택 사유 미입력</span>'}</div>
   ` : '';
   const _con = _cas ? _cas.scenarios.con : (sc.con != null ? sc.con : 92);
   const _mid = _cas ? _cas.scenarios.mid : (sc.mid != null ? sc.mid : 97);
