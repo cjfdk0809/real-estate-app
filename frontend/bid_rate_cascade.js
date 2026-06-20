@@ -179,6 +179,40 @@
   }
   window.resolveBidRateCascade = resolveBidRateCascade;
 
+  /* ===== 낙찰가 산정: AI안(요인1.00) vs 담당자안(요인보정) → 최종 채택 =====
+     04 카드·07 담당자의견·리포트가 모두 이 한 곳의 숫자를 사용한다. */
+  function clampFactor(v) { v = parseFloat(v); if (isNaN(v)) return 1.00; return Math.max(0.5, Math.min(1.5, Math.round(v * 100) / 100)); }
+  function resolveBidEstimate(pid) {
+    var props = (state && state.properties) || {}, aucs = (state && state.auctions) || {};
+    var p = props[pid]; if (!p) return null;
+    var auctions = aucs[pid] || [];
+    var ap = (typeof getActiveAppraisal === 'function') ? getActiveAppraisal(p, auctions) : { value: null, source: '' };
+    if (!ap || !ap.value) return null;
+    var area = p.exclusiveArea || 0;
+    var cas = resolveBidRateCascade(pid);
+    var rate = cas.center / 100;
+    var sc = (state.scenarios && state.scenarios[pid]) || {};
+    var mExt = clampFactor(sc.mgrFactorExt != null ? sc.mgrFactorExt : 1.00);
+    var mInt = clampFactor(sc.mgrFactorInt != null ? sc.mgrFactorInt : 1.00);
+    var mHo  = clampFactor(sc.mgrFactorHo  != null ? sc.mgrFactorHo  : 1.00);
+    var baseAi = ap.value;                                  // 요인 1.00 = 기준시세
+    var baseMgr = Math.round(ap.value * mExt * mInt * mHo);  // 담당자 보정 기준시세
+    var aiBid = Math.round(baseAi * rate);
+    var mgrBid = Math.round(baseMgr * rate);
+    var decision = (sc.bidDecision === 'mgr') ? 'mgr' : 'ai';
+    var finalBid = decision === 'mgr' ? mgrBid : aiBid;
+    return {
+      ap: ap, area: area, cas: cas, rate: rate,
+      unitPrice: area ? Math.round(ap.value / area) : 0,
+      mExt: mExt, mInt: mInt, mHo: mHo,
+      baseAi: baseAi, baseMgr: baseMgr,
+      aiBid: aiBid, mgrBid: mgrBid,
+      decision: decision, decisionLabel: (decision === 'mgr' ? '담당자안' : 'AI안'),
+      finalBid: finalBid
+    };
+  }
+  window.resolveBidEstimate = resolveBidEstimate;
+
   var TIER = {
     manual: ['#7c3aed', '✏️ 직접입력'],
     same_complex: ['#0f6e5c', '1단계 · 동일단지'], sigungu: ['#1e2a44', '2단계 · 시군구 사례'],
@@ -209,19 +243,12 @@
 
   /* ===== (2) 04 경공매 캐스케이드 카드 ===== */
   function cardHTML(pid) {
-    var p = ((state && state.properties) || {})[pid]; if (!p) return '';
-    var auctions = ((state && state.auctions) || {})[pid] || [];
-    var ap = (typeof getActiveAppraisal === 'function') ? getActiveAppraisal(p, auctions) : { value: null, source: '' };
-    if (!ap.value) return '';
-
-    var cas = resolveBidRateCascade(pid);
-    var area = p.exclusiveArea || 0;
-    var unitPrice = area ? Math.round(ap.value / area) : 0;           // 거래사례 평균단가(원/㎡)
-    var fExt = 1.00, fInt = 1.00, fHo = 1.00;                          // 가치형성요인(기본 1.00)
-    var baseValue = Math.round(unitPrice * area * fExt * fInt * fHo);  // 거래사례 기준시세
-    var bidRate = cas.center / 100;                                    // 기타요인(낙찰가율)
-    var bid = Math.round(baseValue * bidRate);                         // AI 예상낙찰가
+    var be = resolveBidEstimate(pid); if (!be) return '';
+    var cas = be.cas, ap = be.ap, area = be.area;
+    var unitPrice = be.unitPrice, baseValue = be.baseAi, bidRate = be.rate;
     var badge = TIER[cas.tier];
+    var dec = be.decision;
+    var mgrProduct = be.mExt * be.mInt * be.mHo;
 
     var note;
     if (cas.isStat) {
@@ -240,25 +267,57 @@
         + '</tr>';
     };
 
+    var facInput = function (which, val) {
+      return '<input type="number" min="0.5" max="1.5" step="0.05" value="' + val.toFixed(2) + '" '
+        + 'onchange="window.updateBidFactor(\'' + which + '\', this.value)" '
+        + 'style="width:64px;padding:4px 6px;text-align:right;font-variant-numeric:tabular-nums;border:1px solid var(--line-strong,#c2cad9);border-radius:6px;font-size:13px;font-weight:700;color:var(--ink);">';
+    };
+    var facRow = function (label, desc, mgrVal, which) {
+      return '<tr>'
+        + '<td style="padding:6px 0;color:var(--ink-soft);font-size:13px;">' + label + '<div style="color:var(--ink-muted);font-size:11px;">' + desc + '</div></td>'
+        + '<td style="padding:6px 8px;text-align:right;color:var(--ink-muted);font-variant-numeric:tabular-nums;font-size:13px;">1.00</td>'
+        + '<td style="padding:6px 0 6px 8px;text-align:right;">' + facInput(which, mgrVal) + '</td>'
+        + '</tr>';
+    };
+    var priceBox = function (key, title, amount, sub, active) {
+      return '<label style="flex:1;min-width:158px;cursor:pointer;display:block;border:2px solid ' + (active ? PINK : 'var(--line,#dfe4ee)') + ';background:' + (active ? 'var(--kiwoom-pink-soft,#FFE6FF)' : 'transparent') + ';border-radius:10px;padding:12px 14px;">'
+        + '<div style="display:flex;align-items:center;gap:8px;">'
+        + '<input type="radio" name="bidDecision_' + pid + '" ' + (active ? 'checked' : '') + ' onchange="window.setBidDecision(\'' + pid + '\',\'' + key + '\')" style="accent-color:' + PINK + ';width:16px;height:16px;">'
+        + '<span style="font-weight:700;color:var(--ink);font-size:13px;">' + title + '</span></div>'
+        + '<div class="mono" style="font-size:22px;font-weight:800;color:' + (active ? PINK : 'var(--ink-soft)') + ';margin-top:6px;line-height:1.1;">' + won(amount) + '</div>'
+        + '<div style="color:var(--ink-muted);font-size:11px;margin-top:3px;">' + sub + '</div>'
+        + '</label>';
+    };
+
     return ''
       + '<div class="card mb-24" data-cascade="1" style="border-left:4px solid var(--accent);">'
       + '<div class="card-title">AI 추정 낙찰가액 '
       + '<span class="badge" style="background:' + badge[0] + ';color:#fff;">' + badge[1] + '</span></div>'
-      + '<div class="text-small text-muted" style="margin:-4px 0 14px;">거래사례비교법 기반 — 거래사례 평균단가에 가치형성요인과 시군구 낙찰가율(한국부동산원)을 적용해 산출합니다.</div>'
+      + '<div class="text-small text-muted" style="margin:-4px 0 14px;">거래사례비교법 — 기준시세 × 가치형성요인 × 낙찰가율. <strong>AI안</strong>(요인 1.00)과 <strong>담당자안</strong>(요인 직접보정)을 산출해 둘 중 하나를 최종 채택합니다.</div>'
       + '<table style="width:100%;border-collapse:collapse;font-size:14px;">'
       + row('거래사례 평균단가', won(unitPrice) + '/㎡', '거래사례 평균매매가 ÷ 전용면적')
       + row('× 전용면적', (area ? area.toFixed(2) : '-') + '㎡', ap.source || '')
-      + row('= 거래사례 기준시세', won(baseValue), '', true)
-      + row('× 단지외부요인', fExt.toFixed(2), '교통·입지·학군·환경')
-      + row('× 단지내부요인', fInt.toFixed(2), '브랜드·세대수·구조·노후도')
-      + row('× 호별요인', fHo.toFixed(2), '층·향·위치별 효용')
+      + row('= 기준시세', won(baseValue), '요인 보정 전', true)
       + row('× 기타요인 (낙찰가율)', bidRate.toFixed(3), cas.scope + ' ' + cas.center + '%' + (cas.asof ? ' · 한국부동산원 ' + cas.asof : ''))
       + '</table>'
-      + '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding-top:14px;border-top:2px solid var(--line-strong,#c2cad9);">'
-      + '<div style="font-weight:800;color:var(--ink);font-size:15px;">= AI 예상낙찰가</div>'
-      + '<div class="mono" style="font-size:26px;font-weight:800;color:' + PINK + ';line-height:1.1;">' + won(bid) + '</div>'
+      + '<div style="margin-top:16px;font-weight:700;color:var(--ink);font-size:13px;">가치형성요인 보정 <span class="text-muted" style="font-weight:400;font-size:11px;">· 담당자안은 0.50~1.50 직접 입력</span></div>'
+      + '<table style="width:100%;border-collapse:collapse;margin-top:6px;">'
+      + '<thead><tr><th style="text-align:left;font-size:11px;color:var(--ink-muted);font-weight:600;padding-bottom:4px;">요인</th><th style="text-align:right;font-size:11px;color:var(--ink-muted);font-weight:600;">AI안</th><th style="text-align:right;font-size:11px;color:var(--ink-muted);font-weight:600;">담당자안</th></tr></thead>'
+      + '<tbody>'
+      + facRow('단지외부요인', '교통·입지·학군·환경', be.mExt, 'ext')
+      + facRow('단지내부요인', '브랜드·세대수·구조·노후도', be.mInt, 'int')
+      + facRow('호별요인', '층·향·위치별 효용', be.mHo, 'ho')
+      + '<tr style="border-top:1px solid var(--line,#dfe4ee);"><td style="padding:6px 0;font-weight:700;font-size:13px;color:var(--ink-soft);">요인 합계(곱)</td><td style="padding:6px 8px;text-align:right;font-weight:700;font-size:13px;">1.00</td><td style="padding:6px 0;text-align:right;font-weight:700;font-size:13px;color:' + PINK + ';">' + mgrProduct.toFixed(2) + '</td></tr>'
+      + '</tbody></table>'
+      + '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;">'
+      + priceBox('ai', 'AI안 채택', be.aiBid, '요인 1.00 적용', dec === 'ai')
+      + priceBox('mgr', '담당자안 채택', be.mgrBid, '보정요인 ' + mgrProduct.toFixed(2) + ' 적용', dec === 'mgr')
       + '</div>'
-      + '<div class="text-small text-muted" style="margin-top:12px;">✅ 이 낙찰가율(' + cas.center + '%)은 <strong>05 권리분석</strong> · <strong>리포트</strong>에 자동 반영됩니다. <span class="text-muted">(중립 ' + cas.scenarios.mid + '% · 보수 ' + cas.scenarios.con + '% · 적극 ' + cas.scenarios.agg + '%)</span></div>'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:16px;padding-top:14px;border-top:2px solid var(--line-strong,#c2cad9);">'
+      + '<div style="font-weight:800;color:var(--ink);font-size:15px;">= 최종 낙찰예상가 <span style="font-size:12px;font-weight:600;color:' + PINK + ';">(' + be.decisionLabel + ' 채택)</span></div>'
+      + '<div class="mono" style="font-size:26px;font-weight:800;color:' + PINK + ';line-height:1.1;">' + won(be.finalBid) + '</div>'
+      + '</div>'
+      + '<div class="text-small text-muted" style="margin-top:12px;">✅ 최종 채택값은 <strong>07 담당자 의견</strong> · <strong>리포트(3-2 낙찰가 산정 결정·분석요약)</strong>에 자동 반영됩니다.</div>'
       + note
       + '</div>';
   }
@@ -287,6 +346,28 @@
     var v = parseFloat(val);
     if (val === '' || val == null || isNaN(v)) delete state.scenarios[pid].manualBidRate;
     else state.scenarios[pid].manualBidRate = round1(Math.max(CFG.minRate, Math.min(CFG.maxRate, v)));
+    if (typeof saveState === 'function') { try { saveState(); } catch (e) {} }
+    injectAuction();
+  };
+
+  /* 담당자 가치형성요인 보정(0.50~1.50) → 담당자안 재산출 */
+  window.updateBidFactor = function (which, val) {
+    var pid = state && state.currentPropertyId; if (!pid) return;
+    state.scenarios = state.scenarios || {};
+    state.scenarios[pid] = state.scenarios[pid] || {};
+    var key = which === 'ext' ? 'mgrFactorExt' : which === 'int' ? 'mgrFactorInt' : which === 'ho' ? 'mgrFactorHo' : null;
+    if (!key) return;
+    state.scenarios[pid][key] = clampFactor(val);
+    if (typeof saveState === 'function') { try { saveState(); } catch (e) {} }
+    injectAuction();
+  };
+
+  /* AI안 / 담당자안 최종 채택 */
+  window.setBidDecision = function (pid, val) {
+    if (!pid) return;
+    state.scenarios = state.scenarios || {};
+    state.scenarios[pid] = state.scenarios[pid] || {};
+    state.scenarios[pid].bidDecision = (val === 'mgr') ? 'mgr' : 'ai';
     if (typeof saveState === 'function') { try { saveState(); } catch (e) {} }
     injectAuction();
   };
@@ -394,8 +475,14 @@
       if (prose && !prose.getAttribute('data-bid-summary')) {
         var line = document.createElement('div');
         line.style.cssText = 'margin-bottom:12px;padding:11px 15px;background:var(--kiwoom-pink-soft,#FFE6FF);border-left:3px solid ' + PINK + ';border-radius:0 6px 6px 0;font-weight:600;line-height:1.7;';
-        line.innerHTML = '평균 낙찰가율(' + center + '%, ' + cas.scope + ')로 예상하는 본건 낙찰금액은 <strong style="color:' + PINK + ';">' + won(amt(center)) + '</strong>이며, '
-          + '적극적 ' + won(amt(_agg)) + ' · 중립적 ' + won(amt(_mid)) + ' · 보수적 ' + won(amt(_con)) + '으로 추정됩니다.';
+        var be = (typeof resolveBidEstimate === 'function') ? resolveBidEstimate(pid) : null;
+        if (be) {
+          line.innerHTML = '본건 최종 낙찰예상가는 <strong style="color:' + PINK + ';">' + won(be.finalBid) + '</strong> (' + be.decisionLabel + ' 채택)입니다. '
+            + '<span style="font-weight:500;color:var(--ink-soft);">AI안 ' + won(be.aiBid) + ' · 담당자안 ' + won(be.mgrBid) + ' · 적용 낙찰가율 ' + center + '%(' + cas.scope + ').</span>';
+        } else {
+          line.innerHTML = '평균 낙찰가율(' + center + '%, ' + cas.scope + ')로 예상하는 본건 낙찰금액은 <strong style="color:' + PINK + ';">' + won(amt(center)) + '</strong>이며, '
+            + '적극적 ' + won(amt(_agg)) + ' · 중립적 ' + won(amt(_mid)) + ' · 보수적 ' + won(amt(_con)) + '으로 추정됩니다.';
+        }
         prose.insertBefore(line, prose.firstChild);
         prose.setAttribute('data-bid-summary', '1');
       }
