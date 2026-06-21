@@ -146,11 +146,13 @@
       var v = R.sido_avg[sido];
       return (v != null && v !== '-') ? { rate: parseFloat(v), asof: R.asof } : null;
     }
+    var extSg = _statSgg(targetSido, targetSg);
     var extNat = _statSido('전국');
 
     var tier, center, asof = null, isStat = false, sampleN = null;
     if (same.length >= CFG.minSameComplex) { tier = 'same_complex'; sampleN = same.length; center = median(same); }
     else if (sg.length >= CFG.minSigungu) { tier = 'sigungu'; sampleN = sg.length; center = median(sg); }
+    else if (extSg) { tier = 'stat_sigungu'; center = extSg.rate; asof = extSg.asof; isStat = true; }
     else if (extNat) { tier = 'stat_national'; center = extNat.rate; asof = extNat.asof; isStat = true; }
     else { tier = 'default'; center = CFG.def.mid; }
 
@@ -163,6 +165,7 @@
     switch (tier) {
       case 'same_complex': scope = '본건 동일단지 낙찰사례'; break;
       case 'sigungu':      scope = (targetSg || '시군구') + ' 낙찰사례'; break;
+      case 'stat_sigungu': scope = (targetSg || '시군구') + ' 통계'; break;
       case 'stat_national':scope = '전국 평균'; break;
       default:             scope = '기본값(지역 미확인)';
     }
@@ -218,7 +221,8 @@
   var TIER = {
     manual: ['#7c3aed', '✏️ 직접입력'],
     same_complex: ['#0f6e5c', '1단계 · 동일단지'], sigungu: ['#1e2a44', '2단계 · 시군구 사례'],
-    stat_national: ['#5a6b8c', '3단계 · 전국 통계'], default: ['#a8884a', '디폴트']
+    stat_sigungu: ['#1e3a5f', '3단계 · 시군구 통계'],
+    stat_national: ['#5a6b8c', '4단계 · 전국 통계'], default: ['#a8884a', '디폴트']
   };
 
   /* ===== 시나리오 자동정렬: 중립=평균, 보수=평균-5, 적극=평균+5 ===== */
