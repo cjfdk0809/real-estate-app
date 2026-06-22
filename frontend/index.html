@@ -595,8 +595,8 @@ table { border-collapse: collapse; width: 100%; }
     -webkit-print-color-adjust: exact; print-color-adjust: exact;
   }
 }
-/* 리포트 인쇄용 CI 머릿말 — 인쇄 시 노출, 화면에서는 숨김 */
-.print-running-header { display: none; }
+/* 리포트 인쇄용 CI 머릿말 — 인쇄 시 노출, 화면에서만 숨김 */
+@media screen { .print-running-header { display: none; } }
 .print-running-header img { height: 22px; width: auto; margin-right: 12px; }
 .print-running-header .ph-title {
   font-size: 13px;
