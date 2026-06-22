@@ -585,18 +585,17 @@ table { border-collapse: collapse; width: 100%; }
   .card { border: 1px solid #ccc; page-break-inside: avoid; }
   body { background: white; font-size: 11px; }
   .page-head { margin-bottom: 16px; }
-  /* 리포트 머릿말: 고정(fixed) 러닝 헤더 — 상단 여백 안에서 전 페이지 동일 출력 (thead 잘림·중복·누락 회피) */
-  @page { margin: 24mm 12mm 14mm 12mm; }
+  /* 리포트 머릿말: 본문 최상단 인라인 1회 출력 (이 인쇄엔진은 페이지 반복 머릿말을 불안정하게 렌더 → 단일 헤더가 가장 안정적) */
+  @page { margin: 14mm 12mm 14mm 12mm; }
   .print-running-header {
     display: flex !important; align-items: center;
-    position: fixed; top: 9mm; left: 12mm; right: 12mm;
-    margin: 0; padding-bottom: 6px;
+    margin: 0 0 16px 0; padding-bottom: 8px;
     border-bottom: 2px solid var(--kiwoom-navy);
-    background: #fff; white-space: nowrap; overflow: hidden;
+    white-space: nowrap;
     -webkit-print-color-adjust: exact; print-color-adjust: exact;
   }
 }
-/* 리포트 인쇄용 CI 러닝 헤더 — 인쇄 시 노출, 화면에서는 숨김 */
+/* 리포트 인쇄용 CI 머릿말 — 인쇄 시 노출, 화면에서는 숨김 */
 .print-running-header { display: none; }
 .print-running-header img { height: 22px; width: auto; margin-right: 12px; }
 .print-running-header .ph-title {
