@@ -3914,19 +3914,39 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
   // 필수 정보 체크 (진행 막대 띄우기 전에 skip 판단)
   if (!lawdCd) {
     console.log('[Phase 3] 시군구 코드 없음 - 거래사례 자동수집 skip');
-    return { skipped: true, reason: '시군구 코드 없음 (K-apt 단지 미식별 물건)' };
+    return { skipped: true, reason: '시군구 코드 없음 (주소·K-apt로 법정동코드 미확보)' };
   }
-  if (!propertyData.name || !propertyData.exclusiveArea) {
-    console.log('[Phase 3] 단지명/전용면적 없음 - 거래사례 자동수집 skip');
-    return { skipped: true, reason: '단지명/전용면적 정보 부족' };
+
+  // 본건 유형 → 거래사례 데이터셋 분기 (아파트/오피스텔/연립다세대/단독다가구)
+  const _useRaw = (propertyData.use || '').replace(/\s/g, '');
+  let kind = 'apt';
+  if (_useRaw.includes('오피스텔')) kind = 'offi';
+  else if (_useRaw.includes('다세대') || _useRaw.includes('연립')) kind = 'rh';
+  else if (_useRaw.includes('단독') || _useRaw.includes('다가구')) kind = 'sh';
+  else if (_useRaw === '' || _useRaw.includes('아파트')) kind = 'apt';
+  else kind = null;  // 공장/창고·토지·근린상가·기타 → 미지원
+  const _EP = { apt: 'bulk', offi: 'offi-bulk', rh: 'rh-bulk', sh: 'sh-bulk' };
+  const _KINDLABEL = { apt: '아파트', offi: '오피스텔', rh: '연립·다세대', sh: '단독·다가구' };
+  const _endpoint = kind ? _EP[kind] : null;
+
+  if (!kind) {
+    return { skipped: true, reason: `'${propertyData.use || '미지정'}' 유형은 거래사례 자동수집 미지원 (아파트·오피스텔·연립다세대·단독다가구만)` };
+  }
+  if (kind !== 'sh') {
+    if (!propertyData.exclusiveArea) {
+      return { skipped: true, reason: '전용면적 정보 부족' };
+    }
+    if ((kind === 'apt' || kind === 'offi') && !propertyData.name) {
+      return { skipped: true, reason: '단지명(건물명) 정보 부족' };
+    }
   }
 
   _prog(15, '데이터 수집 준비 중...');
 
   // 전용면적 ±5% 범위
   const area = Number(propertyData.exclusiveArea);
-  const minArea = Math.floor(area * 0.95 * 100) / 100;
-  const maxArea = Math.ceil(area * 1.05 * 100) / 100;
+  let minArea = Math.floor(area * 0.95 * 100) / 100;
+  let maxArea = Math.ceil(area * 1.05 * 100) / 100;
   const roadNm = _extractRoadName(propertyData.addrRoad || '');
 
   async function _fetchBulk(useRoad, skipDanji) {
@@ -3936,11 +3956,11 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
       include_rent: 'true',
     });
     if (!skipDanji) {
-      params.set('danji_name', propertyData.name);
+      if (propertyData.name) params.set('danji_name', propertyData.name);
       if (useRoad && roadNm) params.set('road_nm', roadNm);
     }
     const _tag = skipDanji ? '지번매칭' : (useRoad && roadNm ? '도로명 ' + roadNm : '단지명');
-    const url = `${BACKEND_URL}/api/transactions/bulk?${params.toString()}`;
+    const url = `${BACKEND_URL}/api/transactions/${_endpoint}?${params.toString()}`;
     console.log(`[Phase 3] 거래사례 조회(${_tag}):`, url);
     const r = await fetch(url);
     const d = await r.json();
@@ -3949,10 +3969,37 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
   }
 
   try {
+    let items;
+    let crossUnverified = false;
+
+    if (kind === 'sh') {
+      // 단독·다가구: 단지명·전용면적 매칭 불가 → 법정동(읍면동) 단위 인근 거래
+      const _addr = propertyData.addrLot || propertyData.addrRoad || '';
+      const _pa = (window.KFITradeCollector && KFITradeCollector.parseAddress(_addr)) || {};
+      const umd = _pa.umdNm || '';
+      _prog(40, umd ? `① ${umd} 단독·다가구 인근 거래 조회 중...` : '① 단독·다가구 인근 거래 조회 중...');
+      const _p = new URLSearchParams({ lawd_cd: lawdCd, months: '24', include_rent: 'true' });
+      if (umd) _p.set('dong', umd);
+      if (propertyData.exclusiveArea) {
+        const a = Number(propertyData.exclusiveArea);
+        // 단독·다가구는 연면적 분산이 커서 ±20%로 넓게
+        minArea = Math.floor(a * 0.8 * 100) / 100;
+        maxArea = Math.ceil(a * 1.2 * 100) / 100;
+        _p.set('min_area', String(minArea));
+        _p.set('max_area', String(maxArea));
+      } else {
+        minArea = null; maxArea = null;
+      }
+      const _r = await fetch(`${BACKEND_URL}/api/transactions/sh-bulk?${_p.toString()}`);
+      const _d = await _r.json();
+      if (_d.error) throw new Error(_d.error);
+      items = _d.items || [];
+      crossUnverified = true;  // 단지·지번 매칭 없는 법정동 단위 → 항상 미검증
+      console.log(`[Phase 3:sh] ${umd || '시군구'} 단독·다가구 ${items.length}건`);
+    } else {
     // 1차: 단지명 + 도로명
     _prog(35, '① 단지명·도로명으로 거래사례 조회 중...');
-    let items = await _fetchBulk(true);
-    let crossUnverified = false;
+    items = await _fetchBulk(true);
     // 본건 도로명이 없으면 교차검증 자체가 불가 → 이름만 매칭이므로 미검증 처리
     if (!roadNm) crossUnverified = true;
 
@@ -3979,6 +4026,7 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
         }
       }
     }
+    }  // end else — 아파트·오피스텔·연립다세대 캐스케이드
     console.log(`[Phase 3] 최종 ${items.length}건 (미검증=${crossUnverified})`);
 
     _prog(90, '수집 결과 정리 중...');
@@ -4015,6 +4063,7 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
       total: items.length,
       areaRange: { min: minArea, max: maxArea },
       crossUnverified,
+      kindLabel: _KINDLABEL[kind],
     };
   } catch (e) {
     console.error('[Phase 3] 오류:', e);
@@ -5022,13 +5071,16 @@ document.getElementById('propertyForm').addEventListener('submit', async (e) => 
   } else if (result.error) {
     showToast(`⚠️ 물건검색 완료 — 단, 거래사례 자동수집 실패: ${result.error}`, 'warn', 5000);
   } else if (result.added > 0) {
-    const { min, max } = result.areaRange;
+    const _ar = result.areaRange || {};
+    const _nm = state.properties[id].name || result.kindLabel || '본건';
+    const _areaTxt = (_ar.min != null && !Number.isNaN(_ar.min)) ? `${_ar.min}~${_ar.max}㎡ · ` : '';
+    const _kindTxt = result.kindLabel ? `[${result.kindLabel}] ` : '';
     const warn = result.crossUnverified
-      ? ' · <span style="color:#ffd; font-weight:700;">⚠️도로명 미검증(단지명·면적 기준 — 확인 권장)</span>'
+      ? ' · <span style="color:#ffd; font-weight:700;">⚠️미검증(단지·면적·법정동 기준 — 확인 권장)</span>'
       : '';
     showToast(
       `✅ <strong>물건검색 완료 — ${_regTag}거래사례 ${result.added}건 수집</strong><br>` +
-      `<span style="font-size:11px;opacity:0.9;">${state.properties[id].name} · ${min}~${max}㎡ · 최근 24개월 매매·전세·월세${warn}</span>`,
+      `<span style="font-size:11px;opacity:0.9;">${_kindTxt}${_nm} · ${_areaTxt}최근 24개월 매매·전세·월세${warn}</span>`,
       result.crossUnverified ? 'warn' : 'success',
       6500
     );
