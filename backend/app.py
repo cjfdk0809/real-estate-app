@@ -90,6 +90,14 @@ URL_RENT = 'https://apis.data.go.kr/1613000/RTMSDataSvcAptRent/getRTMSDataSvcApt
 URL_RH_TRADE = 'https://apis.data.go.kr/1613000/RTMSDataSvcRHTrade/getRTMSDataSvcRHTrade'  # 매매
 URL_RH_RENT = 'https://apis.data.go.kr/1613000/RTMSDataSvcRHRent/getRTMSDataSvcRHRent'  # 전월세
 
+# 오피스텔 실거래가
+URL_OFFI_TRADE = 'https://apis.data.go.kr/1613000/RTMSDataSvcOffiTrade/getRTMSDataSvcOffiTrade'  # 매매
+URL_OFFI_RENT = 'https://apis.data.go.kr/1613000/RTMSDataSvcOffiRent/getRTMSDataSvcOffiRent'  # 전월세
+
+# 단독/다가구 실거래가 (전용면적·층 없음 → 연면적/대지면적/주택유형)
+URL_SH_TRADE = 'https://apis.data.go.kr/1613000/RTMSDataSvcSHTrade/getRTMSDataSvcSHTrade'  # 매매
+URL_SH_RENT = 'https://apis.data.go.kr/1613000/RTMSDataSvcSHRent/getRTMSDataSvcSHRent'  # 전월세
+
 # 공동주택 단지 정보 (K-apt) -  API (2025년 업그레이드)
 URL_APT_LIST_DONG = 'https://apis.data.go.kr/1613000/AptListService3/getLegaldongAptList3'  # 법정동별 단지목록
 URL_APT_LIST_ROAD = 'https://apis.data.go.kr/1613000/AptListService3/getRoadnameAptList3'  # 도로명별 단지목록
@@ -1709,6 +1717,346 @@ def get_rh_transactions_bulk():
     
     all_items.sort(key=lambda x: x.get('date', ''), reverse=True)
     
+    return jsonify({
+        'count': len(all_items),
+        'items': all_items,
+        'months_queried': year_months,
+        'errors': errors,
+    })
+
+
+# ============================================================
+# 오피스텔 실거래가 (구조: 연립다세대와 동일 — 전용면적·층·단지명 offiNm)
+# ============================================================
+
+@lru_cache(maxsize=256)
+def fetch_offi_trade_cached(lawd_cd, year_month, _ts):
+    """오피스텔 매매."""
+    params = {
+        'serviceKey': API_KEY,
+        'LAWD_CD': lawd_cd,
+        'DEAL_YMD': year_month,
+        'numOfRows': '1000',
+        'pageNo': '1',
+    }
+    r = requests.get(URL_OFFI_TRADE, params=params, timeout=30)
+    r.raise_for_status()
+    return r.text
+
+
+@lru_cache(maxsize=256)
+def fetch_offi_rent_cached(lawd_cd, year_month, _ts):
+    """오피스텔 전월세."""
+    params = {
+        'serviceKey': API_KEY,
+        'LAWD_CD': lawd_cd,
+        'DEAL_YMD': year_month,
+        'numOfRows': '1000',
+        'pageNo': '1',
+    }
+    r = requests.get(URL_OFFI_RENT, params=params, timeout=30)
+    r.raise_for_status()
+    return r.text
+
+
+def normalize_offi_trade_item(raw):
+    """오피스텔 매매 항목 정규화."""
+    deal_amount = (raw.get('dealAmount') or '').replace(',', '').strip()
+    try:
+        price = int(deal_amount) if deal_amount else None
+    except ValueError:
+        price = None
+    year = raw.get('dealYear', '')
+    month = raw.get('dealMonth', '').zfill(2)
+    day = raw.get('dealDay', '').zfill(2)
+    date = f'{year}-{month}-{day}' if year and month and day else ''
+    try:
+        area = float(raw.get('excluUseAr', '0') or 0)
+    except ValueError:
+        area = 0
+    try:
+        floor = int(raw.get('floor', '') or 0) or None
+    except ValueError:
+        floor = None
+    return {
+        'date': date,
+        'name': raw.get('offiNm', ''),  # 오피스텔 단지명
+        'building': '',
+        'area': round(area, 2),
+        'floor': floor,
+        'price': price,
+        'type': '매매',
+        'memo': raw.get('cdealType', ''),
+        'jibun': raw.get('jibun', ''),
+        'dong': raw.get('umdNm', ''),
+        'category': '오피스텔',
+    }
+
+
+def normalize_offi_rent_item(raw):
+    """오피스텔 전월세 항목 정규화."""
+    deposit = (raw.get('deposit') or '').replace(',', '').strip()
+    monthly = (raw.get('monthlyRent') or '').replace(',', '').strip()
+    try:
+        deposit = int(deposit) if deposit else None
+    except ValueError:
+        deposit = None
+    try:
+        monthly = int(monthly) if monthly else 0
+    except ValueError:
+        monthly = 0
+    year = raw.get('dealYear', '')
+    month = raw.get('dealMonth', '').zfill(2)
+    day = raw.get('dealDay', '').zfill(2)
+    date = f'{year}-{month}-{day}' if year and month and day else ''
+    try:
+        area = float(raw.get('excluUseAr', '0') or 0)
+    except ValueError:
+        area = 0
+    try:
+        floor = int(raw.get('floor', '') or 0) or None
+    except ValueError:
+        floor = None
+    return {
+        'date': date,
+        'name': raw.get('offiNm', ''),
+        'area': round(area, 2),
+        'floor': floor,
+        'price': deposit,
+        'monthly': monthly,
+        'type': '월세' if monthly > 0 else '전세',
+        'jibun': raw.get('jibun', ''),
+        'dong': raw.get('umdNm', ''),
+        'category': '오피스텔',
+    }
+
+
+@app.route('/api/transactions/offi-bulk')
+def get_offi_transactions_bulk():
+    """오피스텔 다월 일괄 조회. (params: 연립다세대 bulk와 동일)"""
+    if not API_KEY:
+        return jsonify({'error': 'API 키 미설정'}), 500
+    lawd_cd = request.args.get('lawd_cd', '').strip()
+    months = request.args.get('months', default=6, type=int)
+    danji_filter = request.args.get('danji_name', '').strip()
+    min_area = request.args.get('min_area', type=float)
+    max_area = request.args.get('max_area', type=float)
+    include_rent = request.args.get('include_rent', default='true') == 'true'
+
+    if not lawd_cd:
+        return jsonify({'error': 'lawd_cd 필수'}), 400
+    if months < 1 or months > 24:
+        return jsonify({'error': 'months는 1~24'}), 400
+
+    now = datetime.now()
+    year_months = []
+    y, m = now.year, now.month
+    for _ in range(months):
+        year_months.append(f'{y}{m:02d}')
+        m -= 1
+        if m == 0:
+            m = 12
+            y -= 1
+
+    all_items = []
+    errors = []
+    for ym in year_months:
+        try:
+            xml_text = fetch_offi_trade_cached(lawd_cd, ym, cache_ts())
+            raw_items, err = parse_xml_items(xml_text)
+            if not err:
+                all_items.extend(normalize_offi_trade_item(x) for x in raw_items)
+            else:
+                errors.append(f'{ym} 매매: {err}')
+            if include_rent:
+                xml_text = fetch_offi_rent_cached(lawd_cd, ym, cache_ts())
+                raw_items, err = parse_xml_items(xml_text)
+                if not err:
+                    all_items.extend(normalize_offi_rent_item(x) for x in raw_items)
+        except Exception as e:
+            errors.append(f'{ym}: {e}')
+
+    if danji_filter:
+        nf = danji_filter.replace(' ', '').lower()
+        all_items = [x for x in all_items if nf in x['name'].replace(' ', '').lower()]
+    if min_area is not None:
+        all_items = [x for x in all_items if x['area'] >= min_area]
+    if max_area is not None:
+        all_items = [x for x in all_items if x['area'] <= max_area]
+
+    all_items.sort(key=lambda x: x.get('date', ''), reverse=True)
+
+    return jsonify({
+        'count': len(all_items),
+        'items': all_items,
+        'months_queried': year_months,
+        'errors': errors,
+    })
+
+
+# ============================================================
+# 단독/다가구 실거래가 (전용면적·층·단지명·지번 없음 → 연면적·대지면적·주택유형)
+# ============================================================
+
+@lru_cache(maxsize=256)
+def fetch_sh_trade_cached(lawd_cd, year_month, _ts):
+    """단독/다가구 매매."""
+    params = {
+        'serviceKey': API_KEY,
+        'LAWD_CD': lawd_cd,
+        'DEAL_YMD': year_month,
+        'numOfRows': '1000',
+        'pageNo': '1',
+    }
+    r = requests.get(URL_SH_TRADE, params=params, timeout=30)
+    r.raise_for_status()
+    return r.text
+
+
+@lru_cache(maxsize=256)
+def fetch_sh_rent_cached(lawd_cd, year_month, _ts):
+    """단독/다가구 전월세."""
+    params = {
+        'serviceKey': API_KEY,
+        'LAWD_CD': lawd_cd,
+        'DEAL_YMD': year_month,
+        'numOfRows': '1000',
+        'pageNo': '1',
+    }
+    r = requests.get(URL_SH_RENT, params=params, timeout=30)
+    r.raise_for_status()
+    return r.text
+
+
+def normalize_sh_trade_item(raw):
+    """단독/다가구 매매 항목 정규화. (면적 = 연면적, 층 없음, 단지명 없음)"""
+    deal_amount = (raw.get('dealAmount') or '').replace(',', '').strip()
+    try:
+        price = int(deal_amount) if deal_amount else None
+    except ValueError:
+        price = None
+    year = raw.get('dealYear', '')
+    month = raw.get('dealMonth', '').zfill(2)
+    day = raw.get('dealDay', '').zfill(2)
+    date = f'{year}-{month}-{day}' if year and month and day else ''
+    try:
+        area = float(raw.get('totalFloorAr', '0') or 0)  # 연면적
+    except ValueError:
+        area = 0
+    try:
+        land_area = float(raw.get('plottageAr', '0') or 0)  # 대지면적
+    except ValueError:
+        land_area = 0
+    house_type = (raw.get('houseType', '') or '').strip()  # 단독/다가구
+    return {
+        'date': date,
+        'name': house_type or '단독/다가구',
+        'building': '',
+        'area': round(area, 2),          # 연면적
+        'land_area': round(land_area, 2),  # 대지면적
+        'floor': None,
+        'price': price,
+        'type': '매매',
+        'memo': (f'대지 {round(land_area, 1)}㎡' if land_area else '') + (f' · {house_type}' if house_type else ''),
+        'jibun': '',
+        'dong': raw.get('umdNm', ''),
+        'category': '단독다가구',
+    }
+
+
+def normalize_sh_rent_item(raw):
+    """단독/다가구 전월세 항목 정규화. (면적 = 계약면적)"""
+    deposit = (raw.get('deposit') or '').replace(',', '').strip()
+    monthly = (raw.get('monthlyRent') or '').replace(',', '').strip()
+    try:
+        deposit = int(deposit) if deposit else None
+    except ValueError:
+        deposit = None
+    try:
+        monthly = int(monthly) if monthly else 0
+    except ValueError:
+        monthly = 0
+    year = raw.get('dealYear', '')
+    month = raw.get('dealMonth', '').zfill(2)
+    day = raw.get('dealDay', '').zfill(2)
+    date = f'{year}-{month}-{day}' if year and month and day else ''
+    try:
+        area = float(raw.get('totalFloorAr', '0') or 0)  # 계약면적
+    except ValueError:
+        area = 0
+    house_type = (raw.get('houseType', '') or '').strip()
+    return {
+        'date': date,
+        'name': house_type or '단독/다가구',
+        'area': round(area, 2),
+        'floor': None,
+        'price': deposit,
+        'monthly': monthly,
+        'type': '월세' if monthly > 0 else '전세',
+        'jibun': '',
+        'dong': raw.get('umdNm', ''),
+        'category': '단독다가구',
+    }
+
+
+@app.route('/api/transactions/sh-bulk')
+def get_sh_transactions_bulk():
+    """단독/다가구 다월 일괄 조회.
+    단지명이 없으므로 dong(법정동명)·면적(연면적)으로 필터링.
+    params: lawd_cd(필수), months, dong, min_area, max_area, include_rent
+    """
+    if not API_KEY:
+        return jsonify({'error': 'API 키 미설정'}), 500
+    lawd_cd = request.args.get('lawd_cd', '').strip()
+    months = request.args.get('months', default=6, type=int)
+    dong_filter = request.args.get('dong', '').strip()
+    min_area = request.args.get('min_area', type=float)
+    max_area = request.args.get('max_area', type=float)
+    include_rent = request.args.get('include_rent', default='true') == 'true'
+
+    if not lawd_cd:
+        return jsonify({'error': 'lawd_cd 필수'}), 400
+    if months < 1 or months > 24:
+        return jsonify({'error': 'months는 1~24'}), 400
+
+    now = datetime.now()
+    year_months = []
+    y, m = now.year, now.month
+    for _ in range(months):
+        year_months.append(f'{y}{m:02d}')
+        m -= 1
+        if m == 0:
+            m = 12
+            y -= 1
+
+    all_items = []
+    errors = []
+    for ym in year_months:
+        try:
+            xml_text = fetch_sh_trade_cached(lawd_cd, ym, cache_ts())
+            raw_items, err = parse_xml_items(xml_text)
+            if not err:
+                all_items.extend(normalize_sh_trade_item(x) for x in raw_items)
+            else:
+                errors.append(f'{ym} 매매: {err}')
+            if include_rent:
+                xml_text = fetch_sh_rent_cached(lawd_cd, ym, cache_ts())
+                raw_items, err = parse_xml_items(xml_text)
+                if not err:
+                    all_items.extend(normalize_sh_rent_item(x) for x in raw_items)
+        except Exception as e:
+            errors.append(f'{ym}: {e}')
+
+    if dong_filter:
+        df = dong_filter.replace(' ', '')
+        all_items = [x for x in all_items if df in (x.get('dong') or '').replace(' ', '')]
+    if min_area is not None:
+        all_items = [x for x in all_items if x['area'] >= min_area]
+    if max_area is not None:
+        all_items = [x for x in all_items if x['area'] <= max_area]
+
+    all_items.sort(key=lambda x: x.get('date', ''), reverse=True)
+
     return jsonify({
         'count': len(all_items),
         'items': all_items,
