@@ -5175,8 +5175,16 @@ document.getElementById('rightForm').addEventListener('submit', async (e) => {
         <input id="apiLawdSearch" placeholder="예: 강서구 / 하남시 / 강남구" autocomplete="off">
         <div id="apiLawdSuggestions" style="margin-top: 4px;"></div>
       </div>
+      <div class="field"><label>건물유형</label>
+        <select id="apiUseType" onchange="_onApiUseTypeChange()">
+          <option value="apt">아파트</option>
+          <option value="offi">오피스텔</option>
+          <option value="rh">연립·다세대</option>
+          <option value="sh">단독·다가구</option>
+        </select>
+      </div>
       <div class="field"><label>조회 개월 (최대 24)</label><input id="apiMonths" type="number" value="6" min="1" max="24"></div>
-      <div class="field"><label>단지명 필터 (선택)</label><input id="apiDanjiFilter" placeholder="예: 한라비발디"></div>
+      <div class="field"><label id="apiDanjiLabel">단지명 필터 (선택)</label><input id="apiDanjiFilter" placeholder="예: 한라비발디"></div>
       <div class="field"><label>전용면적 최소 (㎡, 선택)</label><input id="apiMinArea" type="number" step="0.01"></div>
       <div class="field"><label>전용면적 최대 (㎡, 선택)</label><input id="apiMaxArea" type="number" step="0.01"></div>
     </div>
@@ -5274,6 +5282,20 @@ async function openApiImport() {
   await checkApiHealth();
 }
 
+function _onApiUseTypeChange() {
+  const t = (document.getElementById('apiUseType') || {}).value || 'apt';
+  const lbl = document.getElementById('apiDanjiLabel');
+  const inp = document.getElementById('apiDanjiFilter');
+  if (!lbl || !inp) return;
+  if (t === 'sh') {
+    lbl.textContent = '법정동명 필터 (선택)';
+    inp.placeholder = '예: 정왕동 (단독·다가구는 단지명 없음)';
+  } else {
+    lbl.textContent = '단지명 필터 (선택)';
+    inp.placeholder = '예: 한라비발디';
+  }
+}
+
 async function fetchTransactions() {
   const lawd = _selectedLawdCode || document.getElementById('apiLawdSearch').value.trim();
   const months = Number(document.getElementById('apiMonths').value) || 6;
@@ -5290,13 +5312,17 @@ async function fetchTransactions() {
   const code = _selectedLawdCode || lawd;
   resultBox.innerHTML = '<div style="padding: 16px; text-align: center; color: var(--ink-muted);">⏳ 국토부 API 조회 중... (10~30초 소요)</div>';
 
+  const useType = (document.getElementById('apiUseType') || {}).value || 'apt';
+  const _epMap = { apt: 'bulk', offi: 'offi-bulk', rh: 'rh-bulk', sh: 'sh-bulk' };
+  const endpoint = _epMap[useType] || 'bulk';
+
   const params = new URLSearchParams({ lawd_cd: code, months: months });
-  if (danji) params.set('danji_name', danji);
+  if (danji) params.set(useType === 'sh' ? 'dong' : 'danji_name', danji);
   if (minArea) params.set('min_area', minArea);
   if (maxArea) params.set('max_area', maxArea);
 
   try {
-    const r = await fetch(`${BACKEND_URL}/api/transactions/bulk?${params}`);
+    const r = await fetch(`${BACKEND_URL}/api/transactions/${endpoint}?${params}`);
     const d = await r.json();
     if (d.error) {
       resultBox.innerHTML = `<div style="padding: 12px; background: var(--accent-soft); border-radius: 6px; color: var(--accent);">오류: ${d.error}</div>`;
