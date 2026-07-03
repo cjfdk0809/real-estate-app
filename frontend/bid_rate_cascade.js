@@ -44,6 +44,25 @@
   };
   var PINK = 'var(--kiwoom-pink-deep, #CC00CC)';
 
+  /* ===== 용도 계수 (빠른버전) — 공표 용도별 평균 낙찰가율 비율 근사 =====
+     아파트=기준(1.00). 빌라·오피스텔·단독은 아파트보다 낙찰가율이 낮음(전세사기·개별성·수요층).
+     ※ 근사값. 추후 courtauction 매각결과 실측(정밀버전)으로 대체 예정. */
+  var USE_FACTOR = { apt: 1.00, rh: 0.82, offi: 0.85, sh: 0.80 };
+  function _useFactor(use) {
+    var u = (use || '').replace(/\s/g, '');
+    if (/오피스텔/.test(u)) return USE_FACTOR.offi;
+    if (/다세대|연립|빌라/.test(u)) return USE_FACTOR.rh;
+    if (/단독|다가구/.test(u)) return USE_FACTOR.sh;
+    return USE_FACTOR.apt;
+  }
+  function _useLabel(use) {
+    var u = (use || '').replace(/\s/g, '');
+    if (/오피스텔/.test(u)) return '오피스텔';
+    if (/다세대|연립|빌라/.test(u)) return '연립·다세대';
+    if (/단독|다가구/.test(u)) return '단독·다가구';
+    return '아파트';
+  }
+
   /* ===== 유틸 ===== */
   function parseSigungu(addr) {
     if (!addr) return '';
@@ -156,8 +175,12 @@
     else if (extNat) { tier = 'stat_national'; center = extNat.rate; asof = extNat.asof; isStat = true; }
     else { tier = 'default'; center = CFG.def.mid; }
 
+    // 용도 계수 (빠른버전) 적용 — 아파트 기준, 빌라·오피스텔·단독 하향
+    var useFactor = _useFactor(p.use);
+    center = round1(center * useFactor);
+
     var sc;
-    if (tier === 'default') sc = { con: CFG.def.con, mid: CFG.def.mid, agg: CFG.def.agg };
+    if (tier === 'default') sc = { con: round1(CFG.def.con * useFactor), mid: center, agg: round1(CFG.def.agg * useFactor) };
     else { var cl = function (v) { return round1(Math.max(CFG.minRate, Math.min(CFG.maxRate, v))); };
       sc = { con: cl(center - CFG.spread), mid: cl(center), agg: cl(center + CFG.spread) }; }
 
@@ -169,10 +192,12 @@
       case 'stat_national':scope = '전국 평균'; break;
       default:             scope = '기본값(지역 미확인)';
     }
+    if (useFactor !== 1) scope += ' · 용도보정 ' + _useLabel(p.use) + '(×' + useFactor + ')';
 
     return { tier: tier, center: sc.mid, scenarios: sc, isStat: isStat, asof: asof,
       sampleN: sampleN, scope: scope, targetSigungu: targetSg, targetSido: targetSido,
-      sameComplexN: same.length, sigunguN: sg.length };
+      sameComplexN: same.length, sigunguN: sg.length,
+      useFactor: useFactor, useLabel: _useLabel(p.use) };
   }
   window.resolveBidRateCascade = resolveBidRateCascade;
 
