@@ -1830,9 +1830,9 @@ function renderOverview() {
   const comps = state.comparables[p.id] || [];
   const auctions = state.auctions[p.id] || [];
   const rights = state.rights[p.id] || [];
-  const _validSalesPM = comps.filter(x => x.type === '매매' && (!isCanceledComp(x)));
+  const _validSalesPM = comps.filter(x => x.type === '매매' && (!x.memo || !x.memo.includes('해제')));
   const _sameAreaPM = _validSalesPM.filter(x => Math.abs((x.area || 0) - (p.exclusiveArea || 0)) < 1);
-  const _avgInfoPM = windowedSameAreaAvg(_sameAreaPM, p.exclusiveArea);
+  const _avgInfoPM = windowedSameAreaAvg(_sameAreaPM);
   const avgPrice = _avgInfoPM.avg || null;
   const inheritedDebt = rights.filter(r => r.assumed === 'true' || r.assumed === true).reduce((s,r) => s + (r.amount || 0), 0);
 
@@ -1857,7 +1857,7 @@ function renderOverview() {
       <div class="stat-card">
         <div class="stat-label">최근 거래 평균</div>
         <div class="stat-value">${avgPrice ? fmt.won(avgPrice) : '-'}</div>
-        <div class="stat-trend">${_avgInfoPM.windowLabel} · ${_avgInfoPM.used || _avgInfoPM.total}건${_avgInfoPM.unitAvg ? ' · ' + _avgInfoPM.unitAvg.toLocaleString() + '만/㎡' : ''}</div>
+        <div class="stat-trend">${_avgInfoPM.windowLabel} · ${_avgInfoPM.used || _avgInfoPM.total}건 평균</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">공시가격</div>
@@ -1944,36 +1944,12 @@ function trimmedMean(arr) {
   return arr.reduce((a, b) => a + b, 0) / arr.length;
 }
 
-// ============================================================
-// 🆕 거래 품질 필터 (해제·직거래) — 시세/감정가/낙찰가 산정의 신뢰도 기반
-// ============================================================
-// 해제(취소) 거래는 시세가 아님 → 항상 제외.
-//   · 구조화 필드 canceled(백엔드 신규) 또는 레거시 memo('O'/'해제') 둘 다 인식 (기존 저장분 호환)
-// 직거래(특수관계 의심)는 조건부 제외:
-//   · 중개거래가 3건 이상 확보되면 직거래 제외(시세 왜곡 방지)
-//   · 3건 미만이면 표본 과소 방지를 위해 직거래도 포함
-function isCanceledComp(x) {
-  if (!x) return false;
-  if (x.canceled === true) return true;               // 백엔드 구조화 필드
-  const m = (x.memo || '').trim();
-  return m === 'O' || m.includes('해제');              // 레거시 저장분 호환
-}
-function qualityComps(rows) {
-  const base = (rows || []).filter(x => x && x.price && x.area && !isCanceledComp(x));
-  const brokered = base.filter(x => x.deal_type !== '직거래');
-  return brokered.length >= 3 ? brokered : base;       // 중개 3건↑이면 직거래 제외
-}
-
-// 🆕 동일면적 윈도 평균 (단가 정규화 + 품질 필터):
-//   ① qualityComps(해제·직거래) → ② 3→6→12→24개월 확장, 5건↑ 모이는 첫 구간 채택
-//      (24개월에도 5건 미만이면 24개월 구간 / 24개월 내 거래 없으면 전체 기간)
-//   ③ 전용면적당 단가(만원/㎡)로 환산 → 5건↑이면 단가 최고·최저 1건씩 제외(이상치 제거)
-//   ④ 단가 평균 × 본건면적(targetArea)으로 시세 복원.
-//      targetArea 미지정 시 표본 평균면적 사용(평형별 표 등 본건이 없는 호출부 호환).
-function windowedSameAreaAvg(rows, targetArea) {
-  const empty = { avg: 0, unitAvg: 0, windowMonths: 0, windowLabel: '-', total: 0, used: 0, trimmed: false, excHigh: null, excLow: null, min: 0, max: 0, picked: [] };
-  const arr = qualityComps(rows).filter(x => x.date);
-  if (!arr.length) return empty;
+// 🆕 동일면적 윈도 평균: 3→6→12→24개월 순으로 확장, 매매 5건 이상 모이는 첫 구간 채택
+//    (24개월에도 5건 미만이면 24개월 구간 그대로 / 24개월 내 거래 없으면 전체 기간)
+//    채택 구간이 5건 이상이면 최고·최저 1건씩 제외하고 평균(이상치 제거)
+function windowedSameAreaAvg(rows) {
+  const arr = (rows || []).filter(x => x && x.price && x.date);
+  if (!arr.length) return { avg: 0, windowMonths: 0, windowLabel: '-', total: 0, used: 0, trimmed: false, excHigh: null, excLow: null, min: 0, max: 0 };
   const now = new Date();
   const cut = m => { const d = new Date(now); d.setMonth(d.getMonth() - m); return d; };
   let picked = [], usedWindow = 0;
@@ -1983,29 +1959,15 @@ function windowedSameAreaAvg(rows, targetArea) {
     if (inWin.length >= 5) break;            // 5건 이상 모이면 그 구간 채택
   }
   if (!picked.length) { picked = arr.slice(); usedWindow = 0; }   // 24개월 내 거래 없으면 전체
-  // 🆕 총액이 아니라 '전용면적당 단가'로 정렬·트림 (면적 편차 보정 + 이상치 제거)
-  const units = picked.map(x => ({ unit: x.price / x.area, price: x.price, area: x.area }))
-                      .sort((a, b) => a.unit - b.unit);
-  let usedU = units.slice(), trimmed = false, excHigh = null, excLow = null;
-  if (units.length >= 5) {
-    excLow = Math.round(units[0].price);
-    excHigh = Math.round(units[units.length - 1].price);
-    usedU = units.slice(1, -1);
-    trimmed = true;
-  }
-  const unitAvg = usedU.length ? usedU.reduce((s, v) => s + v.unit, 0) / usedU.length : 0;
-  const meanArea = picked.reduce((s, x) => s + x.area, 0) / picked.length;
-  const ta = (targetArea && targetArea > 0) ? targetArea : meanArea;   // 본건면적 우선
-  const avg = unitAvg ? Math.round(unitAvg * ta) : 0;                   // 단가 × 면적 = 복원 시세
-  const totalsSorted = picked.map(x => x.price).sort((a, b) => a - b);
+  const prices = picked.map(x => x.price).sort((a, b) => a - b);
+  let used = prices.slice(), trimmed = false, excHigh = null, excLow = null;
+  if (prices.length >= 5) { excLow = prices[0]; excHigh = prices[prices.length - 1]; used = prices.slice(1, -1); trimmed = true; }
+  const avg = used.length ? Math.round(used.reduce((s, v) => s + v, 0) / used.length) : 0;
   return {
-    avg,
-    unitAvg: Math.round(unitAvg * 100) / 100,        // 만원/㎡ (소수 2자리)
-    windowMonths: usedWindow,
+    avg, windowMonths: usedWindow,
     windowLabel: usedWindow ? `최근 ${usedWindow}개월` : '전체 기간',
-    total: picked.length, used: usedU.length, trimmed, excHigh, excLow,
-    min: totalsSorted.length ? totalsSorted[0] : 0,
-    max: totalsSorted.length ? totalsSorted[totalsSorted.length - 1] : 0,
+    total: picked.length, used: used.length, trimmed, excHigh, excLow,
+    min: prices.length ? prices[0] : 0, max: prices.length ? prices[prices.length - 1] : 0,
     picked
   };
 }
@@ -2064,10 +2026,10 @@ function renderComparables() {
 
   const targetArea = p.exclusiveArea;
   // 해제 거래 제외한 매매 (평형별 분석·차트용 = 전체 면적)
-  const validSales = sales.filter(x => !isCanceledComp(x));
+  const validSales = sales.filter(x => !x.memo || !x.memo.includes('해제'));
   // 동일면적(전용 ±1㎡)만 추려 3→6→12→24개월 윈도 평균 적용
   const sameAreaSales = validSales.filter(x => Math.abs((x.area || 0) - targetArea) < 1);
-  const avgInfo = windowedSameAreaAvg(sameAreaSales, targetArea);
+  const avgInfo = windowedSameAreaAvg(sameAreaSales);
   const avgSales = avgInfo.avg;
   const minSales = avgInfo.min;   // 채택 구간 내 실제 최저
   const maxSales = avgInfo.max;   // 채택 구간 내 실제 최고
@@ -2076,7 +2038,7 @@ function renderComparables() {
   const recovery = avgInfo;
   const avgAllSales = recovery.avg;  // 동일면적 윈도 평균 = NPL 추정 기준가
   const _sameAreaJeonse = jeonse.filter(x => Math.abs((x.area || 0) - targetArea) < 1);
-  const avgJeonse = windowedSameAreaAvg(_sameAreaJeonse, targetArea).avg || 0;
+  const avgJeonse = windowedSameAreaAvg(_sameAreaJeonse).avg || 0;
   const rentRatio = (avgAllSales > 0 && avgJeonse > 0) ? (avgJeonse / avgAllSales * 100) : 0;
   const nplLower = avgAllSales * 0.85;
   const nplMedian = avgAllSales * 0.90;
@@ -2219,14 +2181,14 @@ function renderListings() {
   const comps = (state.comparables[p.id] || []);
   
   // 거래사례 비교에서 NPL 분석 결과를 미리 보여주기 (요약)
-  const sales = comps.filter(x => x.type === '매매' && (!isCanceledComp(x)));
+  const sales = comps.filter(x => x.type === '매매' && (!x.memo || !x.memo.includes('해제')));
   const jeonse = comps.filter(x => x.type === '전세');
   const wolse = comps.filter(x => x.type === '월세');
   const _sameAreaCL = sales.filter(x => Math.abs((x.area || 0) - (p.exclusiveArea || 0)) < 1);
-  const _avgInfoCL = windowedSameAreaAvg(_sameAreaCL, p.exclusiveArea);
+  const _avgInfoCL = windowedSameAreaAvg(_sameAreaCL);
   const avgAllSales = _avgInfoCL.avg || 0;
   const _sameAreaJ = jeonse.filter(x => Math.abs((x.area || 0) - (p.exclusiveArea || 0)) < 1);
-  const avgJeonse = windowedSameAreaAvg(_sameAreaJ, p.exclusiveArea).avg || 0;
+  const avgJeonse = windowedSameAreaAvg(_sameAreaJ).avg || 0;
   
   c.innerHTML = `
     <div class="page-head">
@@ -2723,9 +2685,9 @@ function getActiveAppraisal(p, auctions) {
   if (active && active.appraisal) return { value: active.appraisal, source: `사건 ${active.caseNo || ''} 감정가` };
   if (sc.appraisal) return { value: sc.appraisal, source: '직접 입력 감정가' };
   // 거래사례 평균(감정가 대용): 본건정보 '평균매매가'와 동일 방식 — 매매·해제제외·동일면적±1㎡·windowed
-  const _validAP = (state.comparables[p.id] || []).filter(x => x.type === '매매' && (!isCanceledComp(x)));
+  const _validAP = (state.comparables[p.id] || []).filter(x => x.type === '매매' && (!x.memo || !x.memo.includes('해제')));
   const _sameAP = _validAP.filter(x => Math.abs((x.area || 0) - (p.exclusiveArea || 0)) < 1);
-  const _wAP = (typeof windowedSameAreaAvg === 'function') ? windowedSameAreaAvg(_sameAP, p.exclusiveArea) : null;
+  const _wAP = (typeof windowedSameAreaAvg === 'function') ? windowedSameAreaAvg(_sameAP) : null;
   if (_wAP && _wAP.avg) { return { value: _wAP.avg, source: '거래사례 평균(감정가 대용 추정)' }; }
   return { value: null, source: null };
 }
@@ -3319,9 +3281,9 @@ function renderReport() {
   const comps = state.comparables[p.id] || [];
   const auctions = state.auctions[p.id] || [];
   const rights = state.rights[p.id] || [];
-  const sales = comps.filter(x => x.type === '매매' && (!isCanceledComp(x)));
+  const sales = comps.filter(x => x.type === '매매' && (!x.memo || !x.memo.includes('해제')));
   const sameArea = sales.filter(x => Math.abs((x.area||0) - p.exclusiveArea) < 1);
-  const _avgInfoRP = windowedSameAreaAvg(sameArea, p.exclusiveArea);
+  const _avgInfoRP = windowedSameAreaAvg(sameArea);
   const avgPrice = _avgInfoRP.avg || 0;
   const today = new Date().toLocaleDateString('ko-KR');
 
@@ -3577,6 +3539,23 @@ async function handleModalRegistryFile(file) {
   }
 }
 
+// 등기 표제부(building_type/주용도/건물명) → 용도 드롭다운 값 매핑
+function _mapUseFromRegistry(prop) {
+  if (!prop) return '';
+  const bt = (prop.building_type || '');
+  const mu = (prop.main_use || '');
+  const nm = (prop.complex_name || '');
+  const hay = (bt + ' ' + mu + ' ' + nm).replace(/\s/g, '');
+  if (/오피스텔/.test(hay)) return '오피스텔';
+  if (/다세대|연립/.test(hay)) return '다세대/연립';
+  if (/다가구|단독/.test(hay)) return '단독/다가구';
+  if (/아파트/.test(hay)) return '아파트';
+  if (/근린|상가|점포/.test(hay)) return '근린상가';
+  // 공동주택인데 아파트/오피스텔 아니고 빌라류 명칭 → 다세대/연립
+  if (/공동주택/.test(hay) && /빌라|맨션|하우스|타운|캐슬|팰리스|파크|빌|주택/.test(nm.replace(/\s/g, ''))) return '다세대/연립';
+  return '';  // 불명확 → 수동 선택
+}
+
 function applyRegistryToModalForm(a) {
   const form = document.getElementById('propertyForm');
   if (!form) return;
@@ -3594,6 +3573,9 @@ function applyRegistryToModalForm(a) {
     setIf('totalFloors', a.property.total_floors);
     setIf('completionDate', a.property.registration_date);
     setIf('usage', a.property.main_use);
+    // 등기 건물유형 → 용도 드롭다운 자동 선택 (유형별 거래사례 수집 트리거)
+    const _mappedUse = _mapUseFromRegistry(a.property);
+    if (_mappedUse && form.elements['use']) form.elements['use'].value = _mappedUse;
   }
   
   if (a.ownership) {
