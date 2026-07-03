@@ -3275,6 +3275,78 @@ function printReport() {
   }
 }
 
+// 🆕 렌더된 리포트 DOM → 서버 PDF 데이터(sections)로 변환 (숫자 서식·계산 재사용)
+function _pdfText(el) { return (el.textContent || '').replace(/\s+/g, ' ').trim(); }
+
+function buildReportPdfDataFromDOM() {
+  const root = document.getElementById('viewContainer');
+  const p = state.properties[state.currentPropertyId] || {};
+  const sections = [];
+  let kv = null;
+  const flush = () => { if (kv && kv.rows.length) sections.push(kv); kv = null; };
+
+  function walk(node) {
+    for (const el of Array.from(node.children)) {
+      const cl = el.classList || { contains: () => false };
+      if (cl.contains('print-running-header') || cl.contains('page-head')) continue;
+      if (cl.contains('section-h')) { flush(); sections.push({ type: 'h2', text: _pdfText(el) }); }
+      else if (cl.contains('info-row')) {
+        const k = el.querySelector('.info-label'), v = el.querySelector('.info-value');
+        if (k && v) { if (!kv) kv = { type: 'kv', rows: [] }; kv.rows.push([_pdfText(k), _pdfText(v)]); }
+      }
+      else if (el.tagName === 'TABLE' && cl.contains('tbl')) {
+        flush();
+        const ths = Array.from(el.querySelectorAll('thead th'));
+        const headers = ths.map(_pdfText);
+        const align = ths.map(th => ((th.className || '') + (th.getAttribute('style') || '')).includes('right') ? 'r' : '');
+        const rows = Array.from(el.querySelectorAll('tbody tr')).map(tr => Array.from(tr.children).map(_pdfText));
+        if (headers.length) sections.push({ type: 'table', headers, rows, align });
+      }
+      else if (el.tagName === 'DIV' && (el.getAttribute('style') || '').includes('line-height')) {
+        const t = _pdfText(el);
+        if (t && !t.includes('자동 생성된 자료')) { flush(); sections.push({ type: 'text', text: t }); }
+      }
+      else if (el.children && el.children.length) { walk(el); }
+    }
+  }
+  walk(root);
+  flush();
+
+  const today = new Date().toLocaleDateString('ko-KR');
+  return {
+    meta: {
+      title: p.name || '자산 분석 리포트',
+      subtitle: [[p.building, p.unit].filter(Boolean).join(' '), (p.addrRoad || p.addrLot || ''), '작성일 ' + today].filter(Boolean).join(' · '),
+      date: today,
+    },
+    sections,
+  };
+}
+
+async function downloadReportPdf() {
+  try {
+    showToast('📄 PDF 생성 중...', 'info', 2500);
+    const data = buildReportPdfDataFromDOM();
+    const r = await fetch(`${BACKEND_URL}/api/report/pdf`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error || ('HTTP ' + r.status)); }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const p = state.properties[state.currentPropertyId] || {};
+    a.href = url;
+    a.download = `자산분석리포트_${(p.name || 'report').replace(/[\\/:*?"<>|]/g, '')}.pdf`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    showToast('✅ PDF 저장 완료 (매 페이지 CI 머릿말)', 'success', 4000);
+  } catch (e) {
+    showToast('PDF 생성 실패: ' + e.message, 'error', 6000);
+  }
+}
+
 function renderReport() {
   const c = document.getElementById('viewContainer');
   const p = state.properties[state.currentPropertyId];
@@ -3327,7 +3399,8 @@ function renderReport() {
         <div class="page-sub">${p.building} ${p.unit} · ${p.addrRoad} · 작성일 ${today}</div>
       </div>
       <div class="btn-row no-print">
-        <button class="btn btn-ghost" onclick="printReport()">📄 PDF 출력 / 인쇄</button>
+        <button class="btn btn-ghost" onclick="printReport()">🖨 인쇄 (브라우저)</button>
+        <button class="btn btn-primary" onclick="downloadReportPdf()">📑 PDF 저장 (매 페이지 CI)</button>
       </div>
     </div>
 
