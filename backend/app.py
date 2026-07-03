@@ -18,7 +18,7 @@ from datetime import datetime
 from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor  # 🆕 거래사례 월별 병렬 조회
 
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, Response
 from flask_cors import CORS
 import requests
 from dotenv import load_dotenv
@@ -217,32 +217,6 @@ def parse_kapt_response(response_text):
     return [], f'알 수 없는 응답 형식. 응답 앞부분: {text[:200]}'
 
 
-def _txn_quality(raw):
-    """거래 품질 메타 추출 (해제여부·거래유형·건축년도).
-
-    MOLIT 상세(Dev) 엔드포인트 공통 필드:
-      - cdealType : 해제 시 'O' (미해제는 공란)
-      - dealingGbn: '중개거래' / '직거래'
-      - buildYear : 건축년도
-    필드명이 없거나 비어도 안전하게 기본값 반환 (앱이 깨지지 않도록 방어적).
-    """
-    cdeal = (raw.get('cdealType', '') or '').strip()
-    canceled = cdeal not in ('', '-')          # 'O' 등 값이 있으면 해제건으로 간주
-    gbn = (raw.get('dealingGbn', '') or '').strip()
-    if '직거래' in gbn:
-        deal_type = '직거래'
-    elif '중개' in gbn:
-        deal_type = '중개'
-    else:
-        deal_type = ''
-    by_raw = (raw.get('buildYear', '') or '').strip()
-    try:
-        build_year = int(by_raw) if by_raw else None
-    except ValueError:
-        build_year = None
-    return build_year, deal_type, canceled
-
-
 def normalize_trade_item(raw):
     """매매 거래 항목 정규화."""
     # 거래금액에서 콤마 제거
@@ -267,14 +241,10 @@ def normalize_trade_item(raw):
     except ValueError:
         floor = None
 
-    build_year, deal_type, canceled = _txn_quality(raw)
     return {
         'date': date,
         'name': raw.get('aptNm', ''),
         'building': raw.get('aptDong', ''),
-        'build_year': build_year,
-        'deal_type': deal_type,
-        'canceled': canceled,
         'area': round(area, 2),
         'floor': floor,
         'price': price,  # 만원 단위
@@ -1637,14 +1607,10 @@ def normalize_rh_trade_item(raw):
         floor = int(raw.get('floor', '') or 0) or None
     except ValueError:
         floor = None
-    build_year, deal_type, canceled = _txn_quality(raw)
     return {
         'date': date,
         'name': raw.get('mhouseNm', '') or raw.get('houseType', ''),  # 다세대명
         'building': '',
-        'build_year': build_year,
-        'deal_type': deal_type,
-        'canceled': canceled,
         'area': round(area, 2),
         'floor': floor,
         'price': price,
@@ -1812,14 +1778,10 @@ def normalize_offi_trade_item(raw):
         floor = int(raw.get('floor', '') or 0) or None
     except ValueError:
         floor = None
-    build_year, deal_type, canceled = _txn_quality(raw)
     return {
         'date': date,
         'name': raw.get('offiNm', ''),  # 오피스텔 단지명
         'building': '',
-        'build_year': build_year,
-        'deal_type': deal_type,
-        'canceled': canceled,
         'area': round(area, 2),
         'floor': floor,
         'price': price,
@@ -2101,6 +2063,26 @@ def get_sh_transactions_bulk():
         'months_queried': year_months,
         'errors': errors,
     })
+
+
+# ============================================================
+# 자산 분석 리포트 PDF (매 페이지 CI 머릿말 — 서버사이드 reportlab)
+# ============================================================
+@app.route('/api/report/pdf', methods=['POST'])
+def report_pdf():
+    try:
+        from pdf_report import build_report_pdf
+    except Exception as e:
+        return jsonify({'error': 'PDF 모듈 로드 실패: %s' % e}), 500
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        pdf_bytes = build_report_pdf(data)
+        resp = Response(pdf_bytes, mimetype='application/pdf')
+        resp.headers['Content-Disposition'] = 'attachment; filename="asset_report.pdf"'
+        resp.headers['Content-Length'] = str(len(pdf_bytes))
+        return resp
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 # ============================================================
