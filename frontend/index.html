@@ -4149,6 +4149,8 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
         monthly: item.monthly || undefined,
         jibun: item.jibun || undefined,
         dong: item.dong || undefined,
+        build_year: item.build_year || undefined,
+        house_type: item.house_type || undefined,
         memo: (crossUnverified || item.road_verified === false) ? '자동수집(미검증)' : '자동수집',
       });
     });
@@ -5339,6 +5341,13 @@ document.getElementById('rightForm').addEventListener('submit', async (e) => {
       <div class="field"><label id="apiDanjiLabel">단지명 필터 (선택)</label><input id="apiDanjiFilter" placeholder="예: 한라비발디"></div>
       <div class="field"><label>전용면적 최소 (㎡, 선택)</label><input id="apiMinArea" type="number" step="0.01"></div>
       <div class="field"><label>전용면적 최대 (㎡, 선택)</label><input id="apiMaxArea" type="number" step="0.01"></div>
+      <div class="field"><label>건축연도 이상 (선택)</label><input id="apiMinYear" type="number" placeholder="예: 2010"></div>
+      <div class="field"><label>건축연도 이하 (선택)</label><input id="apiMaxYear" type="number" placeholder="예: 2024"></div>
+      <div class="field"><label>층 최소 (선택)</label><input id="apiMinFloor" type="number"></div>
+      <div class="field"><label>층 최대 (선택)</label><input id="apiMaxFloor" type="number"></div>
+      <div class="field" id="apiRhTypeField" style="display:none;"><label>연립/다세대 구분</label>
+        <select id="apiRhType"><option value="">전체</option><option value="다세대">다세대만</option><option value="연립">연립만</option></select>
+      </div>
     </div>
 
     <div id="apiResultBox" style="margin-top: 16px;"></div>
@@ -5446,6 +5455,8 @@ function _onApiUseTypeChange() {
     lbl.textContent = '단지명 필터 (선택)';
     inp.placeholder = '예: 한라비발디';
   }
+  const rhField = document.getElementById('apiRhTypeField');
+  if (rhField) rhField.style.display = (t === 'rh') ? '' : 'none';
 }
 
 async function fetchTransactions() {
@@ -5486,31 +5497,54 @@ async function fetchTransactions() {
       return;
     }
 
+    // 🆕 조건 필터 (건축연도·층·연립/다세대) — 클라이언트 측 적용
+    const _num = id => { const v = (document.getElementById(id) || {}).value; return (v === '' || v == null) ? null : Number(v); };
+    const minYear = _num('apiMinYear'), maxYear = _num('apiMaxYear');
+    const minFloor = _num('apiMinFloor'), maxFloor = _num('apiMaxFloor');
+    const rhType = (document.getElementById('apiRhType') || {}).value || '';
+    const _yr = x => parseInt(x.build_year) || null;
+    let items = (d.items || []).filter(x => {
+      const y = _yr(x);
+      if (minYear && (!y || y < minYear)) return false;
+      if (maxYear && (!y || y > maxYear)) return false;
+      if (minFloor != null && (x.floor == null || x.floor < minFloor)) return false;
+      if (maxFloor != null && (x.floor == null || x.floor > maxFloor)) return false;
+      if (rhType && !((x.house_type || '').includes(rhType))) return false;
+      return true;
+    });
+    const _filtered = items.length !== d.count;
+
+    if (items.length === 0) {
+      resultBox.innerHTML = `<div style="padding: 12px; background: var(--bg-subtle); border-radius: 6px;">전체 ${d.count}건 중 조건에 맞는 거래가 없습니다. 건축연도·층·구분 조건을 완화하세요.</div>`;
+      return;
+    }
+
     // 미리보기
     resultBox.innerHTML = `
       <div style="padding: 12px; background: #f0f7f0; border-radius: 6px; margin-bottom: 10px;">
-        <strong style="color: var(--green);">✓ ${d.count}건 조회됨</strong> (조회 기간: ${d.months_queried.length}개월)
+        <strong style="color: var(--green);">✓ ${items.length}건</strong>${_filtered ? ` (전체 ${d.count}건 중 조건 필터 적용)` : ''} · 조회 ${d.months_queried.length}개월
       </div>
       <div style="max-height: 250px; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px;">
         <table class="tbl">
-          <thead><tr><th>거래일</th><th>단지</th><th class="text-right">면적</th><th class="text-right">층</th><th class="text-right">금액</th><th>유형</th></tr></thead>
+          <thead><tr><th>거래일</th><th>단지/유형</th><th class="text-right">면적</th><th class="text-right">층</th><th class="text-right">건축</th><th class="text-right">금액</th><th>구분</th></tr></thead>
           <tbody>
-            ${d.items.slice(0, 50).map(x => `
+            ${items.slice(0, 50).map(x => `
               <tr>
                 <td class="num">${x.date}</td>
-                <td>${x.name}</td>
+                <td>${x.name}${x.house_type && !((x.name || '').includes(x.house_type)) ? ' <span class="text-muted text-small">(' + x.house_type + ')</span>' : ''}</td>
                 <td class="num">${x.area}㎡</td>
                 <td class="num">${x.floor || '-'}</td>
-                <td class="price">${fmt.won(x.price)}${x.monthly ? ' / 월'+x.monthly : ''}</td>
+                <td class="num">${x.build_year || '-'}</td>
+                <td class="price">${fmt.won(x.price)}${x.monthly ? ' / 월' + x.monthly : ''}</td>
                 <td><span class="badge badge-${x.type}">${x.type}</span></td>
               </tr>
             `).join('')}
           </tbody>
         </table>
       </div>
-      ${d.count > 50 ? `<div class="text-small text-muted" style="margin-top: 6px;">처음 50건만 표시. 모두 가져오면 ${d.count}건이 등록됩니다.</div>` : ''}
+      ${items.length > 50 ? `<div class="text-small text-muted" style="margin-top: 6px;">처음 50건만 표시. 추가 시 ${items.length}건 전부 등록됩니다.</div>` : ''}
       <div class="btn-row right" style="margin-top: 12px;">
-        <button class="btn btn-primary" onclick='importItems(${JSON.stringify(d.items)})'>이 ${d.count}건을 거래사례에 추가</button>
+        <button class="btn btn-primary" onclick='importItems(${JSON.stringify(items)})'>이 ${items.length}건을 거래사례에 추가</button>
       </div>
     `;
   } catch (e) {
@@ -5558,6 +5592,8 @@ async function importItems(items) {
       price: x.price,
       monthly: x.monthly || undefined,
       memo: x.memo || '',
+      build_year: x.build_year || '',
+      house_type: x.house_type || '',
       source: 'api'
     });
     added++;
