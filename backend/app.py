@@ -252,6 +252,7 @@ def normalize_trade_item(raw):
         'memo': raw.get('cdealType', ''),  # 해제 등
         'jibun': raw.get('jibun', ''),
         'dong': raw.get('umdNm', ''),
+        'build_year': (raw.get('buildYear') or '').strip(),
         'road': raw.get('roadNm', ''),  # 도로명 (상세 API) - 단지명+도로명 교차검증용
     }
 
@@ -293,6 +294,7 @@ def normalize_rent_item(raw):
         'type': '월세' if monthly > 0 else '전세',
         'jibun': raw.get('jibun', ''),
         'dong': raw.get('umdNm', ''),
+        'build_year': (raw.get('buildYear') or '').strip(),
         'road': raw.get('roadNm', ''),  # 도로명 (교차검증용)
     }
 
@@ -1618,6 +1620,8 @@ def normalize_rh_trade_item(raw):
         'memo': raw.get('cdealType', '') or raw.get('houseType', ''),
         'jibun': raw.get('jibun', ''),
         'dong': raw.get('umdNm', ''),
+        'build_year': (raw.get('buildYear') or '').strip(),
+        'house_type': (raw.get('houseType') or '').strip(),
         'category': '연립다세대',
     }
 
@@ -1656,6 +1660,8 @@ def normalize_rh_rent_item(raw):
         'type': '월세' if monthly > 0 else '전세',
         'jibun': raw.get('jibun', ''),
         'dong': raw.get('umdNm', ''),
+        'build_year': (raw.get('buildYear') or '').strip(),
+        'house_type': (raw.get('houseType') or '').strip(),
         'category': '연립다세대',
     }
 
@@ -1789,6 +1795,7 @@ def normalize_offi_trade_item(raw):
         'memo': raw.get('cdealType', ''),
         'jibun': raw.get('jibun', ''),
         'dong': raw.get('umdNm', ''),
+        'build_year': (raw.get('buildYear') or '').strip(),
         'category': '오피스텔',
     }
 
@@ -1827,6 +1834,7 @@ def normalize_offi_rent_item(raw):
         'type': '월세' if monthly > 0 else '전세',
         'jibun': raw.get('jibun', ''),
         'dong': raw.get('umdNm', ''),
+        'build_year': (raw.get('buildYear') or '').strip(),
         'category': '오피스텔',
     }
 
@@ -1960,6 +1968,7 @@ def normalize_sh_trade_item(raw):
         'memo': (f'대지 {round(land_area, 1)}㎡' if land_area else '') + (f' · {house_type}' if house_type else ''),
         'jibun': '',
         'dong': raw.get('umdNm', ''),
+        'build_year': (raw.get('buildYear') or '').strip(),
         'category': '단독다가구',
     }
 
@@ -1995,6 +2004,7 @@ def normalize_sh_rent_item(raw):
         'type': '월세' if monthly > 0 else '전세',
         'jibun': '',
         'dong': raw.get('umdNm', ''),
+        'build_year': (raw.get('buildYear') or '').strip(),
         'category': '단독다가구',
     }
 
