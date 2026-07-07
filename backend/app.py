@@ -62,6 +62,8 @@ def safe_error(msg, e=None):
         return mask_sensitive_info(f'{msg}: {e}')
     return mask_sensitive_info(msg)
 API_KEY = os.environ.get('MOLIT_API_KEY', '').strip()
+VWORLD_API_KEY = os.environ.get('VWORLD_API_KEY', '').strip()  # 🆕 V-World 지오코더 (주소→좌표)
+URL_VWORLD_GEOCODE = 'https://api.vworld.kr/req/address'
 
 # Supabase 연결 (자동완성 DB) - 환경변수 미설정 시 None으로 두고 기존 기능은 그대로
 SUPABASE_URL = os.environ.get('SUPABASE_URL', '').strip()
@@ -2073,6 +2075,68 @@ def get_sh_transactions_bulk():
         'months_queried': year_months,
         'errors': errors,
     })
+
+
+# ============================================================
+# V-World 지오코딩 (주소→좌표) — 반경 거래사례용
+# ============================================================
+@lru_cache(maxsize=50000)
+def geocode_addr_cached(address, addr_type):
+    """지번/도로명 주소 → (lat, lng). 실패 시 None. (lru 캐시로 재호출 최소화)"""
+    if not VWORLD_API_KEY or not address:
+        return None
+    params = {
+        'service': 'address', 'request': 'getcoord', 'version': '2.0',
+        'crs': 'epsg:4326', 'address': address, 'type': addr_type,
+        'format': 'json', 'key': VWORLD_API_KEY,
+    }
+    try:
+        r = requests.get(URL_VWORLD_GEOCODE, params=params, timeout=8)
+        d = r.json()
+        resp = d.get('response', {})
+        if resp.get('status') == 'OK':
+            pt = resp.get('result', {}).get('point', {})
+            x = pt.get('x'); y = pt.get('y')  # x=경도(lng), y=위도(lat)
+            if x and y:
+                return (float(y), float(x))
+    except Exception:
+        return None
+    return None
+
+
+def _geocode_any(address):
+    """지번 우선, 실패 시 도로명으로 재시도."""
+    if not address:
+        return None
+    c = geocode_addr_cached(address, 'parcel')
+    if c is None:
+        c = geocode_addr_cached(address, 'road')
+    return c
+
+
+@app.route('/api/geocode/coords', methods=['POST'])
+def geocode_coords():
+    """본건 주소 + 거래 지번주소 리스트 → 좌표. 반경 밴드는 프론트에서 계산.
+    body: { origin: "서울특별시 중랑구 중화동 274-77", items: [{id, addr}] }
+    resp: { key: bool, origin: [lat,lng]|null, coords: { id: [lat,lng] } }
+    """
+    if not VWORLD_API_KEY:
+        return jsonify({'key': False, 'origin': None, 'coords': {}})
+    data = request.get_json(force=True, silent=True) or {}
+    origin_addr = (data.get('origin') or '').strip()
+    items = data.get('items') or []
+    origin = _geocode_any(origin_addr) if origin_addr else None
+
+    def _g(it):
+        return (str(it.get('id')), _geocode_any((it.get('addr') or '').strip()))
+
+    coords = {}
+    if items:
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            for _id, c in ex.map(_g, items[:300]):
+                if c:
+                    coords[_id] = c
+    return jsonify({'key': True, 'origin': origin, 'coords': coords})
 
 
 # ============================================================
