@@ -5348,6 +5348,17 @@ document.getElementById('rightForm').addEventListener('submit', async (e) => {
       <div class="field" id="apiRhTypeField" style="display:none;"><label>연립/다세대 구분</label>
         <select id="apiRhType"><option value="">전체</option><option value="다세대">다세대만</option><option value="연립">연립만</option></select>
       </div>
+      <div class="field"><label>본건 반경 (지번 기준)</label>
+        <select id="apiRadius">
+          <option value="0">전체 (시군구)</option>
+          <option value="100">100m 이내</option>
+          <option value="300">300m 이내</option>
+          <option value="500">500m 이내</option>
+          <option value="1000">1km 이내</option>
+          <option value="3000">3km 이내</option>
+          <option value="5000">5km 이내</option>
+        </select>
+      </div>
     </div>
 
     <div id="apiResultBox" style="margin-top: 16px;"></div>
@@ -5439,6 +5450,21 @@ async function openApiImport() {
         searchLawdCode(searchTerm);
       }
     }
+    // 등기 유형 자동선택 (본건 용도 → 데이터셋, 유형 수동선택 불필요)
+    const _u = (p.use || '').replace(/\s/g, '');
+    let _kind = 'apt';
+    if (/오피스텔/.test(_u)) _kind = 'offi';
+    else if (/다세대|연립|빌라/.test(_u)) _kind = 'rh';
+    else if (/단독|다가구/.test(_u)) _kind = 'sh';
+    const _sel = document.getElementById('apiUseType');
+    if (_sel) {
+      _sel.value = _kind;
+      if (_kind === 'sh') {
+        const pa = (window.KFITradeCollector && KFITradeCollector.parseAddress(p.addrLot || p.addrRoad || '')) || {};
+        document.getElementById('apiDanjiFilter').value = pa.umdNm || '';
+      }
+      if (typeof _onApiUseTypeChange === 'function') _onApiUseTypeChange();
+    }
   }
   await checkApiHealth();
 }
@@ -5514,19 +5540,52 @@ async function fetchTransactions() {
     });
     const _filtered = items.length !== d.count;
 
+    // 🆕 반경(정밀): 본건·거래 지번 지오코딩 → 거리 계산·정렬, 선택 반경으로 필터
+    let _radiusNote = '';
+    const _pp = state.properties[state.currentPropertyId] || {};
+    const _originAddr = _pp.addrLot || _pp.addrRoad || '';
+    const _prefixM = _originAddr.match(/^(\S+(?:특별시|광역시|특별자치시|특별자치도|도|시)\s+\S+(?:시|군|구))/);
+    const _prefix = _prefixM ? _prefixM[1] : '';
+    const _radiusSel = Number((document.getElementById('apiRadius') || {}).value || 0);
+    if (_originAddr && _prefix && items.length) {
+      try {
+        const geoItems = items.map((x, i) => ({ id: i, addr: `${_prefix} ${x.dong || ''} ${x.jibun || ''}`.replace(/\s+/g, ' ').trim() }))
+                              .filter(g => (g.addr || '').length > _prefix.length + 1);
+        const gr = await fetch(`${BACKEND_URL}/api/geocode/coords`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ origin: _originAddr, items: geoItems }),
+        });
+        const gd = await gr.json();
+        if (!gd.key) {
+          _radiusNote = ' · <span style="color:var(--accent);">반경 미표시 (V-World 키 미설정)</span>';
+        } else if (gd.origin) {
+          const R = 6371000, toR = v => v * Math.PI / 180;
+          const hav = (a, b) => { const dLat = toR(b[0] - a[0]), dLng = toR(b[1] - a[1]); const s = Math.sin(dLat / 2) ** 2 + Math.cos(toR(a[0])) * Math.cos(toR(b[0])) * Math.sin(dLng / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(s)); };
+          items.forEach((x, i) => { const c = gd.coords[String(i)]; if (c) x._dist = hav(gd.origin, c); });
+          if (_radiusSel > 0) items = items.filter(x => x._dist != null && x._dist <= _radiusSel);
+          items.sort((a, b) => (a._dist == null ? 1e12 : a._dist) - (b._dist == null ? 1e12 : b._dist));
+        } else {
+          _radiusNote = ' · <span style="color:var(--accent);">반경 미표시 (본건 주소 좌표 실패)</span>';
+        }
+      } catch (e) { _radiusNote = ' · 반경 계산 오류'; }
+    } else if (_radiusSel > 0) {
+      _radiusNote = ' · <span style="color:var(--accent);">반경 미표시 (본건 주소 없음)</span>';
+    }
+    const _distTxt = m => (m == null) ? '-' : (m < 1000 ? Math.round(m) + 'm' : (m / 1000).toFixed(1) + 'km');
+
     if (items.length === 0) {
-      resultBox.innerHTML = `<div style="padding: 12px; background: var(--bg-subtle); border-radius: 6px;">전체 ${d.count}건 중 조건에 맞는 거래가 없습니다. 건축연도·층·구분 조건을 완화하세요.</div>`;
+      resultBox.innerHTML = `<div style="padding: 12px; background: var(--bg-subtle); border-radius: 6px;">전체 ${d.count}건 중 조건/반경에 맞는 거래가 없습니다. 건축연도·층·구분·반경 조건을 완화하세요.</div>`;
       return;
     }
 
     // 미리보기
     resultBox.innerHTML = `
       <div style="padding: 12px; background: #f0f7f0; border-radius: 6px; margin-bottom: 10px;">
-        <strong style="color: var(--green);">✓ ${items.length}건</strong>${_filtered ? ` (전체 ${d.count}건 중 조건 필터 적용)` : ''} · 조회 ${d.months_queried.length}개월
+        <strong style="color: var(--green);">✓ ${items.length}건</strong>${_filtered ? ` (전체 ${d.count}건 중 조건 필터)` : ''}${_radiusSel > 0 ? ` · 반경 ${_radiusSel >= 1000 ? (_radiusSel / 1000) + 'km' : _radiusSel + 'm'} 이내` : ''} · 조회 ${d.months_queried.length}개월${_radiusNote}
       </div>
       <div style="max-height: 250px; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px;">
         <table class="tbl">
-          <thead><tr><th>거래일</th><th>단지/유형</th><th class="text-right">면적</th><th class="text-right">층</th><th class="text-right">건축</th><th class="text-right">금액</th><th>구분</th></tr></thead>
+          <thead><tr><th>거래일</th><th>단지/유형</th><th class="text-right">면적</th><th class="text-right">층</th><th class="text-right">건축</th><th class="text-right">금액</th><th>구분</th><th class="text-right">본건거리</th></tr></thead>
           <tbody>
             ${items.slice(0, 50).map(x => `
               <tr>
@@ -5537,6 +5596,7 @@ async function fetchTransactions() {
                 <td class="num">${x.build_year || '-'}</td>
                 <td class="price">${fmt.won(x.price)}${x.monthly ? ' / 월' + x.monthly : ''}</td>
                 <td><span class="badge badge-${x.type}">${x.type}</span></td>
+                <td class="num">${_distTxt(x._dist)}</td>
               </tr>
             `).join('')}
           </tbody>
