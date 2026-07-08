@@ -33,6 +33,8 @@
 <link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
 :root {
   /* ========== 키움에프앤아이 브랜드 컬러 (네이비 단색 톤) ========== */
@@ -5542,6 +5544,7 @@ async function fetchTransactions() {
 
     // 🆕 반경(정밀): 본건·거래 지번 지오코딩 → 거리 계산·정렬, 선택 반경으로 필터
     let _radiusNote = '';
+    let _origin = null;
     const _pp = state.properties[state.currentPropertyId] || {};
     const _originAddr = _pp.addrLot || _pp.addrRoad || '';
     const _prefixM = _originAddr.match(/^(\S+(?:특별시|광역시|특별자치시|특별자치도|도|시)\s+\S+(?:시|군|구))/);
@@ -5561,7 +5564,8 @@ async function fetchTransactions() {
         } else if (gd.origin) {
           const R = 6371000, toR = v => v * Math.PI / 180;
           const hav = (a, b) => { const dLat = toR(b[0] - a[0]), dLng = toR(b[1] - a[1]); const s = Math.sin(dLat / 2) ** 2 + Math.cos(toR(a[0])) * Math.cos(toR(b[0])) * Math.sin(dLng / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(s)); };
-          items.forEach((x, i) => { const c = gd.coords[String(i)]; if (c) x._dist = hav(gd.origin, c); });
+          items.forEach((x, i) => { const c = gd.coords[String(i)]; if (c) { x._lat = c[0]; x._lng = c[1]; x._dist = hav(gd.origin, c); } });
+          _origin = gd.origin;
           if (_radiusSel > 0) items = items.filter(x => x._dist != null && x._dist <= _radiusSel);
           items.sort((a, b) => (a._dist == null ? 1e12 : a._dist) - (b._dist == null ? 1e12 : b._dist));
         } else {
@@ -5583,6 +5587,7 @@ async function fetchTransactions() {
       <div style="padding: 12px; background: #f0f7f0; border-radius: 6px; margin-bottom: 10px;">
         <strong style="color: var(--green);">✓ ${items.length}건</strong>${_filtered ? ` (전체 ${d.count}건 중 조건 필터)` : ''}${_radiusSel > 0 ? ` · 반경 ${_radiusSel >= 1000 ? (_radiusSel / 1000) + 'km' : _radiusSel + 'm'} 이내` : ''} · 조회 ${d.months_queried.length}개월${_radiusNote}
       </div>
+      <div id="apiMapBox" style="height: 320px; border: 1px solid var(--line); border-radius: 6px; margin-bottom: 10px; ${_origin ? '' : 'display:none;'}"></div>
       <div style="max-height: 250px; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px;">
         <table class="tbl">
           <thead><tr><th>거래일</th><th>단지/유형</th><th class="text-right">면적</th><th class="text-right">층</th><th class="text-right">건축</th><th class="text-right">금액</th><th>구분</th><th class="text-right">본건거리</th></tr></thead>
@@ -5607,10 +5612,53 @@ async function fetchTransactions() {
         <button class="btn btn-primary" onclick='importItems(${JSON.stringify(items)})'>이 ${items.length}건을 거래사례에 추가</button>
       </div>
     `;
+
+    // 🆕 거래사례 지도 표시 (본건 + 거래 마커, 반경원)
+    if (_origin && window.L) _renderCompsMap(_origin, items, _radiusSel, _pp.name || '본건');
   } catch (e) {
     resultBox.innerHTML = `<div style="padding: 12px; background: var(--accent-soft); border-radius: 6px; color: var(--accent);">백엔드 연결 실패: ${e.message}</div>`;
   }
 }
+let _compsMap = null;
+
+// 거래사례 지도 — 본건(핑크) + 거래 마커(매매 네이비 / 전월세 회색), 반경원
+function _renderCompsMap(origin, items, radius, originName) {
+  const box = document.getElementById('apiMapBox');
+  if (!box) return;
+  box.style.display = '';
+  if (_compsMap) { _compsMap.remove(); _compsMap = null; }
+  _compsMap = L.map(box, { scrollWheelZoom: true }).setView(origin, radius && radius <= 500 ? 16 : 14);
+
+  // 배경지도: OSM (V-World 타일은 키가 프론트에 노출되므로 사용하지 않음)
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(_compsMap);
+
+  // 반경원
+  if (radius > 0) {
+    L.circle(origin, { radius: radius, color: '#E6007E', weight: 1, fillColor: '#E6007E', fillOpacity: 0.05 }).addTo(_compsMap);
+  }
+
+  // 본건 마커
+  L.circleMarker(origin, { radius: 9, color: '#fff', weight: 2, fillColor: '#E6007E', fillOpacity: 1 })
+    .addTo(_compsMap).bindPopup(`<b>${originName}</b><br>본건`);
+
+  // 거래 마커
+  const pts = [origin];
+  items.forEach(x => {
+    if (x._lat == null) return;
+    const isSale = x.type === '매매';
+    const m = L.circleMarker([x._lat, x._lng], {
+      radius: 6, color: '#fff', weight: 1.5,
+      fillColor: isSale ? '#1A2540' : '#9AA3B2', fillOpacity: 0.95,
+    }).addTo(_compsMap);
+    const dist = x._dist == null ? '-' : (x._dist < 1000 ? Math.round(x._dist) + 'm' : (x._dist / 1000).toFixed(1) + 'km');
+    m.bindPopup(`<b>${x.name || '-'}</b><br>${x.date} · ${x.type}<br>${fmt.won(x.price)}${x.monthly ? ' / 월' + x.monthly : ''}<br>${x.area}㎡ · ${x.floor || '-'}층${x.build_year ? ' · ' + x.build_year + '년' : ''}<br>본건거리 ${dist}`);
+    pts.push([x._lat, x._lng]);
+  });
+
+  if (pts.length > 1) _compsMap.fitBounds(L.latLngBounds(pts).pad(0.15));
+  setTimeout(() => _compsMap && _compsMap.invalidateSize(), 100);  // 모달 내 렌더 보정
+}
+
 async function importItems(items) {
   const id = state.currentPropertyId;
   if (!id) { alert('먼저 본건을 선택하세요.'); return; }
@@ -5654,6 +5702,9 @@ async function importItems(items) {
       memo: x.memo || '',
       build_year: x.build_year || '',
       house_type: x.house_type || '',
+      lat: x._lat != null ? x._lat : undefined,
+      lng: x._lng != null ? x._lng : undefined,
+      dist_m: x._dist != null ? Math.round(x._dist) : undefined,
       source: 'api'
     });
     added++;
