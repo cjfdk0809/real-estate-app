@@ -587,24 +587,7 @@ table { border-collapse: collapse; width: 100%; }
   .card { border: 1px solid #ccc; page-break-inside: avoid; }
   body { background: white; font-size: 11px; }
   .page-head { margin-bottom: 16px; }
-  /* 리포트 머릿말: 본문 최상단 인라인 1회 출력 (이 인쇄엔진은 페이지 반복 머릿말을 불안정하게 렌더 → 단일 헤더가 가장 안정적) */
   @page { margin: 14mm 12mm 14mm 12mm; }
-  .print-running-header {
-    display: flex !important; align-items: center;
-    margin: 0 0 16px 0; padding-bottom: 8px;
-    border-bottom: 2px solid var(--kiwoom-navy);
-    white-space: nowrap;
-    -webkit-print-color-adjust: exact; print-color-adjust: exact;
-  }
-}
-/* 리포트 인쇄용 CI 머릿말 — 인쇄 시 노출, 화면에서만 숨김 */
-@media screen { .print-running-header { display: none; } }
-.print-running-header img { height: 22px; width: auto; margin-right: 12px; }
-.print-running-header .ph-title {
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  color: var(--kiwoom-navy);
 }
 
 /* ========== MOBILE RESPONSIVE ========== */
@@ -3270,19 +3253,7 @@ function applyPricing() {
 // ============================================================
 // VIEW: REPORT (리포트)
 // ============================================================
-// 🆕 리포트 인쇄: CI 이미지가 로딩된 뒤 인쇄해 'CI 됐다 안됐다' 방지
-function printReport() {
-  const img = document.querySelector('.print-running-header img');
-  if (img && !img.complete) {
-    let done = false;
-    const go = () => { if (done) return; done = true; window.print(); };
-    img.addEventListener('load', go, { once: true });
-    img.addEventListener('error', go, { once: true });
-    setTimeout(go, 1500);  // 안전장치: 1.5초 내 무조건 인쇄
-  } else {
-    window.print();  // 이미 캐시/로딩됨
-  }
-}
+// 리포트 출력: 서버사이드 PDF (매 페이지 CI 머릿말) — 브라우저 인쇄는 CI 렌더가 불안정해 제거
 
 // 🆕 렌더된 리포트 DOM → 서버 PDF 데이터(sections)로 변환 (숫자 서식·계산 재사용)
 function _pdfText(el) { return (el.textContent || '').replace(/\s+/g, ' ').trim(); }
@@ -3297,7 +3268,7 @@ function buildReportPdfDataFromDOM() {
   function walk(node) {
     for (const el of Array.from(node.children)) {
       const cl = el.classList || { contains: () => false };
-      if (cl.contains('print-running-header') || cl.contains('page-head')) continue;
+      if (cl.contains('page-head')) continue;
       if (cl.contains('section-h')) { flush(); sections.push({ type: 'h2', text: _pdfText(el) }); }
       else if (cl.contains('info-row')) {
         const k = el.querySelector('.info-label'), v = el.querySelector('.info-value');
@@ -3397,10 +3368,6 @@ function renderReport() {
   const _recovery = (_distributable != null && ra.seniorClaim) ? Math.min(100, _distributable / ra.seniorClaim * 100) : null;
 
   c.innerHTML = `
-    <div class="print-running-header">
-      <img src="${CI_LOGO}" alt="키움에프앤아이">
-      <div class="ph-title">키움에프앤아이 · 자산 분석 리포트 · KIWOOM F&amp;I ASSET REPORT</div>
-    </div>
     <div class="page-head" style="display: flex; justify-content: space-between; align-items: flex-end; gap: 16px;">
       <div>
         <div class="page-eyebrow">자산 분석 리포트 · Asset Report</div>
@@ -3408,7 +3375,6 @@ function renderReport() {
         <div class="page-sub">${p.building} ${p.unit} · ${p.addrRoad} · 작성일 ${today}</div>
       </div>
       <div class="btn-row no-print">
-        <button class="btn btn-ghost" onclick="printReport()">🖨 인쇄 (브라우저)</button>
         <button class="btn btn-primary" onclick="downloadReportPdf()">📑 PDF 저장 (매 페이지 CI)</button>
       </div>
     </div>
