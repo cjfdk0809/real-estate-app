@@ -1665,6 +1665,11 @@ function selectProperty(id) {
   saveState();
   renderPropertyList();
   renderView();
+  // 실측 낙찰가율 미리 로드 → 도착하면 추정 화면 갱신 (없으면 근사계수로 조용히 폴백)
+  const _p = state.properties[id];
+  if (_p && typeof prefetchRealRates === 'function') {
+    prefetchRealRates(_p).then(() => { if (state.currentPropertyId === id) renderView(); });
+  }
 }
 
 document.querySelectorAll('.nav-item').forEach(item => {
@@ -5347,6 +5352,7 @@ document.getElementById('rightForm').addEventListener('submit', async (e) => {
 const BACKEND_URL = (window.location.protocol === 'http:' || window.location.protocol === 'https:')
   ? '' // 같은 origin 사용 (Flask가 프론트+백엔드 모두 서빙)
   : 'http://localhost:5000';  // file:// 로 직접 열었을 때
+window.BACKEND_URL = BACKEND_URL;   // bid_rate_cascade.js에서 실측 낙찰가율 조회에 사용
 let LAWD_CODES_CACHE = [];
 let _selectedLawdCode = null;
 
