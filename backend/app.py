@@ -2140,6 +2140,60 @@ def geocode_coords():
 
 
 # ============================================================
+# 실측 낙찰가율 (법원경매 매각결과 축적 → auction_rate_stats)
+# 캐스케이드: 시군구 → 시도 → 전국. 표본 min_n 이상인 가장 좁은 범위 채택.
+# ============================================================
+@app.route('/api/auction/rates')
+def auction_rates():
+    if not supabase:
+        return jsonify({'available': False, 'reason': 'Supabase 미설정'})
+    use_group = (request.args.get('use_group') or '').strip()
+    sido = (request.args.get('sido') or '').strip()
+    sigungu = (request.args.get('sigungu') or '').strip()
+    months = request.args.get('months', default=12, type=int)
+    min_n = request.args.get('min_n', default=5, type=int)
+    if not use_group:
+        return jsonify({'error': 'use_group 필수'}), 400
+    try:
+        q = (supabase.table('auction_rate_stats')
+             .select('*')
+             .eq('use_group', use_group)
+             .eq('period_months', months))
+        rows = (q.execute().data) or []
+    except Exception as e:
+        return jsonify({'available': False, 'reason': str(e)})
+
+    def pick(pred):
+        for r in rows:
+            if pred(r) and (r.get('sample_n') or 0) >= min_n:
+                return r
+        return None
+
+    hit = None
+    scope = None
+    if sigungu:
+        hit = pick(lambda r: r.get('sigungu') == sigungu and r.get('sido') == sido)
+        scope = 'sigungu'
+    if not hit and sido:
+        hit = pick(lambda r: r.get('sigungu') is None and r.get('sido') == sido)
+        scope = 'sido'
+    if not hit:
+        hit = pick(lambda r: r.get('sigungu') is None and r.get('sido') is None)
+        scope = 'national'
+
+    if not hit:
+        return jsonify({'available': False, 'reason': '표본 부족'})
+    return jsonify({
+        'available': True, 'scope': scope, 'use_group': use_group,
+        'sido': hit.get('sido'), 'sigungu': hit.get('sigungu'),
+        'sample_n': hit.get('sample_n'),
+        'median_rate': hit.get('median_rate'), 'avg_rate': hit.get('avg_rate'),
+        'p25_rate': hit.get('p25_rate'), 'p75_rate': hit.get('p75_rate'),
+        'avg_bidders': hit.get('avg_bidders'), 'asof': hit.get('asof'),
+    })
+
+
+# ============================================================
 # 자산 분석 리포트 PDF (매 페이지 CI 머릿말 — 서버사이드 reportlab)
 # ============================================================
 @app.route('/api/report/pdf', methods=['POST'])
