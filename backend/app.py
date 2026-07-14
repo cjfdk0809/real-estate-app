@@ -2140,9 +2140,14 @@ def geocode_coords():
 
 
 # ============================================================
-# 실측 낙찰가율 (법원경매 매각결과 축적 → auction_rate_stats)
-# 캐스케이드: 시군구 → 시도 → 전국. 표본 min_n 이상인 가장 좁은 범위 채택.
+# 실측 낙찰가율 — 지역(시군구→시도→전국) × 기간(1→3→6→12→24→전체) 캐스케이드
+# 표본 min_n 이상인 '가장 좁은 지역 × 가장 짧은 기간' 채택 + 산출근거 반환
 # ============================================================
+_PERIOD_ORDER = [1, 3, 6, 12, 24, 0]   # 0 = 전체 기간
+_PERIOD_LABEL = {1: '최근 1개월', 3: '최근 3개월', 6: '최근 6개월',
+                 12: '최근 12개월', 24: '최근 24개월', 0: '전체 기간'}
+
+
 @app.route('/api/auction/rates')
 def auction_rates():
     if not supabase:
@@ -2150,46 +2155,57 @@ def auction_rates():
     use_group = (request.args.get('use_group') or '').strip()
     sido = (request.args.get('sido') or '').strip()
     sigungu = (request.args.get('sigungu') or '').strip()
-    months = request.args.get('months', default=12, type=int)
     min_n = request.args.get('min_n', default=5, type=int)
     if not use_group:
         return jsonify({'error': 'use_group 필수'}), 400
     try:
-        q = (supabase.table('auction_rate_stats')
-             .select('*')
-             .eq('use_group', use_group)
-             .eq('period_months', months))
-        rows = (q.execute().data) or []
+        rows = (supabase.table('auction_rate_stats')
+                .select('*').eq('use_group', use_group).execute().data) or []
     except Exception as e:
         return jsonify({'available': False, 'reason': str(e)})
 
-    def pick(pred):
-        for r in rows:
-            if pred(r) and (r.get('sample_n') or 0) >= min_n:
-                return r
-        return None
+    # (sido, sigungu, period) → row 색인
+    idx = {(r.get('sido'), r.get('sigungu'), r.get('period_months')): r for r in rows}
+
+    # 지역 캐스케이드: 시군구 → 시도 → 전국
+    scopes = []
+    if sigungu:
+        scopes.append(('sigungu', sido or None, sigungu))
+    if sido:
+        scopes.append(('sido', sido, None))
+    scopes.append(('national', None, None))
 
     hit = None
-    scope = None
-    if sigungu:
-        hit = pick(lambda r: r.get('sigungu') == sigungu and r.get('sido') == sido)
-        scope = 'sigungu'
-    if not hit and sido:
-        hit = pick(lambda r: r.get('sigungu') is None and r.get('sido') == sido)
-        scope = 'sido'
-    if not hit:
-        hit = pick(lambda r: r.get('sigungu') is None and r.get('sido') is None)
-        scope = 'national'
+    chosen_scope = None
+    chosen_period = None
+    for scope_name, s_sido, s_sgg in scopes:
+        for m in _PERIOD_ORDER:
+            r = idx.get((s_sido, s_sgg, m))
+            if r and (r.get('sample_n') or 0) >= min_n:
+                hit, chosen_scope, chosen_period = r, scope_name, m
+                break
+        if hit:
+            break
 
     if not hit:
         return jsonify({'available': False, 'reason': '표본 부족'})
+
+    scope_region = (hit.get('sigungu') if chosen_scope == 'sigungu'
+                    else hit.get('sido') if chosen_scope == 'sido' else '전국')
+    period_label = _PERIOD_LABEL.get(chosen_period, f'{chosen_period}개월')
+    # 산출근거 문구: "서울특별시 강남구 · 오피스텔 · 최근 6개월 (n=9, 중앙값)"
+    derivation = f'{scope_region} · {period_label} · 표본 {hit.get("sample_n")}건 (중앙값)'
+
     return jsonify({
-        'available': True, 'scope': scope, 'use_group': use_group,
-        'sido': hit.get('sido'), 'sigungu': hit.get('sigungu'),
+        'available': True,
+        'scope': chosen_scope, 'region': scope_region,
+        'period_months': chosen_period, 'period_label': period_label,
+        'use_group': use_group, 'sido': hit.get('sido'), 'sigungu': hit.get('sigungu'),
         'sample_n': hit.get('sample_n'),
         'median_rate': hit.get('median_rate'), 'avg_rate': hit.get('avg_rate'),
         'p25_rate': hit.get('p25_rate'), 'p75_rate': hit.get('p75_rate'),
         'avg_bidders': hit.get('avg_bidders'), 'asof': hit.get('asof'),
+        'derivation': derivation,
     })
 
 
