@@ -2210,6 +2210,106 @@ def auction_rates():
 
 
 # ============================================================
+# 유사 낙찰사례 조회 (04 경공매 사례 탭 — 참고용)
+# 같은 시군구 내에서 [같은 동 / 같은 용도 / 면적 ±20%] 중 2개 이상 일치.
+# 기간 1→3→6→12→24개월 순차 확대 (min_results 이상이면 중단).
+# ============================================================
+@app.route('/api/auction/comparables')
+def auction_comparables():
+    if not supabase:
+        return jsonify({'available': False, 'reason': 'Supabase 미설정', 'items': []})
+    sido = (request.args.get('sido') or '').strip()
+    sigungu = (request.args.get('sigungu') or '').strip()
+    dong = (request.args.get('dong') or '').strip()
+    use_group = (request.args.get('use_group') or '').strip()
+    area = request.args.get('area', type=float)
+    area_tol = request.args.get('area_tol', default=0.20, type=float)
+    min_match = request.args.get('min_match', default=2, type=int)
+    min_results = request.args.get('min_results', default=5, type=int)
+    if not sigungu:
+        return jsonify({'available': False, 'reason': '본건 시군구 필요', 'items': []})
+
+    import datetime as _dt
+    today = _dt.date.today()
+    cutoff24 = (today - _dt.timedelta(days=24 * 30)).isoformat()
+
+    try:
+        q = (supabase.table('auction_sales')
+             .select('court_name,case_no,item_no,use_type,use_group,sido,sigungu,'
+                     'address,area_sqm,appraisal_price,sale_price,sale_date,'
+                     'result,fail_count,bid_rate')
+             .eq('sigungu', sigungu)
+             .not_.is_('sale_price', 'null')
+             .gte('sale_date', cutoff24)
+             .order('sale_date', desc=True)
+             .limit(1000))
+        if sido:
+            q = q.eq('sido', sido)
+        rows = (q.execute().data) or []
+    except Exception as e:
+        return jsonify({'available': False, 'reason': str(e), 'items': []})
+
+    def _dong_of(r):
+        a = (r.get('address') or '')
+        for t in (r.get('sido') or '', r.get('sigungu') or ''):
+            a = a.replace(t, '')
+        return a.strip()
+
+    def _score(r):
+        s, hits = 0, []
+        rd = _dong_of(r)
+        if dong and rd and rd == dong:
+            s += 1; hits.append('동')
+        if use_group and r.get('use_group') and r['use_group'] == use_group:
+            s += 1; hits.append('용도')
+        ra = r.get('area_sqm')
+        if area and ra and abs(ra - area) / area <= area_tol:
+            s += 1; hits.append('면적')
+        return s, hits
+
+    PERIODS = [1, 3, 6, 12, 24]
+    chosen_period, picked = PERIODS[-1], []
+    for m in PERIODS:
+        cut = (today - _dt.timedelta(days=m * 30)).isoformat()
+        cur = []
+        for r in rows:
+            if (r.get('sale_date') or '') < cut:
+                continue
+            sc, hits = _score(r)
+            if sc >= min_match:
+                cur.append({
+                    'court_name': r.get('court_name'), 'case_no': r.get('case_no'),
+                    'item_no': r.get('item_no'), 'use_type': r.get('use_type'),
+                    'dong': _dong_of(r), 'address': r.get('address'),
+                    'area_sqm': r.get('area_sqm'),
+                    'appraisal_price': r.get('appraisal_price'),
+                    'sale_price': r.get('sale_price'), 'bid_rate': r.get('bid_rate'),
+                    'sale_date': r.get('sale_date'), 'result': r.get('result'),
+                    'match_score': sc, 'match_hits': hits,
+                })
+        if len(cur) >= min_results:
+            chosen_period, picked = m, cur
+            break
+        chosen_period, picked = m, cur   # 마지막까지 부족하면 그거라도 유지
+
+    # 참고 지표: 조회된 사례의 평균/중앙값 낙찰가율 (추정 반영은 안 함)
+    rates = sorted(x['bid_rate'] for x in picked if x.get('bid_rate') is not None)
+    med = None
+    if rates:
+        n = len(rates)
+        med = rates[n // 2] if n % 2 else round((rates[n // 2 - 1] + rates[n // 2]) / 2, 2)
+
+    _plabel = {1: '최근 1개월', 3: '최근 3개월', 6: '최근 6개월',
+               12: '최근 12개월', 24: '최근 24개월'}
+    return jsonify({
+        'available': True, 'count': len(picked),
+        'period_months': chosen_period, 'period_label': _plabel.get(chosen_period),
+        'region': sigungu, 'median_bid_rate': med,
+        'items': picked,
+    })
+
+
+# ============================================================
 # 자산 분석 리포트 PDF (매 페이지 CI 머릿말 — 서버사이드 reportlab)
 # ============================================================
 @app.route('/api/report/pdf', methods=['POST'])
