@@ -2888,6 +2888,11 @@ function renderAuction() {
       <div class="stat-card"><div class="stat-label">평균 응찰자</div><div class="stat-value">${withBidders.length ? avgBidders.toFixed(1) : '-'}<span class="stat-unit">명</span></div></div>
     </div>
 
+    <div id="simCasesBox" class="card mb-24">
+      <div class="card-title">유사 낙찰사례 (DB 자동조회) <span class="text-muted text-small" style="font-weight:400;">· 같은 구 · [동/용도/면적±20%] 중 2개↑ 일치 · 참고용</span></div>
+      <div id="simCasesBody" class="text-muted text-small">본건 정보로 유사 낙찰사례를 불러오는 중…</div>
+    </div>
+
     <div class="card">
       <div class="card-title">경공매 낙찰사례 검색 · 옥션원</div>
       <div class="text-small text-muted" style="margin-bottom:16px;">옥션원(구 굿옥션)에서 유사 물건의 낙찰가·낙찰가율·매각통계를 조회해 아래 표에 입력하세요. 전국 법원경매·공매·NPL 낙찰 사례를 제공합니다.</div>
@@ -2931,6 +2936,76 @@ function renderAuction() {
 
     ${declineCard}
   `;
+
+  loadSimilarAuctionCases(p);
+}
+
+// 🆕 유사 낙찰사례 자동조회 (같은 구 · [동/용도/면적±20%] 2개↑ 일치 · 기간 1→24개월 확대)
+function _simRegion(addr) {
+  const a = (addr || '').trim();
+  const m = a.match(/^(\S+?(?:특별시|광역시|특별자치시|특별자치도|남도|북도|자치도|도))\s+(\S+?(?:시|군|구))\s+(\S+?(?:동|읍|면|리|가|로))(?=\s|\d|$)/);
+  if (m) return { sido: m[1], sigungu: m[2], dong: m[3] };
+  const m2 = a.match(/^(\S+?(?:특별시|광역시|특별자치시|특별자치도|남도|북도|자치도|도))\s+(\S+?(?:시|군|구))/);
+  return { sido: m2 ? m2[1] : '', sigungu: m2 ? m2[2] : '', dong: '' };
+}
+function _simUseGroup(use) {
+  const u = (use || '').replace(/\s/g, '');
+  if (/오피스텔/.test(u)) return 'offi';
+  if (/다세대|연립|빌라/.test(u)) return 'rh';
+  if (/단독|다가구/.test(u)) return 'sh';
+  if (/근린|상가|점포|업무/.test(u)) return 'commercial';
+  if (/토지|임야|대지|전|답/.test(u)) return 'land';
+  return 'apt';
+}
+
+async function loadSimilarAuctionCases(p) {
+  const body = document.getElementById('simCasesBody');
+  if (!body) return;
+  const rg = _simRegion(p.addrLot || p.addrRoad || '');
+  if (!rg.sigungu) { body.innerHTML = '본건 주소(시·군·구)가 없어 유사사례를 조회할 수 없습니다.'; return; }
+
+  const qs = new URLSearchParams({
+    sido: rg.sido, sigungu: rg.sigungu, dong: rg.dong,
+    use_group: _simUseGroup(p.use),
+    area: (p.exclusiveArea || p.supplyArea || '') + '',
+    area_tol: '0.20', min_match: '2', min_results: '5',
+  });
+  try {
+    const r = await fetch(`${window.BACKEND_URL || ''}/api/auction/comparables?${qs}`);
+    const d = await r.json();
+    if (!d.available) { body.innerHTML = `유사 낙찰사례를 불러올 수 없습니다. <span class="text-muted">(${d.reason || '데이터 부족'})</span>`; return; }
+    if (!d.count) { body.innerHTML = `조건(같은 구 · 2개↑ 일치)에 맞는 낙찰사례가 최근 24개월 내 없습니다.`; return; }
+
+    const badge = h => `<span class="badge" style="background:var(--accent-soft);color:var(--accent);margin-right:3px;">${h}</span>`;
+    const rows = d.items.map(x => `
+      <tr>
+        <td class="num">${x.sale_date || '-'}</td>
+        <td>${x.case_no || '-'}</td>
+        <td>${x.dong || ''} <span class="text-muted text-small">${x.use_type || ''}</span></td>
+        <td class="num">${x.area_sqm != null ? x.area_sqm + '㎡' : '-'}</td>
+        <td class="price">${fmt.won(x.appraisal_price)}</td>
+        <td class="price text-accent">${fmt.won(x.sale_price)}</td>
+        <td class="num"><strong>${x.bid_rate != null ? x.bid_rate + '%' : '-'}</strong></td>
+        <td>${(x.match_hits || []).map(badge).join('')}</td>
+      </tr>`).join('');
+
+    body.innerHTML = `
+      <div style="margin-bottom:10px;">
+        <strong style="color:var(--green);">✓ ${d.count}건</strong>
+        · ${d.region} · ${d.period_label}
+        ${d.median_bid_rate != null ? ` · 중앙 낙찰가율 <strong>${d.median_bid_rate}%</strong>` : ''}
+        <span class="text-muted text-small">(참고용 · 추정에는 미반영)</span>
+      </div>
+      <div style="max-height:340px;overflow-y:auto;border:1px solid var(--line);border-radius:6px;">
+        <table class="tbl">
+          <thead><tr><th>매각기일</th><th>사건번호</th><th>소재지</th><th class="text-right">면적</th><th class="text-right">감정가</th><th class="text-right">낙찰가</th><th class="text-right">낙찰가율</th><th>일치</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <div class="text-small text-muted" style="margin-top:6px;">일치 기준: 같은 동 / 같은 용도 / 면적 ±20% 중 2개 이상. 최근 ${d.period_label.replace('최근 ', '')}까지 확대해 조회.</div>`;
+  } catch (e) {
+    body.innerHTML = `조회 오류: ${e.message}`;
+  }
 }
 
 // ============================================================
