@@ -106,6 +106,7 @@
       _realCache[key] = (d && d.available) ? {
         median: d.median_rate, p25: d.p25_rate, p75: d.p75_rate,
         n: d.sample_n, scope: d.scope, asof: d.asof,
+        region: d.region, periodLabel: d.period_label, derivation: d.derivation,
         sido: d.sido, sigungu: d.sigungu,
       } : null;
     } catch (e) { _realCache[key] = null; }
@@ -253,9 +254,7 @@
       case 'same_complex': scope = '본건 동일단지 낙찰사례'; break;
       case 'sigungu':      scope = (targetSg || '시군구') + ' 낙찰사례'; break;
       case 'stat_real':    scope = _useLabel(p.use) + ' 실측 낙찰가율 · '
-                                 + (real.scope === 'sigungu' ? (real.sigungu || '시군구')
-                                    : real.scope === 'sido' ? (real.sido || '시도') : '전국')
-                                 + ' (n=' + real.n + ')'; break;
+                                 + (real.derivation || ((real.region || '전국') + ' (n=' + real.n + ')')); break;
       case 'stat_sigungu': scope = (targetSg || '시군구') + ' 통계'; break;
       case 'stat_national':scope = '전국 평균'; break;
       default:             scope = '기본값(지역 미확인)';
