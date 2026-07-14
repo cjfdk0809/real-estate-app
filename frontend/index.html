@@ -2992,7 +2992,7 @@ async function loadSimilarAuctionCases(p) {
     body.innerHTML = `
       <div style="margin-bottom:10px;">
         <strong style="color:var(--green);">✓ ${d.count}건</strong>
-        · ${d.region} · ${d.period_label}
+        · ${d.region} · 면적 ±${d.area_tol_pct}% · ${d.period_label}
         ${d.median_bid_rate != null ? ` · 중앙 낙찰가율 <strong>${d.median_bid_rate}%</strong>` : ''}
         <span class="text-muted text-small">(참고용 · 추정에는 미반영)</span>
       </div>
@@ -3002,7 +3002,7 @@ async function loadSimilarAuctionCases(p) {
           <tbody>${rows}</tbody>
         </table>
       </div>
-      <div class="text-small text-muted" style="margin-top:6px;">일치 기준: 같은 동 / 같은 용도 / 면적 ±20% 중 2개 이상. 최근 ${d.period_label.replace('최근 ', '')}까지 확대해 조회.</div>`;
+      <div class="text-small text-muted" style="margin-top:6px;">일치 기준: 같은 동 / 같은 용도 / 면적 ±N% 중 2개 이상. 면적(1·3·5·7·10·15·20%)과 기간(1·3·6·12·24개월)을 함께 넓혀가며 조회 (채택: 면적 ±${d.area_tol_pct}% · ${d.period_label}).</div>`;
   } catch (e) {
     body.innerHTML = `조회 오류: ${e.message}`;
   }
