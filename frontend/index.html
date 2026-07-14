@@ -2983,8 +2983,8 @@ async function loadSimilarAuctionCases(p) {
         <td>${x.case_no || '-'}</td>
         <td>${x.dong || ''} <span class="text-muted text-small">${x.use_type || ''}</span></td>
         <td class="num">${x.area_sqm != null ? x.area_sqm + '㎡' : '-'}</td>
-        <td class="price">${fmt.won(x.appraisal_price)}</td>
-        <td class="price text-accent">${fmt.won(x.sale_price)}</td>
+        <td class="price">${fmt.wonShort(x.appraisal_price)}</td>
+        <td class="price text-accent">${fmt.wonShort(x.sale_price)}</td>
         <td class="num"><strong>${x.bid_rate != null ? x.bid_rate + '%' : '-'}</strong></td>
         <td>${(x.match_hits || []).map(badge).join('')}</td>
       </tr>`).join('');
