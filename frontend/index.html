@@ -2884,7 +2884,7 @@ function renderAuction() {
     <div class="grid grid-4 mb-24">
       <div class="stat-card"><div class="stat-label">사례 수</div><div class="stat-value">${auctions.length}<span class="stat-unit">건</span></div><div class="stat-trend">낙찰 ${completed.length}건<span id="acAutoCount"></span></div></div>
       <div class="stat-card"><div class="stat-label">평균 낙찰가율</div><div class="stat-value">${completed.length ? avgRatePct.toFixed(1) : '-'}<span class="stat-unit">%</span></div><div class="stat-trend">감정가 대비</div><div class="stat-trend" id="acAutoRate" style="display:none;"></div></div>
-      <div class="stat-card"><div class="stat-label">평균 유찰</div><div class="stat-value">${auctions.length ? avgFailed.toFixed(1) : '-'}<span class="stat-unit">회</span></div></div>
+      <div class="stat-card"><div class="stat-label">평균 유찰</div><div class="stat-value">${auctions.length ? avgFailed.toFixed(1) : '-'}<span class="stat-unit">회</span></div><div class="stat-trend" id="acAutoFail" style="display:none;"></div></div>
       <div class="stat-card"><div class="stat-label">평균 응찰자</div><div class="stat-value">${withBidders.length ? avgBidders.toFixed(1) : '-'}<span class="stat-unit">명</span></div></div>
     </div>
 
@@ -2962,9 +2962,16 @@ function _simUseGroup(use) {
 //    수동 사례와 합산하지 않고, 표시용 수치만 분리 반환. (백엔드가 이미 집계해 준 count·median_bid_rate 사용)
 function auctionAutoCardStats(d) {
   if (!d || !d.available || !d.count) return null;
+  const fails = (d.items || [])
+    .map(x => x.fail_count)
+    .filter(v => v != null);
+  const avgFail = fails.length
+    ? fails.reduce((a, b) => a + b, 0) / fails.length
+    : null;
   return {
     count: d.count,
     medianRate: (d.median_bid_rate != null) ? Number(d.median_bid_rate) : null,
+    avgFail,
   };
 }
 
@@ -2978,6 +2985,11 @@ function updateAuctionAutoCards(d) {
   if (rEl && s.medianRate != null) {
     rEl.textContent = `자동조회 중앙값 ${s.medianRate.toFixed(1)}%`;
     rEl.style.display = '';
+  }
+  const fEl = document.getElementById('acAutoFail');
+  if (fEl && s.avgFail != null) {
+    fEl.textContent = `자동조회 평균 ${s.avgFail.toFixed(1)}회`;
+    fEl.style.display = '';
   }
 }
 
