@@ -311,7 +311,6 @@
   window.resolveBidEstimate = resolveBidEstimate;
 
   var TIER = {
-    manual: ['#7c3aed', '✏️ 직접입력'],
     same_complex: ['#0f6e5c', '1단계 · 동일단지'], sigungu: ['#1e2a44', '2단계 · 시군구 사례'],
     stat_real: ['#0f766e', '실측 낙찰가율'],
     stat_sigungu: ['#1e3a5f', '3단계 · 시군구 통계'],
@@ -446,17 +445,6 @@
     vc.appendChild(tmp.firstElementChild);
   }
   window.injectBidEst = injectBidEst;
-
-  window.setManualBidRate = function (pid, val) {
-    if (!pid) return;
-    state.scenarios = state.scenarios || {};
-    state.scenarios[pid] = state.scenarios[pid] || {};
-    var v = parseFloat(val);
-    if (val === '' || val == null || isNaN(v)) delete state.scenarios[pid].manualBidRate;
-    else state.scenarios[pid].manualBidRate = round1(Math.max(CFG.minRate, Math.min(CFG.maxRate, v)));
-    if (typeof saveState === 'function') { try { saveState(); } catch (e) {} }
-    injectBidEst();
-  };
 
   /* 담당자 보정: 가치형성요인(0.50~1.50) / 낙찰가율(%) → 담당자안 재산출 */
   window.updateBidFactor = function (which, val) {
