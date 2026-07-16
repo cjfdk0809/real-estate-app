@@ -2298,6 +2298,7 @@ def auction_comparables():
                 'appraisal_price': r.get('appraisal_price'),
                 'sale_price': r.get('sale_price'), 'bid_rate': r.get('bid_rate'),
                 'sale_date': r.get('sale_date'), 'result': r.get('result'),
+                'fail_count': r.get('fail_count'),
                 'match_score': sc, 'match_hits': hits,
             }
         cur = list(seen_cases.values())
