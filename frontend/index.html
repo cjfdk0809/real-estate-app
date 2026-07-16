@@ -2940,7 +2940,7 @@ function renderAuction() {
   loadSimilarAuctionCases(p);
 }
 
-// 🆕 유사 낙찰사례 자동조회 (같은 구 · [동/용도/면적±20%] 2개↑ 일치 · 기간 1→24개월 확대)
+// 🆕 유사 낙찰사례 자동조회 (지역 확대 사다리: 동→구→시도 · 용도·면적±%·기간 함께 확대)
 function _simRegion(addr) {
   const a = (addr || '').trim();
   const m = a.match(/^(\S+?(?:특별시|광역시|특별자치시|특별자치도|남도|북도|자치도|도))\s+(\S+?(?:시|군|구))\s+(\S+?(?:동|읍|면|리|가|로))(?=\s|\d|$)/);
@@ -3009,7 +3009,7 @@ async function loadSimilarAuctionCases(p) {
     const r = await fetch(`${window.BACKEND_URL || ''}/api/auction/comparables?${qs}`);
     const d = await r.json();
     if (!d.available) { body.innerHTML = `유사 낙찰사례를 불러올 수 없습니다. <span class="text-muted">(${d.reason || '데이터 부족'})</span>`; return; }
-    if (!d.count) { body.innerHTML = `조건(같은 구 · 2개↑ 일치)에 맞는 낙찰사례가 최근 24개월 내 없습니다.`; return; }
+    if (!d.count) { body.innerHTML = `조건(동→구→시도 확대)에 맞는 낙찰사례가 최근 24개월 내 없습니다.`; return; }
 
     updateAuctionAutoCards(d);   // 🆕 자동조회 결과를 상단 카드 보조표기에 반영
 
@@ -3029,7 +3029,7 @@ async function loadSimilarAuctionCases(p) {
     body.innerHTML = `
       <div style="margin-bottom:10px;">
         <strong style="color:var(--green);">✓ ${d.count}건</strong>
-        · ${d.region} · 면적 ±${d.area_tol_pct}% · ${d.period_label}
+        · ${d.region}${d.region_level ? ` (${d.region_level} 단위)` : ''} · 면적 ±${d.area_tol_pct}% · ${d.period_label}
         ${d.median_bid_rate != null ? ` · 중앙 낙찰가율 <strong>${d.median_bid_rate}%</strong>` : ''}
         <span class="text-muted text-small">(참고용 · 추정에는 미반영)</span>
       </div>
