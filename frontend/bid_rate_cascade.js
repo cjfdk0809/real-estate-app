@@ -85,6 +85,18 @@
     return { sido: m2 ? m2[1] : '', sigungu: '' };
   }
 
+  // 대상 물건의 '현재 유찰횟수' — 아직 낙찰 안 된 활성 경매의 failedCount.
+  // (활성 건이 없으면 첫 사건 기준) 값이 없으면 null → 유찰보정 미적용.
+  function _activeFailCount(list) {
+    var arr = list || [];
+    var act = null;
+    for (var i = 0; i < arr.length; i++) { if (arr[i] && !arr[i].winningBid) { act = arr[i]; break; } }
+    if (!act && arr.length) act = arr[0];
+    if (!act) return null;
+    var f = parseInt(act.failedCount, 10);
+    return (isNaN(f) || f < 0) ? null : f;
+  }
+
   function _realStat(p) {
     var g = _useGroup(p.use);
     var rg = _parseRegion(p.addrLot || p.addrRoad || '');
@@ -108,6 +120,7 @@
         n: d.sample_n, scope: d.scope, asof: d.asof,
         region: d.region, periodLabel: d.period_label, derivation: d.derivation,
         sido: d.sido, sigungu: d.sigungu,
+        failSlope: d.fail_slope, failRef: d.fail_ref, failLevels: d.fail_levels,
       } : null;
     } catch (e) { _realCache[key] = null; }
   }
@@ -227,8 +240,9 @@
 
     // 용도 계수 (근사) — 실측 통계가 없을 때만 적용. 실측이 있으면 그 값을 그대로 쓴다.
     var useFactor = _useFactor(p.use);
-    var real = _realStat(p);   // {median, p25, p75, n, scope, asof} | null
+    var real = _realStat(p);   // {median, p25, p75, n, scope, asof, failSlope, failRef} | null
     var usedReal = false;
+    var failDelta = 0, failAdj = null;   // 유찰횟수 보정(실측 단계 전용)
 
     if (real && real.median != null) {
       // 실측 낙찰가율(용도·지역별) — 고정계수 미적용
@@ -236,6 +250,21 @@
       center = round1(real.median);
       asof = real.asof; isStat = true; sampleN = real.n;
       useFactor = 1; usedReal = true;
+
+      // 유찰횟수 보정: 대상 물건이 표본 평균보다 더/덜 유찰됐으면 낙찰가율을 가감.
+      // 기울기(failSlope)·기준점(failRef)이 없으면(표본 부족) 보정하지 않는다.
+      if (real.failSlope != null && real.failRef != null) {
+        var _tf = _activeFailCount(aucs[pid]);
+        if (_tf != null) {
+          var _d = real.failSlope * (_tf - real.failRef);
+          // 단일 보정이 과도해지지 않도록 폭 제한(±은 서로 다르게: 하락은 크게, 상승은 작게)
+          _d = Math.max(-25, Math.min(15, _d));
+          failDelta = _d;
+          center = round1(Math.max(CFG.minRate, Math.min(CFG.maxRate, center + _d)));
+          failAdj = { targetFail: _tf, refFail: real.failRef, slope: real.failSlope,
+                      delta: round1(center - round1(real.median)) };
+        }
+      }
     } else {
       center = round1(center * useFactor);
     }
@@ -243,7 +272,8 @@
     var sc;
     if (usedReal && real.p25 != null && real.p75 != null) {
       var cl0 = function (v) { return round1(Math.max(CFG.minRate, Math.min(CFG.maxRate, v))); };
-      sc = { con: cl0(real.p25), mid: center, agg: cl0(real.p75) };   // 실측 분포로 시나리오
+      // 시나리오(보수/적극)도 실측 분위수에 유찰보정폭을 함께 반영해 분포째 이동
+      sc = { con: cl0(real.p25 + failDelta), mid: center, agg: cl0(real.p75 + failDelta) };
     } else if (tier === 'default') {
       sc = { con: round1(CFG.def.con * useFactor), mid: center, agg: round1(CFG.def.agg * useFactor) };
     } else { var cl = function (v) { return round1(Math.max(CFG.minRate, Math.min(CFG.maxRate, v))); };
@@ -264,7 +294,8 @@
     return { tier: tier, center: sc.mid, scenarios: sc, isStat: isStat, asof: asof,
       sampleN: sampleN, scope: scope, targetSigungu: targetSg, targetSido: targetSido,
       sameComplexN: same.length, sigunguN: sg.length,
-      useFactor: useFactor, useLabel: _useLabel(p.use), usedReal: usedReal };
+      useFactor: useFactor, useLabel: _useLabel(p.use), usedReal: usedReal,
+      failAdj: failAdj };
   }
   window.resolveBidRateCascade = resolveBidRateCascade;
 
@@ -354,6 +385,13 @@
       note = '<div class="text-small" style="color:var(--warn);">⚠️ 소재지에서 지역을 못 읽어 기본값(90%)을 적용했습니다. 주소를 확인하세요.</div>';
     } else {
       note = '<div class="text-small text-muted">📍 본건 <strong>' + cas.scope + '</strong> ' + cas.sampleN + '건의 중앙값입니다.</div>';
+    }
+    // 유찰횟수 보정 근거 표기 (실측 단계에서 보정이 적용됐을 때만)
+    if (cas.failAdj && cas.failAdj.delta !== 0) {
+      var _fa = cas.failAdj;
+      note += '<div class="text-small text-muted">↳ 유찰 ' + _fa.targetFail + '회 반영: '
+        + (_fa.delta >= 0 ? '+' : '') + _fa.delta + '%p (표본 평균 ' + _fa.refFail + '회 대비, 유찰 1회당 '
+        + (_fa.slope >= 0 ? '+' : '') + _fa.slope + '%p)</div>';
     }
 
     var row = function (label, val, desc, strong) {
