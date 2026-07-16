@@ -2151,6 +2151,8 @@ _PERIOD_LABEL = {1: '최근 1개월', 3: '최근 3개월', 6: '최근 6개월',
 _FAIL_MIN_PER_LEVEL = 5          # 유찰단계(0회/1회/…)별 최소 표본 수
 _FAIL_MIN_LEVELS = 2             # 기울기를 신뢰하기 위한 최소 유효 유찰단계 수
 _FAIL_SLOPE_CLAMP = (-30.0, 5.0)  # 유찰 1회당 %p 변화의 상식적 허용 범위
+_FAIL_SLOPE_MIN_MONTHS = 24      # 기울기 추정 최소 기간: 실측 중앙값 기간(짧을 수 있음)과
+#   분리해 항상 넓은 창에서 추정 → 소표본으로 기울기가 과격해지는 것을 완화.
 
 
 def _median(xs):
@@ -2265,25 +2267,27 @@ def auction_rates():
 
     # ── 유찰횟수 보정용 기울기 ────────────────────────────────────────────
     # 실측 중앙값은 '평균적인 유찰 섞임'을 반영하므로, 대상 물건이 표본 평균보다 더/덜
-    # 유찰됐을 때만 가감하기 위한 기울기·기준점을 같은 스코프의 원본 낙찰기록에서 추정한다.
-    # (median_rate가 산출된 것과 동일한 지역·기간·용도 표본을 근사) 표본 부족 시 None.
+    # 유찰됐을 때만 가감하기 위한 기울기·기준점을 같은 지역·용도의 원본 낙찰기록에서 추정한다.
+    # 기간은 median_rate 기간(짧을 수 있음)에 묶지 않고 항상 넓은 창(≥24개월)에서 뽑아
+    # 소표본으로 기울기가 과격해지는 것을 완화한다. 표본 부족 시 None(→ 무보정).
     fail_slope = fail_ref = fail_levels = None
+    fail_slope_months = 0 if chosen_period == 0 else max(chosen_period or 0, _FAIL_SLOPE_MIN_MONTHS)
     try:
         fq = (supabase.table('auction_sales')
               .select('fail_count,bid_rate,sale_date,sido,sigungu,use_group')
               .eq('use_group', use_group)
               .not_.is_('bid_rate', 'null')
               .not_.is_('fail_count', 'null')
-              .limit(2000))
+              .limit(4000))
         if chosen_scope == 'sigungu':
             fq = fq.eq('sigungu', hit.get('sigungu'))
             if hit.get('sido'):
                 fq = fq.eq('sido', hit.get('sido'))
         elif chosen_scope == 'sido':
             fq = fq.eq('sido', hit.get('sido'))
-        if chosen_period:   # 0 = 전체 기간이면 날짜 필터 없음
+        if fail_slope_months:   # 0 = 전체 기간이면 날짜 필터 없음
             import datetime as _dt2
-            _cut = (_dt2.date.today() - _dt2.timedelta(days=chosen_period * 30)).isoformat()
+            _cut = (_dt2.date.today() - _dt2.timedelta(days=fail_slope_months * 30)).isoformat()
             fq = fq.gte('sale_date', _cut)
         frows = (fq.execute().data) or []
         fail_slope, fail_ref, fail_levels = _estimate_fail_slope(frows)
@@ -2301,7 +2305,9 @@ def auction_rates():
         'avg_bidders': hit.get('avg_bidders'), 'asof': hit.get('asof'),
         'derivation': derivation,
         # 유찰보정: 유찰 1회당 %p 변화(fail_slope) · 기준 유찰횟수(fail_ref) · 단계별 내역
+        # fail_slope_months = 기울기 추정에 사용한 기간(개월, 0=전체). 실측 기간과 분리됨.
         'fail_slope': fail_slope, 'fail_ref': fail_ref, 'fail_levels': fail_levels,
+        'fail_slope_months': fail_slope_months,
     })
 
 
