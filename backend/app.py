@@ -413,6 +413,7 @@ def health():
             'price_disclosure': True,
             'supabase_search': supabase is not None,  # 신규: 자동완성 가능 여부
             'cross_verify': True,  # 🆕 Day 8: 단지 교차검증
+            'map_geocode': bool(VWORLD_API_KEY),  # 🆕 지도 좌표변환(V-World) 사용 가능 여부
         },
         'supabase': {
             'lib_installed': HAS_SUPABASE_LIB,

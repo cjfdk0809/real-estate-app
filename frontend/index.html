@@ -3048,10 +3048,69 @@ async function loadSimilarAuctionCases(p) {
           <tbody>${rows}</tbody>
         </table>
       </div>
-      <div class="text-small text-muted" style="margin-top:6px;">일치 기준: 같은 동 / 같은 용도 / 면적 ±N% 중 2개 이상. 면적(1·3·5·7·10·15·20%)과 기간(1·3·6·12·24개월)을 함께 넓혀가며 조회 (채택: 면적 ±${d.area_tol_pct}% · ${d.period_label}).</div>`;
+      <div class="text-small text-muted" style="margin-top:6px;">일치 기준: 같은 동 / 같은 용도 / 면적 ±N% 중 2개 이상. 면적(1·3·5·7·10·15·20%)과 기간(1·3·6·12·24개월)을 함께 넓혀가며 조회 (채택: 면적 ±${d.area_tol_pct}% · ${d.period_label}).</div>
+      <div id="simMapNote" class="text-small text-muted" style="margin-top:12px;">🗺️ 낙찰사례 위치 <span style="color:var(--kiwoom-pink-deep,#CC00CC);">본건 동일 동은 분홍</span> · <span style="color:#1A2540;">타 동은 네이비</span> — 낙찰사례는 좌표가 없어 <strong>동 중심 근사 위치</strong>(참고용)입니다.</div>
+      <div id="simCasesMap" style="height:360px;border:1px solid var(--line);border-radius:6px;margin-top:4px;display:none;"></div>`;
+
+    // 🆕 낙찰사례 동-근사 지도 (본건 + 사례 마커). V-World 키 없으면 조용히 숨김.
+    if (window.L) _renderAuctionMap(p, d.items, rg.dong);
   } catch (e) {
     body.innerHTML = `조회 오류: ${e.message}`;
   }
+}
+
+let _auctionMap = null;
+// 낙찰사례 지도 — 본건(핑크 큰 점) + 사례 마커. auction_sales에 좌표가 없어 동 이름을
+// 좌표로 변환(V-World)해 '동 중심'에 찍고, 같은 동 겹침은 황금각 나선으로 흩뿌려 완화한다.
+async function _renderAuctionMap(p, items, targetDong) {
+  const box = document.getElementById('simCasesMap');
+  const note = document.getElementById('simMapNote');
+  if (!box) return;
+  const originAddr = (p.addrLot || p.addrRoad || '').trim();
+  const rg = _simRegion(originAddr);
+  // 각 사례를 "시도 시군구 동" 주소로 지오코딩 (동 단위까지만 → 동 중심 좌표)
+  const geoItems = items.map((x, i) => ({
+    id: String(i),
+    addr: [rg.sido, rg.sigungu, (x.dong || '').split(' ')[0]].filter(Boolean).join(' '),
+  })).filter(it => it.addr.split(' ').length >= 3);
+  let resp;
+  try {
+    const r = await fetch(`${window.BACKEND_URL || ''}/api/geocode/coords`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ origin: originAddr, items: geoItems }),
+    });
+    resp = await r.json();
+  } catch (e) { if (note) note.textContent = '🗺️ 지도 조회 오류'; return; }
+  if (!resp.key) { if (note) note.textContent = '🗺️ 낙찰사례 지도 미표시 (V-World 좌표변환 키 미설정)'; return; }
+  const origin = resp.origin;
+  if (!origin) { if (note) note.textContent = '🗺️ 지도 미표시 (본건 주소 좌표 실패)'; return; }
+
+  box.style.display = '';
+  if (_auctionMap) { _auctionMap.remove(); _auctionMap = null; }
+  _auctionMap = L.map(box, { scrollWheelZoom: true }).setView(origin, 13);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(_auctionMap);
+  L.circleMarker(origin, { radius: 9, color: '#fff', weight: 2, fillColor: '#E6007E', fillOpacity: 1 })
+    .addTo(_auctionMap).bindPopup(`<b>${p.name || '본건'}</b><br>본건`);
+
+  const pts = [origin], dongSeen = {};
+  items.forEach((x, i) => {
+    const c = resp.coords[String(i)];
+    if (!c) return;
+    const dong = (x.dong || '').split(' ')[0];
+    const k = dongSeen[dong] = (dongSeen[dong] || 0) + 1;
+    // 같은 동 겹침 완화: 황금각 나선으로 ~수십 m 흩뿌림
+    const ang = k * 2.399963, rad = 0.00035 * Math.sqrt(k);
+    const lat = c[0] + rad * Math.cos(ang);
+    const lng = c[1] + rad * Math.sin(ang) / Math.cos(c[0] * Math.PI / 180);
+    const same = !!(targetDong && dong === targetDong);
+    L.circleMarker([lat, lng], { radius: 6, color: '#fff', weight: 1.5,
+      fillColor: same ? '#CC00CC' : '#1A2540', fillOpacity: 0.9 })
+      .addTo(_auctionMap)
+      .bindPopup(`<b>${dong} ${x.use_type || ''}</b><br>${x.sale_date || ''} · 낙찰가율 <b>${x.bid_rate != null ? x.bid_rate + '%' : '-'}</b><br>${x.area_sqm != null ? x.area_sqm + '㎡' : ''}${x.fail_count != null ? ' · 유찰 ' + x.fail_count + '회' : ''}<br><span style="color:#888;">동 중심 근사 위치</span>`);
+    pts.push([lat, lng]);
+  });
+  if (pts.length > 1) _auctionMap.fitBounds(L.latLngBounds(pts).pad(0.15));
+  setTimeout(() => _auctionMap && _auctionMap.invalidateSize(), 100);
 }
 
 // ============================================================
