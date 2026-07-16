@@ -3068,11 +3068,12 @@ async function _renderAuctionMap(p, items, targetDong) {
   if (!box) return;
   const originAddr = (p.addrLot || p.addrRoad || '').trim();
   const rg = _simRegion(originAddr);
-  // 각 사례를 "시도 시군구 동" 주소로 지오코딩 (동 단위까지만 → 동 중심 좌표)
-  const geoItems = items.map((x, i) => ({
-    id: String(i),
-    addr: [rg.sido, rg.sigungu, (x.dong || '').split(' ')[0]].filter(Boolean).join(' '),
-  })).filter(it => it.addr.split(' ').length >= 3);
+  // 동 단위 주소는 번지가 없어 지오코더가 실패하므로 번지 '1'을 붙여 그 동의 한 점을 얻는다(근사).
+  const dongAddr = dong => [rg.sido, rg.sigungu, (dong || '').split(' ')[0], '1'].filter(Boolean).join(' ');
+  const geoItems = items.map((x, i) => ({ id: String(i), addr: dongAddr(x.dong) }))
+    .filter(it => it.addr.split(' ').length >= 4);
+  // 본건도 정밀 좌표 실패 대비 동 단위 폴백을 함께 보낸다.
+  if (rg.dong) geoItems.push({ id: '__origin__', addr: dongAddr(rg.dong) });
   let resp;
   try {
     const r = await fetch(`${window.BACKEND_URL || ''}/api/geocode/coords`, {
@@ -3082,17 +3083,29 @@ async function _renderAuctionMap(p, items, targetDong) {
     resp = await r.json();
   } catch (e) { if (note) note.textContent = '🗺️ 지도 조회 오류'; return; }
   if (!resp.key) { if (note) note.textContent = '🗺️ 낙찰사례 지도 미표시 (V-World 좌표변환 키 미설정)'; return; }
-  const origin = resp.origin;
-  if (!origin) { if (note) note.textContent = '🗺️ 지도 미표시 (본건 주소 좌표 실패)'; return; }
+
+  // 본건 좌표: 정밀 실패 시 동 중심 근사로 폴백
+  const origin = resp.origin || resp.coords['__origin__'] || null;
+  const originApprox = !resp.origin && !!origin;
+  const anyItem = items.some((x, i) => resp.coords[String(i)]);
+  if (!origin && !anyItem) {
+    if (note) note.textContent = '🗺️ 지도 미표시 (좌표 변환 실패 — V-World 키의 서비스 URL 설정을 확인하세요)';
+    return;
+  }
 
   box.style.display = '';
   if (_auctionMap) { _auctionMap.remove(); _auctionMap = null; }
-  _auctionMap = L.map(box, { scrollWheelZoom: true }).setView(origin, 13);
+  const center = origin || resp.coords[items.findIndex((x, i) => resp.coords[String(i)])];
+  _auctionMap = L.map(box, { scrollWheelZoom: true }).setView(center, 13);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(_auctionMap);
-  L.circleMarker(origin, { radius: 9, color: '#fff', weight: 2, fillColor: '#E6007E', fillOpacity: 1 })
-    .addTo(_auctionMap).bindPopup(`<b>${p.name || '본건'}</b><br>본건`);
+  const pts = [];
+  if (origin) {
+    L.circleMarker(origin, { radius: 9, color: '#fff', weight: 2, fillColor: '#E6007E', fillOpacity: 1 })
+      .addTo(_auctionMap).bindPopup(`<b>${p.name || '본건'}</b><br>본건${originApprox ? ' <span style="color:#888;">(동 중심 근사)</span>' : ''}`);
+    pts.push(origin);
+  }
 
-  const pts = [origin], dongSeen = {};
+  const dongSeen = {};
   items.forEach((x, i) => {
     const c = resp.coords[String(i)];
     if (!c) return;
