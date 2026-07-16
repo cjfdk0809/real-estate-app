@@ -313,6 +313,7 @@
   var TIER = {
     manual: ['#7c3aed', '✏️ 직접입력'],
     same_complex: ['#0f6e5c', '1단계 · 동일단지'], sigungu: ['#1e2a44', '2단계 · 시군구 사례'],
+    stat_real: ['#0f766e', '실측 낙찰가율'],
     stat_sigungu: ['#1e3a5f', '3단계 · 시군구 통계'],
     stat_national: ['#5a6b8c', '4단계 · 전국 통계'], default: ['#a8884a', '디폴트']
   };
@@ -343,7 +344,7 @@
     var be = resolveBidEstimate(pid); if (!be) return '';
     var cas = be.cas, ap = be.ap, area = be.area;
     var unitPrice = be.unitPrice, baseValue = be.baseAi, bidRate = be.rate;
-    var badge = TIER[cas.tier];
+    var badge = TIER[cas.tier] || TIER.default;
     var dec = be.decision;
     var factorProd = be.factorProd;
 
