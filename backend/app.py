@@ -2115,6 +2115,36 @@ def _geocode_any(address):
     return c
 
 
+@app.route('/api/geocode/diag')
+def geocode_diag():
+    """V-World 지오코딩이 왜 실패하는지 원문 응답(상태·에러문구)을 그대로 보여주는 진단.
+    URL: /api/geocode/diag?key=ADMIN_SECRET&addr=서울특별시 송파구 잠실동 40"""
+    if not ADMIN_SECRET:
+        return jsonify({'error': 'ADMIN_SECRET 미설정'}), 503
+    if request.args.get('key', '') != ADMIN_SECRET:
+        return jsonify({'error': '잘못된 관리자 키'}), 403
+    if not VWORLD_API_KEY:
+        return jsonify({'vworld_key_set': False})
+    addr = (request.args.get('addr') or '서울특별시 송파구 잠실동 40').strip()
+    out = {'vworld_key_set': True, 'key_len': len(VWORLD_API_KEY), 'address': addr}
+    for t in ('parcel', 'road'):
+        params = {'service': 'address', 'request': 'getcoord', 'version': '2.0',
+                  'crs': 'epsg:4326', 'address': addr, 'type': t,
+                  'format': 'json', 'key': VWORLD_API_KEY}
+        try:
+            r = requests.get(URL_VWORLD_GEOCODE, params=params, timeout=8)
+            try:
+                resp = (r.json() or {}).get('response', {})
+            except Exception:
+                resp = {'_raw': r.text[:300]}
+            out[t] = {'http': r.status_code, 'status': resp.get('status'),
+                      'error': resp.get('error'),
+                      'point': (resp.get('result') or {}).get('point')}
+        except Exception as e:
+            out[t] = {'exception': str(e)}
+    return jsonify(out)
+
+
 @app.route('/api/geocode/coords', methods=['POST'])
 def geocode_coords():
     """본건 주소 + 거래 지번주소 리스트 → 좌표. 반경 밴드는 프론트에서 계산.
