@@ -2882,8 +2882,8 @@ function renderAuction() {
     </div>
 
     <div class="grid grid-4 mb-24">
-      <div class="stat-card"><div class="stat-label">사례 수</div><div class="stat-value">${auctions.length}<span class="stat-unit">건</span></div><div class="stat-trend">낙찰 ${completed.length}건</div></div>
-      <div class="stat-card"><div class="stat-label">평균 낙찰가율</div><div class="stat-value">${completed.length ? avgRatePct.toFixed(1) : '-'}<span class="stat-unit">%</span></div><div class="stat-trend">감정가 대비</div></div>
+      <div class="stat-card"><div class="stat-label">사례 수</div><div class="stat-value">${auctions.length}<span class="stat-unit">건</span></div><div class="stat-trend">낙찰 ${completed.length}건<span id="acAutoCount"></span></div></div>
+      <div class="stat-card"><div class="stat-label">평균 낙찰가율</div><div class="stat-value">${completed.length ? avgRatePct.toFixed(1) : '-'}<span class="stat-unit">%</span></div><div class="stat-trend">감정가 대비</div><div class="stat-trend" id="acAutoRate" style="display:none;"></div></div>
       <div class="stat-card"><div class="stat-label">평균 유찰</div><div class="stat-value">${auctions.length ? avgFailed.toFixed(1) : '-'}<span class="stat-unit">회</span></div></div>
       <div class="stat-card"><div class="stat-label">평균 응찰자</div><div class="stat-value">${withBidders.length ? avgBidders.toFixed(1) : '-'}<span class="stat-unit">명</span></div></div>
     </div>
@@ -2958,6 +2958,29 @@ function _simUseGroup(use) {
   return 'apt';
 }
 
+// 🆕 자동조회(/api/auction/comparables) 결과를 카드 보조표기용 값으로만 뽑아낸다.
+//    수동 사례와 합산하지 않고, 표시용 수치만 분리 반환. (백엔드가 이미 집계해 준 count·median_bid_rate 사용)
+function auctionAutoCardStats(d) {
+  if (!d || !d.available || !d.count) return null;
+  return {
+    count: d.count,
+    medianRate: (d.median_bid_rate != null) ? Number(d.median_bid_rate) : null,
+  };
+}
+
+// 🆕 상단 카드(사례 수 · 평균 낙찰가율)에만 자동조회 보조표기를 주입. 평균 유찰·응찰자 카드는 미변경.
+function updateAuctionAutoCards(d) {
+  const s = auctionAutoCardStats(d);
+  if (!s) return;
+  const cEl = document.getElementById('acAutoCount');
+  const rEl = document.getElementById('acAutoRate');
+  if (cEl) cEl.textContent = ` · 자동조회 ${s.count}건`;
+  if (rEl && s.medianRate != null) {
+    rEl.textContent = `자동조회 중앙값 ${s.medianRate.toFixed(1)}%`;
+    rEl.style.display = '';
+  }
+}
+
 async function loadSimilarAuctionCases(p) {
   const body = document.getElementById('simCasesBody');
   if (!body) return;
@@ -2975,6 +2998,8 @@ async function loadSimilarAuctionCases(p) {
     const d = await r.json();
     if (!d.available) { body.innerHTML = `유사 낙찰사례를 불러올 수 없습니다. <span class="text-muted">(${d.reason || '데이터 부족'})</span>`; return; }
     if (!d.count) { body.innerHTML = `조건(같은 구 · 2개↑ 일치)에 맞는 낙찰사례가 최근 24개월 내 없습니다.`; return; }
+
+    updateAuctionAutoCards(d);   // 🆕 자동조회 결과를 상단 카드 보조표기에 반영
 
     const badge = h => `<span class="badge" style="background:var(--accent-soft);color:var(--accent);margin-right:3px;">${h}</span>`;
     const rows = d.items.map(x => `
