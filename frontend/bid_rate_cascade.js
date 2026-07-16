@@ -39,7 +39,7 @@
   };
 
   var CFG = {
-    minSameComplex: 3, minSigungu: 5, spread: 5,
+    minSameComplex: 3, minSigungu: 5, minDong: 5, spread: 5,
     minRate: 30, maxRate: 130, def: { con: 85, mid: 90, agg: 95 }
   };
   var PINK = 'var(--kiwoom-pink-deep, #CC00CC)';
@@ -73,16 +73,18 @@
   /* ===== 실측 낙찰가율 (법원경매 매각결과 축적 DB) =====
      캐스케이드는 동기이므로, 물건 선택 시 prefetch로 캐시에 채운 뒤 읽는다.
      실측이 있으면 근사 용도계수 대신 실측 중앙값·사분위를 사용한다. */
-  var _realCache = {};   // key: use_group|sido|sigungu → stat | null
-  function _rsKey(g, sido, sgg) { return g + '|' + (sido || '') + '|' + (sgg || ''); }
+  var _realCache = {};   // key: use_group|sido|sigungu|dong → stat | null
+  function _rsKey(g, sido, sgg, dong) { return g + '|' + (sido || '') + '|' + (sgg || '') + '|' + (dong || ''); }
 
-  // 주소 → {sido, sigungu} 자체 파싱 (외부 파서 필드명에 의존하지 않음)
+  // 주소 → {sido, sigungu, dong} 자체 파싱 (외부 파서 필드명에 의존하지 않음)
   function _parseRegion(addr) {
     var a = (addr || '').trim();
+    var m3 = a.match(/^(\S+?(?:특별시|광역시|특별자치시|특별자치도|남도|북도|자치도|도))\s+(\S+?(?:시|군|구))\s+(\S+?(?:동|읍|면|리|가|로))(?=\s|\d|$)/);
+    if (m3) return { sido: m3[1], sigungu: m3[2], dong: m3[3] };
     var m = a.match(/^(\S+?(?:특별시|광역시|특별자치시|특별자치도|남도|북도|자치도|도))\s+(\S+?(?:시|군|구))(?:\s|$)/);
-    if (m) return { sido: m[1], sigungu: m[2] };
+    if (m) return { sido: m[1], sigungu: m[2], dong: '' };
     var m2 = a.match(/^(\S+?(?:특별시|광역시|특별자치시|특별자치도|남도|북도|자치도|도))/);
-    return { sido: m2 ? m2[1] : '', sigungu: '' };
+    return { sido: m2 ? m2[1] : '', sigungu: '', dong: '' };
   }
 
   // 대상 물건의 '현재 유찰횟수' — 아직 낙찰 안 된 활성 경매의 failedCount.
@@ -100,7 +102,7 @@
   function _realStat(p) {
     var g = _useGroup(p.use);
     var rg = _parseRegion(p.addrLot || p.addrRoad || '');
-    var v = _realCache[_rsKey(g, rg.sido, rg.sigungu)];
+    var v = _realCache[_rsKey(g, rg.sido, rg.sigungu, rg.dong)];
     return v || null;
   }
 
@@ -109,10 +111,10 @@
     if (!p || typeof window.BACKEND_URL !== 'string') return;
     var g = _useGroup(p.use);
     var rg = _parseRegion(p.addrLot || p.addrRoad || '');
-    var key = _rsKey(g, rg.sido, rg.sigungu);
+    var key = _rsKey(g, rg.sido, rg.sigungu, rg.dong);
     if (key in _realCache) return;
     try {
-      var qs = new URLSearchParams({ use_group: g, sido: rg.sido, sigungu: rg.sigungu, months: '12', min_n: '5' });
+      var qs = new URLSearchParams({ use_group: g, sido: rg.sido, sigungu: rg.sigungu, dong: rg.dong || '', months: '12', min_n: '5' });
       var r = await fetch(window.BACKEND_URL + '/api/auction/rates?' + qs.toString());
       var d = await r.json();
       _realCache[key] = (d && d.available) ? {
@@ -121,6 +123,8 @@
         region: d.region, periodLabel: d.period_label, derivation: d.derivation,
         sido: d.sido, sigungu: d.sigungu,
         failSlope: d.fail_slope, failRef: d.fail_ref, failLevels: d.fail_levels,
+        dongName: d.dong, dongRate: d.dong_rate, dongP25: d.dong_p25, dongP75: d.dong_p75,
+        dongN: d.dong_n, dongRefFail: d.dong_ref_fail,
       } : null;
     } catch (e) { _realCache[key] = null; }
   }
@@ -240,29 +244,40 @@
 
     // 용도 계수 (근사) — 실측 통계가 없을 때만 적용. 실측이 있으면 그 값을 그대로 쓴다.
     var useFactor = _useFactor(p.use);
-    var real = _realStat(p);   // {median, p25, p75, n, scope, asof, failSlope, failRef} | null
+    var real = _realStat(p);   // {median, p25, p75, n, ..., dongRate, dongN, dongRefFail} | null
     var usedReal = false;
     var failDelta = 0, failAdj = null;   // 유찰횟수 보정(실측 단계 전용)
+    var _p25 = null, _p75 = null;        // 채택 분포의 사분위(시나리오용)
 
-    if (real && real.median != null) {
-      // 실측 낙찰가율(용도·지역별) — 고정계수 미적용
-      tier = 'stat_real';
-      center = round1(real.median);
-      asof = real.asof; isStat = true; sampleN = real.n;
-      useFactor = 1; usedReal = true;
+    // 동 단위(≥5건)가 있으면 시도 실측보다 관련성이 높으므로 우선 채택.
+    var useDong = !!(real && real.dongRate != null && real.dongN >= CFG.minDong);
+    if (real && (real.median != null || useDong)) {
+      var baseRate, baseRef;
+      if (useDong) {
+        tier = 'stat_dong';
+        baseRate = real.dongRate; _p25 = real.dongP25; _p75 = real.dongP75;
+        baseRef = (real.dongRefFail != null) ? real.dongRefFail : real.failRef;
+        sampleN = real.dongN;
+      } else {
+        tier = 'stat_real';
+        baseRate = real.median; _p25 = real.p25; _p75 = real.p75;
+        baseRef = real.failRef;
+        sampleN = real.n;
+      }
+      center = round1(baseRate);
+      asof = real.asof; isStat = true; useFactor = 1; usedReal = true;
 
-      // 유찰횟수 보정: 대상 물건이 표본 평균보다 더/덜 유찰됐으면 낙찰가율을 가감.
-      // 기울기(failSlope)·기준점(failRef)이 없으면(표본 부족) 보정하지 않는다.
-      if (real.failSlope != null && real.failRef != null) {
+      // 유찰횟수 보정: 대상이 표본 평균보다 더/덜 유찰됐으면 가감. 채택 분포의 기준유찰(baseRef)
+      // 대비로 센터링해 이중조정을 피한다. 기울기(넓은 표본)·기준점 없으면 미보정.
+      if (real.failSlope != null && baseRef != null) {
         var _tf = _activeFailCount(aucs[pid]);
         if (_tf != null) {
-          var _d = real.failSlope * (_tf - real.failRef);
-          // 단일 보정이 과도해지지 않도록 폭 제한(±은 서로 다르게: 하락은 크게, 상승은 작게)
+          var _d = real.failSlope * (_tf - baseRef);
           _d = Math.max(-25, Math.min(15, _d));
           failDelta = _d;
           center = round1(Math.max(CFG.minRate, Math.min(CFG.maxRate, center + _d)));
-          failAdj = { targetFail: _tf, refFail: real.failRef, slope: real.failSlope,
-                      delta: round1(center - round1(real.median)) };
+          failAdj = { targetFail: _tf, refFail: round1(baseRef), slope: real.failSlope,
+                      delta: round1(center - round1(baseRate)) };
         }
       }
     } else {
@@ -270,10 +285,10 @@
     }
 
     var sc;
-    if (usedReal && real.p25 != null && real.p75 != null) {
+    if (usedReal && _p25 != null && _p75 != null) {
       var cl0 = function (v) { return round1(Math.max(CFG.minRate, Math.min(CFG.maxRate, v))); };
-      // 시나리오(보수/적극)도 실측 분위수에 유찰보정폭을 함께 반영해 분포째 이동
-      sc = { con: cl0(real.p25 + failDelta), mid: center, agg: cl0(real.p75 + failDelta) };
+      // 시나리오(보수/적극)도 채택 분위수에 유찰보정폭을 함께 반영해 분포째 이동
+      sc = { con: cl0(_p25 + failDelta), mid: center, agg: cl0(_p75 + failDelta) };
     } else if (tier === 'default') {
       sc = { con: round1(CFG.def.con * useFactor), mid: center, agg: round1(CFG.def.agg * useFactor) };
     } else { var cl = function (v) { return round1(Math.max(CFG.minRate, Math.min(CFG.maxRate, v))); };
@@ -283,6 +298,8 @@
     switch (tier) {
       case 'same_complex': scope = '본건 동일단지 낙찰사례'; break;
       case 'sigungu':      scope = (targetSg || '시군구') + ' 낙찰사례'; break;
+      case 'stat_dong':    scope = _useLabel(p.use) + ' 실측 낙찰가율 · '
+                                 + (real.dongName || '동') + ' (동 단위, n=' + real.dongN + ')'; break;
       case 'stat_real':    scope = _useLabel(p.use) + ' 실측 낙찰가율 · '
                                  + (real.derivation || ((real.region || '전국') + ' (n=' + real.n + ')')); break;
       case 'stat_sigungu': scope = (targetSg || '시군구') + ' 통계'; break;
@@ -343,6 +360,7 @@
 
   var TIER = {
     same_complex: ['#0f6e5c', '1단계 · 동일단지'], sigungu: ['#1e2a44', '2단계 · 시군구 사례'],
+    stat_dong: ['#0b7a53', '동 단위 실측'],
     stat_real: ['#0f766e', '실측 낙찰가율'],
     stat_sigungu: ['#1e3a5f', '3단계 · 시군구 통계'],
     stat_national: ['#5a6b8c', '4단계 · 전국 통계'], default: ['#a8884a', '디폴트']
@@ -379,7 +397,9 @@
     var factorProd = be.factorProd;
 
     var note;
-    if (cas.isStat) {
+    if (cas.tier === 'stat_dong') {
+      note = '<div class="text-small text-muted">📍 낙찰가율은 <strong>' + cas.scope + '</strong> ' + cas.sampleN + '건의 중앙값입니다 (본건과 같은 동·용도의 실측 낙찰사례 우선 적용).</div>';
+    } else if (cas.isStat) {
       note = '<div class="text-small text-muted">📊 낙찰가율은 <strong>' + cas.scope + '</strong> 종합 낙찰가율입니다 (한국부동산원 법원경매통계 ' + cas.asof + ', 용도무관). 아파트는 종합보다 다소 높을 수 있습니다.</div>';
     } else if (cas.tier === 'default') {
       note = '<div class="text-small" style="color:var(--warn);">⚠️ 소재지에서 지역을 못 읽어 기본값(90%)을 적용했습니다. 주소를 확인하세요.</div>';
