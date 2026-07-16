@@ -2482,6 +2482,133 @@ def auction_comparables():
 
 
 # ============================================================
+# 진단: auction_sales의 fail_count 채움률 · 유찰차수 분포 · 보정 적용가능 범위
+#   URL: /admin/diag-fail-count?key=ADMIN_SECRET
+#   유찰횟수 보정 기능이 실제로 몇 %의 데이터에서 작동하는지 사람이 눈으로 확인.
+# ============================================================
+@app.route('/admin/diag-fail-count')
+def admin_diag_fail_count():
+    key = request.args.get('key', '')
+    if not ADMIN_SECRET:
+        return jsonify({'error': 'ADMIN_SECRET 환경변수가 설정되지 않았습니다.'}), 503
+    if key != ADMIN_SECRET:
+        return jsonify({'error': '잘못된 관리자 키'}), 403
+    if not supabase:
+        return jsonify({'error': 'Supabase 미설정'}), 503
+
+    import datetime as _dt3
+
+    def _count(build):
+        try:
+            q = supabase.table('auction_sales').select('*', count='exact').limit(1)
+            return build(q).execute().count
+        except Exception:
+            return None
+
+    total = _count(lambda q: q)
+    with_fail = _count(lambda q: q.not_.is_('fail_count', 'null'))
+    with_rate = _count(lambda q: q.not_.is_('bid_rate', 'null'))
+    with_both = _count(lambda q: q.not_.is_('fail_count', 'null').not_.is_('bid_rate', 'null'))
+
+    # 분포·버킷 판정용 표본: 최근 12개월, fail_count·bid_rate 보유분을 페이지네이션 수집
+    cut12 = (_dt3.date.today() - _dt3.timedelta(days=365)).isoformat()
+    sample, page, PAGE, MAX = [], 0, 1000, 10000
+    try:
+        while len(sample) < MAX:
+            rows = (supabase.table('auction_sales')
+                    .select('fail_count,bid_rate,use_group,sido,sigungu,sale_date')
+                    .not_.is_('fail_count', 'null').not_.is_('bid_rate', 'null')
+                    .gte('sale_date', cut12)
+                    .order('sale_date', desc=True)
+                    .range(page * PAGE, page * PAGE + PAGE - 1)
+                    .execute().data) or []
+            sample.extend(rows)
+            if len(rows) < PAGE:
+                break
+            page += 1
+    except Exception as e:
+        return jsonify({'error': f'표본 수집 실패: {e}'}), 502
+
+    sample_capped = len(sample) >= MAX
+
+    # 유찰차수 분포
+    dist = {}
+    for r in sample:
+        try:
+            fc = int(r.get('fail_count'))
+        except (TypeError, ValueError):
+            continue
+        dist[fc] = dist.get(fc, 0) + 1
+
+    # 지역×용도 버킷별로 기울기 산출 가능한지 판정
+    buckets = {}
+    for r in sample:
+        k = (r.get('use_group') or '?', r.get('sido') or '?', r.get('sigungu') or '?')
+        buckets.setdefault(k, []).append(r)
+    qualifying = []
+    for k, rows in buckets.items():
+        slope, ref, levels = _estimate_fail_slope(rows)
+        if slope is not None:
+            qualifying.append({'use_group': k[0], 'sido': k[1], 'sigungu': k[2],
+                               'n': len(rows), 'slope': slope, 'ref': ref,
+                               'levels': len(levels)})
+    qualifying.sort(key=lambda x: x['n'], reverse=True)
+
+    def pct(a, b):
+        return f'{round(100.0 * a / b, 1)}%' if (a is not None and b) else '—'
+
+    fill_pct = pct(with_fail, total)
+    rows_html = ''.join(
+        f'<tr><td>{fc}회</td><td style="text-align:right">{dist[fc]:,}건</td></tr>'
+        for fc in sorted(dist))
+    q_html = ''.join(
+        f'<tr><td>{q["use_group"]}</td><td>{q["sido"]}</td><td>{q["sigungu"]}</td>'
+        f'<td style="text-align:right">{q["n"]:,}</td><td style="text-align:right">{q["levels"]}</td>'
+        f'<td style="text-align:right">{q["slope"]:+.2f}%p</td><td style="text-align:right">{q["ref"]:.2f}회</td></tr>'
+        for q in qualifying[:40])
+
+    verdict = ('✅ 데이터가 충분해 유찰보정이 여러 지역에서 작동합니다.'
+               if len(qualifying) >= 5 else
+               '⚠️ 보정이 켜지는 지역이 적습니다. fail_count 수집 보강을 검토하세요.'
+               if len(qualifying) >= 1 else
+               '❌ 현재 표본으로는 보정이 거의 켜지지 않습니다(대부분 무보정). fail_count 채움 보강이 우선입니다.')
+
+    html = f'''<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>유찰보정 데이터 진단</title>
+<style>
+ body{{font-family:system-ui,'Malgun Gothic',sans-serif;max-width:860px;margin:24px auto;padding:0 16px;color:#1e293b;line-height:1.5}}
+ h1{{font-size:20px}} h2{{font-size:16px;margin-top:28px;border-bottom:2px solid #e2e8f0;padding-bottom:4px}}
+ table{{border-collapse:collapse;width:100%;font-size:14px;margin-top:8px}}
+ th,td{{border:1px solid #e2e8f0;padding:6px 10px}} th{{background:#f8fafc;text-align:left}}
+ .big{{font-size:15px}} .kpi{{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px}}
+ .kpi div{{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;min-width:150px}}
+ .kpi b{{display:block;font-size:22px;color:#0f766e}} .muted{{color:#64748b;font-size:13px}}
+ .verdict{{margin-top:14px;padding:12px 16px;border-radius:8px;background:#f0fdfa;border:1px solid #99f6e4;font-weight:600}}
+</style></head><body>
+<h1>유찰횟수 보정 — 데이터 진단</h1>
+<p class="muted">auction_sales 테이블 기준 · 생성 시각(서버): 조회 시점</p>
+<div class="verdict">{verdict}</div>
+<h2>1) 채움률 (전체 기간)</h2>
+<div class="kpi">
+ <div>전체 행<b>{(f'{total:,}' if total is not None else '—')}</b></div>
+ <div>fail_count 채움<b>{(f'{with_fail:,}' if with_fail is not None else '—')}</b><span class="muted">채움률 {fill_pct}</span></div>
+ <div>bid_rate 있음<b>{(f'{with_rate:,}' if with_rate is not None else '—')}</b></div>
+ <div>둘 다 있음<b>{(f'{with_both:,}' if with_both is not None else '—')}</b></div>
+</div>
+<h2>2) 유찰차수 분포 <span class="muted">(최근 12개월 표본 {len(sample):,}건{' · 상한도달' if sample_capped else ''})</span></h2>
+<p class="muted">0회·1회·2회… 로 <b>퍼져 있어야</b> 기울기(유찰 1회당 변화)를 추정할 수 있습니다.</p>
+<table><thead><tr><th>유찰차수</th><th style="text-align:right">건수</th></tr></thead><tbody>{rows_html or '<tr><td colspan=2>표본 없음</td></tr>'}</tbody></table>
+<h2>3) 보정이 실제로 켜지는 지역×용도 <span class="muted">({len(qualifying)}개 버킷, 상위 40개 표시)</span></h2>
+<p class="muted">각 버킷에서 유찰단계별 표본(단계당 ≥5건)이 2단계 이상 모여 기울기가 산출된 경우만.</p>
+<table><thead><tr><th>용도</th><th>시도</th><th>구</th><th style="text-align:right">표본</th><th style="text-align:right">유찰단계</th><th style="text-align:right">기울기</th><th style="text-align:right">기준유찰</th></tr></thead>
+<tbody>{q_html or '<tr><td colspan=7>기울기 산출 가능한 버킷이 없습니다.</td></tr>'}</tbody></table>
+<p class="muted" style="margin-top:24px">※ 이 표본은 최근 12개월·최대 {MAX:,}건 기준입니다. 전체 채움률(1번)은 count 쿼리로 정확히 집계했습니다.</p>
+</body></html>'''
+    return Response(html, mimetype='text/html; charset=utf-8')
+
+
+# ============================================================
 # 자산 분석 리포트 PDF (매 페이지 CI 머릿말 — 서버사이드 reportlab)
 # ============================================================
 @app.route('/api/report/pdf', methods=['POST'])
