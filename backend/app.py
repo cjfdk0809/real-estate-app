@@ -2224,7 +2224,8 @@ def auction_comparables():
     use_group = (request.args.get('use_group') or '').strip()
     area = request.args.get('area', type=float)
     area_tol = request.args.get('area_tol', default=0.20, type=float)
-    min_match = request.args.get('min_match', default=2, type=int)
+    # 스코프별 채택 임계치: 좁은 동 단계는 낮게(관련도 높음), 구 단계는 기본값.
+    min_dong = request.args.get('min_results_dong', default=3, type=int)
     min_results = request.args.get('min_results', default=5, type=int)
     if not sigungu:
         return jsonify({'available': False, 'reason': '본건 시군구 필요', 'items': []})
@@ -2233,21 +2234,33 @@ def auction_comparables():
     today = _dt.date.today()
     cutoff24 = (today - _dt.timedelta(days=24 * 30)).isoformat()
 
-    try:
+    _SELECT = ('court_name,case_no,item_no,use_type,use_group,sido,sigungu,'
+               'address,area_sqm,appraisal_price,sale_price,sale_date,'
+               'result,fail_count,bid_rate')
+
+    # 지역 스코프별로 필요할 때만 조회(lazy). 'sigungu' 결과는 동·구 단계에서 재사용하고,
+    # 'sido' 결과는 시도 단계에 도달했을 때만 추가로 당겨온다. (auction_sales에는 좌표·번지·
+    #  준공연도가 없어 행정구역 단위 확대만 가능)
+    _fetch_cache = {}
+
+    def _fetch(level):
+        if level in _fetch_cache:
+            return _fetch_cache[level]
         q = (supabase.table('auction_sales')
-             .select('court_name,case_no,item_no,use_type,use_group,sido,sigungu,'
-                     'address,area_sqm,appraisal_price,sale_price,sale_date,'
-                     'result,fail_count,bid_rate')
-             .eq('sigungu', sigungu)
+             .select(_SELECT)
              .not_.is_('sale_price', 'null')
              .gte('sale_date', cutoff24)
              .order('sale_date', desc=True)
              .limit(1000))
-        if sido:
+        if level == 'sido':
             q = q.eq('sido', sido)
-        rows = (q.execute().data) or []
-    except Exception as e:
-        return jsonify({'available': False, 'reason': str(e), 'items': []})
+        else:  # 'sigungu'
+            q = q.eq('sigungu', sigungu)
+            if sido:
+                q = q.eq('sido', sido)
+        data = (q.execute().data) or []
+        _fetch_cache[level] = data
+        return data
 
     def _dong_of(r):
         a = (r.get('address') or '')
@@ -2255,56 +2268,102 @@ def auction_comparables():
             a = a.replace(t, '')
         return a.strip()
 
-    def _score(r, tol):
-        s, hits = 0, []
-        rd = _dong_of(r)
-        use_ok = bool(use_group and r.get('use_group') and r['use_group'] == use_group)
-        if dong and rd and rd == dong:
-            s += 1; hits.append('동')
-        if use_ok:
-            s += 1; hits.append('용도')
-        ra = r.get('area_sqm')
-        if area and ra and abs(ra - area) / area <= tol:
-            s += 1; hits.append('면적')
-        return s, hits, use_ok
+    def _dong_match(r):
+        # auction_sales 주소는 동 단위까지(번지 없음)라 보통 그대로 일치하지만,
+        # 잔여 토큰(예: '방학동 산12')이 있어도 첫 토큰(행정동명)으로 견고하게 비교.
+        if not dong:
+            return False
+        dd = _dong_of(r)
+        return bool(dd) and dd.split()[0] == dong
 
-    # 아파트는 용도 필수(같은 아파트끼리만), 그 외 용도는 2개 이상이면 용도 달라도 허용
+    # 아파트는 용도 일치를 항상 강제(같은 아파트 용도끼리만). 그 외 용도는 확대 최종
+    # 단계에서만 용도를 완화한다.
     require_use = (use_group == 'apt')
 
-    # 균형 확대 사다리: (면적허용%, 기간개월). 좁고 최근인 단계부터, 표본 부족 시 함께 확대.
-    # 기간이 24개월에 먼저 도달하면 이후엔 면적만 넓힌다.
-    LADDER = [(1, 1), (3, 3), (5, 6), (7, 12), (10, 24), (15, 24), (20, 24)]
-    chosen_tol_pct, chosen_period, picked = 20, 24, []
-    for tol_pct, m in LADDER:
-        tol = tol_pct / 100.0
-        cut = (today - _dt.timedelta(days=m * 30)).isoformat()
-        seen_cases = {}   # 사건번호(+법원) → row : 같은 사건 중복 제거
-        for r in rows:
-            if (r.get('sale_date') or '') < cut:
+    def _region_ok(r, level):
+        if level == 'dong':
+            return _dong_match(r)
+        if level == 'sigungu':
+            return (r.get('sigungu') or '') == sigungu and (not sido or (r.get('sido') or '') == sido)
+        return (r.get('sido') or '') == sido   # 'sido'
+
+    def _hits(r, tol):
+        # 뱃지 표시용: 동/용도/면적 중 무엇이 일치했는지 (지역·면적이 하드 필터여도 표기는 유지)
+        hits = []
+        if _dong_match(r):
+            hits.append('동')
+        if use_group and r.get('use_group') == use_group:
+            hits.append('용도')
+        ra = r.get('area_sqm')
+        if area and ra and abs(ra - area) / area <= tol:
+            hits.append('면적')
+        return hits
+
+    # 확대 사다리: (지역스코프, 면적허용%, 기간개월). 좁고 최근인 단계 → 넓고 오래된 단계.
+    # 지역이 넓어질수록 면적 허용범위·기간도 함께 넓힌다.
+    LADDER = [
+        ('dong',    5,  6),
+        ('dong',    10, 12),
+        ('dong',    20, 24),
+        ('sigungu', 10, 12),
+        ('sigungu', 20, 24),
+        ('sido',    15, 24),
+        ('sido',    30, 24),   # 최종 단계: 비아파트는 여기서만 용도 완화
+    ]
+    # 스코프별 채택 임계치(이 건수 이상이면 멈추고 채택). 좁을수록 낮게, 시도는 채우는 대로.
+    THRESH = {'dong': min_dong, 'sigungu': min_results, 'sido': 1}
+    _LEVEL_LABEL = {'dong': '동', 'sigungu': '구', 'sido': '시도'}
+    _LEVEL_NAME = {'dong': dong, 'sigungu': sigungu, 'sido': sido}
+
+    chosen_level, chosen_tol_pct, chosen_period, picked = 'sigungu', 20, 24, []
+    try:
+        for idx, (level, tol_pct, m) in enumerate(LADDER):
+            # 시도 확대는 sido 인자가 있어야 가능. 없으면 해당 단계는 건너뛴다.
+            if level == 'sido' and not sido:
                 continue
-            sc, hits, use_ok = _score(r, tol)
-            if sc < min_match:
-                continue
-            if require_use and not use_ok:   # 아파트: 용도 불일치면 제외
-                continue
-            key = (r.get('court_name'), r.get('case_no'), r.get('item_no'))
-            if key in seen_cases:
-                continue
-            seen_cases[key] = {
-                'court_name': r.get('court_name'), 'case_no': r.get('case_no'),
-                'item_no': r.get('item_no'), 'use_type': r.get('use_type'),
-                'dong': _dong_of(r), 'address': r.get('address'),
-                'area_sqm': r.get('area_sqm'),
-                'appraisal_price': r.get('appraisal_price'),
-                'sale_price': r.get('sale_price'), 'bid_rate': r.get('bid_rate'),
-                'sale_date': r.get('sale_date'), 'result': r.get('result'),
-                'fail_count': r.get('fail_count'),
-                'match_score': sc, 'match_hits': hits,
-            }
-        cur = list(seen_cases.values())
-        chosen_tol_pct, chosen_period, picked = tol_pct, m, cur
-        if len(cur) >= min_results:
-            break
+            rows = _fetch('sido' if level == 'sido' else 'sigungu')
+            tol = tol_pct / 100.0
+            cut = (today - _dt.timedelta(days=m * 30)).isoformat()
+            # 마지막(가장 넓은) 단계에서만 비아파트 용도 완화
+            relax_use = (idx == len(LADDER) - 1) and not require_use
+            seen_cases = {}   # (법원,사건번호,물건번호) → row : 같은 사건 중복 제거
+            for r in rows:
+                if (r.get('sale_date') or '') < cut:
+                    continue
+                if not _region_ok(r, level):
+                    continue
+                # 면적: 본건 면적이 주어졌으면 허용범위 내여야 함(하드)
+                if area:
+                    ra = r.get('area_sqm')
+                    if not ra or abs(ra - area) / area > tol:
+                        continue
+                # 용도: 아파트는 항상, 그 외는 완화 단계 전까지 일치 강제
+                if require_use or not relax_use:
+                    if not (use_group and r.get('use_group') == use_group):
+                        continue
+                key = (r.get('court_name'), r.get('case_no'), r.get('item_no'))
+                if key in seen_cases:
+                    continue
+                hits = _hits(r, tol)
+                seen_cases[key] = {
+                    'court_name': r.get('court_name'), 'case_no': r.get('case_no'),
+                    'item_no': r.get('item_no'), 'use_type': r.get('use_type'),
+                    'dong': _dong_of(r), 'address': r.get('address'),
+                    'area_sqm': r.get('area_sqm'),
+                    'appraisal_price': r.get('appraisal_price'),
+                    'sale_price': r.get('sale_price'), 'bid_rate': r.get('bid_rate'),
+                    'sale_date': r.get('sale_date'), 'result': r.get('result'),
+                    'fail_count': r.get('fail_count'),
+                    'match_score': len(hits), 'match_hits': hits,
+                }
+            cur = list(seen_cases.values())
+            # 관련도(일치 항목 수) → 최근순으로 정렬
+            cur.sort(key=lambda x: (x.get('match_score', 0), x.get('sale_date') or ''), reverse=True)
+            chosen_level, chosen_tol_pct, chosen_period, picked = level, tol_pct, m, cur
+            if len(cur) >= THRESH[level]:
+                break
+    except Exception as e:
+        return jsonify({'available': False, 'reason': str(e), 'items': []})
 
     # 참고 지표: 조회된 사례의 중앙값 낙찰가율 (추정 반영은 안 함)
     rates = sorted(x['bid_rate'] for x in picked if x.get('bid_rate') is not None)
@@ -2319,7 +2378,9 @@ def auction_comparables():
         'available': True, 'count': len(picked),
         'area_tol_pct': chosen_tol_pct,
         'period_months': chosen_period, 'period_label': _plabel.get(chosen_period),
-        'region': sigungu, 'median_bid_rate': med,
+        'region': _LEVEL_NAME.get(chosen_level) or sigungu,
+        'region_level': _LEVEL_LABEL.get(chosen_level),
+        'median_bid_rate': med,
         'items': picked,
     })
 
