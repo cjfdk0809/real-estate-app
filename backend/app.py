@@ -2147,6 +2147,73 @@ _PERIOD_ORDER = [1, 3, 6, 12, 24, 0]   # 0 = 전체 기간
 _PERIOD_LABEL = {1: '최근 1개월', 3: '최근 3개월', 6: '최근 6개월',
                  12: '최근 12개월', 24: '최근 24개월', 0: '전체 기간'}
 
+# 유찰횟수 → 낙찰가율 기울기 추정용 파라미터
+_FAIL_MIN_PER_LEVEL = 5          # 유찰단계(0회/1회/…)별 최소 표본 수
+_FAIL_MIN_LEVELS = 2             # 기울기를 신뢰하기 위한 최소 유효 유찰단계 수
+_FAIL_SLOPE_CLAMP = (-30.0, 5.0)  # 유찰 1회당 %p 변화의 상식적 허용 범위
+
+
+def _median(xs):
+    s = sorted(xs)
+    n = len(s)
+    if not n:
+        return None
+    m = n // 2
+    return s[m] if n % 2 else (s[m - 1] + s[m]) / 2.0
+
+
+def _estimate_fail_slope(rows):
+    """원본 낙찰기록(fail_count·bid_rate)에서 '유찰 1회당 낙찰가율 변화(기울기)'를 추정.
+
+    방식: 유찰단계별 낙찰가율 '중앙값'을 구한 뒤, 이웃 단계 간 변화율(%p/유찰1회)을
+    모아 다시 '중앙값'으로 요약 → 이상치·소표본에 강함(구간 중앙값 차이).
+    기준점(ref_fail)은 표본 전체의 평균 유찰횟수 = 실측 중앙값에 이미 섞인 평균 유찰 수준.
+
+    반환: (slope_per_fail, ref_fail, levels) 또는 (None, None, None).
+    """
+    pts = []
+    for r in rows:
+        fc = r.get('fail_count')
+        br = r.get('bid_rate')
+        if fc is None or br is None:
+            continue
+        try:
+            fc = int(fc)
+            br = float(br)
+        except (TypeError, ValueError):
+            continue
+        if fc < 0 or br <= 0:
+            continue
+        pts.append((fc, br))
+    if len(pts) < _FAIL_MIN_PER_LEVEL:
+        return None, None, None
+
+    ref_fail = sum(fc for fc, _ in pts) / len(pts)
+
+    by_level = {}
+    for fc, br in pts:
+        by_level.setdefault(fc, []).append(br)
+    levels = []
+    for fc in sorted(by_level):
+        vals = by_level[fc]
+        if len(vals) >= _FAIL_MIN_PER_LEVEL:
+            levels.append({'fail': fc, 'n': len(vals),
+                           'median_rate': round(_median(vals), 2)})
+    if len(levels) < _FAIL_MIN_LEVELS:
+        return None, None, None
+
+    deltas = []
+    for a, b in zip(levels, levels[1:]):
+        df = b['fail'] - a['fail']
+        if df > 0:
+            deltas.append((b['median_rate'] - a['median_rate']) / df)
+    if not deltas:
+        return None, None, None
+
+    slope = _median(deltas)
+    slope = max(_FAIL_SLOPE_CLAMP[0], min(_FAIL_SLOPE_CLAMP[1], slope))
+    return round(slope, 3), round(ref_fail, 2), levels
+
 
 @app.route('/api/auction/rates')
 def auction_rates():
@@ -2196,6 +2263,33 @@ def auction_rates():
     # 산출근거 문구: "서울특별시 강남구 · 오피스텔 · 최근 6개월 (n=9, 중앙값)"
     derivation = f'{scope_region} · {period_label} · 표본 {hit.get("sample_n")}건 (중앙값)'
 
+    # ── 유찰횟수 보정용 기울기 ────────────────────────────────────────────
+    # 실측 중앙값은 '평균적인 유찰 섞임'을 반영하므로, 대상 물건이 표본 평균보다 더/덜
+    # 유찰됐을 때만 가감하기 위한 기울기·기준점을 같은 스코프의 원본 낙찰기록에서 추정한다.
+    # (median_rate가 산출된 것과 동일한 지역·기간·용도 표본을 근사) 표본 부족 시 None.
+    fail_slope = fail_ref = fail_levels = None
+    try:
+        fq = (supabase.table('auction_sales')
+              .select('fail_count,bid_rate,sale_date,sido,sigungu,use_group')
+              .eq('use_group', use_group)
+              .not_.is_('bid_rate', 'null')
+              .not_.is_('fail_count', 'null')
+              .limit(2000))
+        if chosen_scope == 'sigungu':
+            fq = fq.eq('sigungu', hit.get('sigungu'))
+            if hit.get('sido'):
+                fq = fq.eq('sido', hit.get('sido'))
+        elif chosen_scope == 'sido':
+            fq = fq.eq('sido', hit.get('sido'))
+        if chosen_period:   # 0 = 전체 기간이면 날짜 필터 없음
+            import datetime as _dt2
+            _cut = (_dt2.date.today() - _dt2.timedelta(days=chosen_period * 30)).isoformat()
+            fq = fq.gte('sale_date', _cut)
+        frows = (fq.execute().data) or []
+        fail_slope, fail_ref, fail_levels = _estimate_fail_slope(frows)
+    except Exception:
+        fail_slope = fail_ref = fail_levels = None
+
     return jsonify({
         'available': True,
         'scope': chosen_scope, 'region': scope_region,
@@ -2206,6 +2300,8 @@ def auction_rates():
         'p25_rate': hit.get('p25_rate'), 'p75_rate': hit.get('p75_rate'),
         'avg_bidders': hit.get('avg_bidders'), 'asof': hit.get('asof'),
         'derivation': derivation,
+        # 유찰보정: 유찰 1회당 %p 변화(fail_slope) · 기준 유찰횟수(fail_ref) · 단계별 내역
+        'fail_slope': fail_slope, 'fail_ref': fail_ref, 'fail_levels': fail_levels,
     })
 
 
