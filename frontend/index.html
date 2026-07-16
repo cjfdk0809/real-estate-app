@@ -3014,24 +3014,33 @@ async function loadSimilarAuctionCases(p) {
     updateAuctionAutoCards(d);   // 🆕 자동조회 결과를 상단 카드 보조표기에 반영
 
     const badge = h => `<span class="badge" style="background:var(--accent-soft);color:var(--accent);margin-right:3px;">${h}</span>`;
-    const rows = d.items.map(x => `
-      <tr>
+    // 본건과 같은 동(예: 잠실동) 낙찰사례는 관련성이 가장 높으므로 행을 강조한다.
+    const sameDong = x => !!(rg.dong && (x.dong || '').split(' ')[0] === rg.dong);
+    let sameDongCount = 0;
+    const rows = d.items.map(x => {
+      const hit = sameDong(x); if (hit) sameDongCount++;
+      const trStyle = hit ? ' style="background:var(--kiwoom-pink-soft,#FFE6FF);"' : '';
+      const dongStyle = hit ? ' style="color:var(--kiwoom-pink-deep,#CC00CC);font-weight:700;"' : '';
+      return `
+      <tr${trStyle}>
         <td class="num">${x.sale_date || '-'}</td>
         <td>${x.case_no || '-'}</td>
-        <td>${x.dong || ''} <span class="text-muted text-small">${x.use_type || ''}</span></td>
+        <td${dongStyle}>${x.dong || ''} <span class="text-muted text-small" style="font-weight:400;">${x.use_type || ''}</span></td>
         <td class="num">${x.area_sqm != null ? x.area_sqm + '㎡' : '-'}</td>
         <td class="price">${fmt.wonShort(x.appraisal_price)}</td>
         <td class="price text-accent">${fmt.wonShort(x.sale_price)}</td>
         <td class="num"><strong>${x.bid_rate != null ? x.bid_rate + '%' : '-'}</strong></td>
         <td>${(x.match_hits || []).map(badge).join('')}</td>
-      </tr>`).join('');
+      </tr>`;
+    }).join('');
 
     body.innerHTML = `
       <div style="margin-bottom:10px;">
         <strong style="color:var(--green);">✓ ${d.count}건</strong>
         · ${d.region}${d.region_level ? ` (${d.region_level} 단위)` : ''} · 면적 ±${d.area_tol_pct}% · ${d.period_label}
         ${d.median_bid_rate != null ? ` · 중앙 낙찰가율 <strong>${d.median_bid_rate}%</strong>` : ''}
-        <span class="text-muted text-small">(참고용 · 추정에는 미반영)</span>
+        ${sameDongCount ? ` · <span style="color:var(--kiwoom-pink-deep,#CC00CC);font-weight:700;">본건 동일 ${rg.dong} ${sameDongCount}건</span>` : ''}
+        <span class="text-muted text-small">(참고용 · 동 사례 5건↑이면 추정에 우선 반영)</span>
       </div>
       <div style="max-height:340px;overflow-y:auto;border:1px solid var(--line);border-radius:6px;">
         <table class="tbl">

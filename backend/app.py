@@ -2151,6 +2151,53 @@ _PERIOD_LABEL = {1: '최근 1개월', 3: '최근 3개월', 6: '최근 6개월',
 _FAIL_MIN_PER_LEVEL = 5          # 유찰단계(0회/1회/…)별 최소 표본 수
 _FAIL_MIN_LEVELS = 2             # 기울기를 신뢰하기 위한 최소 유효 유찰단계 수
 _FAIL_SLOPE_CLAMP = (-30.0, 5.0)  # 유찰 1회당 %p 변화의 상식적 허용 범위
+_FAIL_SLOPE_MIN_MONTHS = 24      # 기울기 추정 최소 기간: 실측 중앙값 기간(짧을 수 있음)과
+#   분리해 항상 넓은 창에서 추정 → 소표본으로 기울기가 과격해지는 것을 완화.
+
+# 동(洞) 단위 실측 낙찰가율 채택 파라미터
+_DONG_MIN_N = 5                  # 동일 동 낙찰사례가 이 건수 이상일 때만 동 기준 채택
+_DONG_MONTHS = 24               # 동 단위 낙찰가율 집계 기간(개월)
+
+
+def _row_dong(address, sido, sigungu):
+    """auction_sales 주소에서 시도·시군구를 떼어 행정동명(첫 토큰)을 얻는다.
+    (번지 없는 동 단위 주소 전제 — comparables의 _dong_of와 동일 규칙)"""
+    a = address or ''
+    for t in (sido or '', sigungu or ''):
+        a = a.replace(t, '')
+    a = a.strip()
+    return a.split()[0] if a else ''
+
+
+def _dong_stat(rows, sido, sigungu, dong):
+    """같은 동(dong) 낙찰기록의 중앙 낙찰가율·사분위·평균유찰을 계산.
+    dong 매칭 건이 _DONG_MIN_N 미만이면 None(→ 동 기준 미채택, 상위 스코프로 폴백)."""
+    if not dong:
+        return None
+    matched = []
+    for r in rows:
+        br = r.get('bid_rate')
+        if br is None:
+            continue
+        if _row_dong(r.get('address'), sido, sigungu) != dong:
+            continue
+        try:
+            matched.append((float(br), r.get('fail_count')))
+        except (TypeError, ValueError):
+            continue
+    if len(matched) < _DONG_MIN_N:
+        return None
+    rates = sorted(v for v, _ in matched)
+    n = len(rates)
+
+    def _q(p):
+        i = min(n - 1, max(0, int(round(p * (n - 1)))))
+        return round(rates[i], 2)
+
+    fails = [int(fc) for _, fc in matched if fc is not None]
+    ref = round(sum(fails) / len(fails), 2) if fails else None
+    return {'rate': round(_median(rates), 2), 'p25': _q(0.25), 'p75': _q(0.75),
+            'n': n, 'ref_fail': ref}
 
 
 def _median(xs):
@@ -2222,6 +2269,7 @@ def auction_rates():
     use_group = (request.args.get('use_group') or '').strip()
     sido = (request.args.get('sido') or '').strip()
     sigungu = (request.args.get('sigungu') or '').strip()
+    dong = (request.args.get('dong') or '').strip()
     min_n = request.args.get('min_n', default=5, type=int)
     if not use_group:
         return jsonify({'error': 'use_group 필수'}), 400
@@ -2265,30 +2313,55 @@ def auction_rates():
 
     # ── 유찰횟수 보정용 기울기 ────────────────────────────────────────────
     # 실측 중앙값은 '평균적인 유찰 섞임'을 반영하므로, 대상 물건이 표본 평균보다 더/덜
-    # 유찰됐을 때만 가감하기 위한 기울기·기준점을 같은 스코프의 원본 낙찰기록에서 추정한다.
-    # (median_rate가 산출된 것과 동일한 지역·기간·용도 표본을 근사) 표본 부족 시 None.
+    # 유찰됐을 때만 가감하기 위한 기울기·기준점을 같은 지역·용도의 원본 낙찰기록에서 추정한다.
+    # 기간은 median_rate 기간(짧을 수 있음)에 묶지 않고 항상 넓은 창(≥24개월)에서 뽑아
+    # 소표본으로 기울기가 과격해지는 것을 완화한다. 표본 부족 시 None(→ 무보정).
     fail_slope = fail_ref = fail_levels = None
+    fail_slope_months = 0 if chosen_period == 0 else max(chosen_period or 0, _FAIL_SLOPE_MIN_MONTHS)
     try:
         fq = (supabase.table('auction_sales')
               .select('fail_count,bid_rate,sale_date,sido,sigungu,use_group')
               .eq('use_group', use_group)
               .not_.is_('bid_rate', 'null')
               .not_.is_('fail_count', 'null')
-              .limit(2000))
+              .limit(4000))
         if chosen_scope == 'sigungu':
             fq = fq.eq('sigungu', hit.get('sigungu'))
             if hit.get('sido'):
                 fq = fq.eq('sido', hit.get('sido'))
         elif chosen_scope == 'sido':
             fq = fq.eq('sido', hit.get('sido'))
-        if chosen_period:   # 0 = 전체 기간이면 날짜 필터 없음
+        if fail_slope_months:   # 0 = 전체 기간이면 날짜 필터 없음
             import datetime as _dt2
-            _cut = (_dt2.date.today() - _dt2.timedelta(days=chosen_period * 30)).isoformat()
+            _cut = (_dt2.date.today() - _dt2.timedelta(days=fail_slope_months * 30)).isoformat()
             fq = fq.gte('sale_date', _cut)
         frows = (fq.execute().data) or []
         fail_slope, fail_ref, fail_levels = _estimate_fail_slope(frows)
     except Exception:
         fail_slope = fail_ref = fail_levels = None
+
+    # ── 동(洞) 단위 실측 낙찰가율 ─────────────────────────────────────────
+    # 본건과 같은 동(예: 잠실동) 낙찰사례가 _DONG_MIN_N(5)건 이상이면, 시도 실측보다
+    # 관련성이 높으므로 동 단위 중앙 낙찰가율을 함께 내려보내 프론트가 우선 채택하게 한다.
+    # 부족하면 None → 프론트는 기존 시도 실측으로 폴백. 아파트·비아파트 모두 동일 규칙.
+    dong_stat = None
+    if dong and sigungu:
+        try:
+            dq = (supabase.table('auction_sales')
+                  .select('bid_rate,fail_count,address,sido,sigungu,use_group')
+                  .eq('use_group', use_group)
+                  .eq('sigungu', sigungu)
+                  .not_.is_('bid_rate', 'null')
+                  .limit(3000))
+            if sido:
+                dq = dq.eq('sido', sido)
+            import datetime as _dt4
+            _dcut = (_dt4.date.today() - _dt4.timedelta(days=_DONG_MONTHS * 30)).isoformat()
+            dq = dq.gte('sale_date', _dcut)
+            drows = (dq.execute().data) or []
+            dong_stat = _dong_stat(drows, sido, sigungu, dong)
+        except Exception:
+            dong_stat = None
 
     return jsonify({
         'available': True,
@@ -2301,7 +2374,16 @@ def auction_rates():
         'avg_bidders': hit.get('avg_bidders'), 'asof': hit.get('asof'),
         'derivation': derivation,
         # 유찰보정: 유찰 1회당 %p 변화(fail_slope) · 기준 유찰횟수(fail_ref) · 단계별 내역
+        # fail_slope_months = 기울기 추정에 사용한 기간(개월, 0=전체). 실측 기간과 분리됨.
         'fail_slope': fail_slope, 'fail_ref': fail_ref, 'fail_levels': fail_levels,
+        'fail_slope_months': fail_slope_months,
+        # 동 단위 실측(있으면 프론트가 시도 실측보다 우선 채택). 부족하면 None.
+        'dong': dong or None,
+        'dong_rate': (dong_stat or {}).get('rate'),
+        'dong_p25': (dong_stat or {}).get('p25'),
+        'dong_p75': (dong_stat or {}).get('p75'),
+        'dong_n': (dong_stat or {}).get('n'),
+        'dong_ref_fail': (dong_stat or {}).get('ref_fail'),
     })
 
 
