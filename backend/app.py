@@ -62,8 +62,11 @@ def safe_error(msg, e=None):
         return mask_sensitive_info(f'{msg}: {e}')
     return mask_sensitive_info(msg)
 API_KEY = os.environ.get('MOLIT_API_KEY', '').strip()
-VWORLD_API_KEY = os.environ.get('VWORLD_API_KEY', '').strip()  # 🆕 V-World 지오코더 (주소→좌표)
+VWORLD_API_KEY = os.environ.get('VWORLD_API_KEY', '').strip()  # V-World 지오코더 (주소→좌표) — 폴백
 URL_VWORLD_GEOCODE = 'https://api.vworld.kr/req/address'
+# 🆕 카카오 로컬 지오코더 (주소→좌표) — 해외 서버(Render 등)에서도 작동. 기본 지오코더.
+KAKAO_REST_KEY = os.environ.get('KAKAO_REST_KEY', '').strip()
+URL_KAKAO_GEOCODE = 'https://dapi.kakao.com/v2/local/search/address.json'
 
 # Supabase 연결 (자동완성 DB) - 환경변수 미설정 시 None으로 두고 기존 기능은 그대로
 SUPABASE_URL = os.environ.get('SUPABASE_URL', '').strip()
@@ -413,7 +416,9 @@ def health():
             'price_disclosure': True,
             'supabase_search': supabase is not None,  # 신규: 자동완성 가능 여부
             'cross_verify': True,  # 🆕 Day 8: 단지 교차검증
-            'map_geocode': bool(VWORLD_API_KEY),  # 🆕 지도 좌표변환(V-World) 사용 가능 여부
+            'map_geocode': bool(KAKAO_REST_KEY or VWORLD_API_KEY),  # 지도 좌표변환 가능 여부
+            'map_geocode_kakao': bool(KAKAO_REST_KEY),   # 카카오 지오코더(기본)
+            'map_geocode_vworld': bool(VWORLD_API_KEY),  # V-World(폴백)
         },
         'supabase': {
             'lib_installed': HAS_SUPABASE_LIB,
@@ -2105,10 +2110,32 @@ def geocode_addr_cached(address, addr_type):
     return None
 
 
+@lru_cache(maxsize=50000)
+def kakao_geocode_cached(address):
+    """카카오 로컬 주소검색 → (lat, lng). 실패 시 None.
+    지번·도로명·동 단위 모두 한 번의 쿼리로 처리(동 단위는 지역 좌표 반환)."""
+    if not KAKAO_REST_KEY or not address:
+        return None
+    try:
+        r = requests.get(URL_KAKAO_GEOCODE, params={'query': address, 'size': 1},
+                         headers={'Authorization': 'KakaoAK ' + KAKAO_REST_KEY}, timeout=8)
+        docs = (r.json() or {}).get('documents') or []
+        if docs:
+            x = docs[0].get('x'); y = docs[0].get('y')  # x=경도(lng), y=위도(lat)
+            if x and y:
+                return (float(y), float(x))
+    except Exception:
+        return None
+    return None
+
+
 def _geocode_any(address):
-    """지번 우선, 실패 시 도로명으로 재시도."""
+    """카카오 우선(해외 서버에서도 작동), 실패 시 V-World(지번→도로명) 폴백."""
     if not address:
         return None
+    c = kakao_geocode_cached(address)
+    if c:
+        return c
     c = geocode_addr_cached(address, 'parcel')
     if c is None:
         c = geocode_addr_cached(address, 'road')
@@ -2117,14 +2144,34 @@ def _geocode_any(address):
 
 @app.route('/api/geocode/diag')
 def geocode_diag():
-    """V-World 지오코딩이 왜 실패하는지 원문 응답(상태·에러문구)을 그대로 보여주는 진단.
-    공개 주소 1건을 좌표변환해 V-World 응답만 노출(비밀값 미노출)하므로 키 없이 열람 가능.
+    """지오코딩(카카오/ V-World)이 왜 실패하는지 원문 응답을 그대로 보여주는 진단.
+    공개 주소 1건을 좌표변환. 비밀값 미노출. 키 없이 열람 가능.
     URL: /api/geocode/diag?addr=서울특별시 송파구 잠실동 40"""
-    if not VWORLD_API_KEY:
-        return jsonify({'vworld_key_set': False})
     addr = (request.args.get('addr') or '서울특별시 송파구 잠실동 40').strip()
     referer = (request.args.get('referer') or 'https://real-estate-app-xzia.onrender.com').strip()
-    out = {'vworld_key_set': True, 'address': addr, 'referer_tested': referer}
+    out = {'kakao_key_set': bool(KAKAO_REST_KEY), 'vworld_key_set': bool(VWORLD_API_KEY),
+           'address': addr, 'referer_tested': referer}
+
+    # 카카오 진단
+    if KAKAO_REST_KEY:
+        try:
+            r = requests.get(URL_KAKAO_GEOCODE, params={'query': addr, 'size': 1},
+                             headers={'Authorization': 'KakaoAK ' + KAKAO_REST_KEY}, timeout=10)
+            docs = None
+            try:
+                docs = (r.json() or {}).get('documents')
+            except Exception:
+                pass
+            pt = None
+            if docs:
+                pt = {'lat': docs[0].get('y'), 'lng': docs[0].get('x')}
+            out['kakao'] = {'http': r.status_code, 'found': bool(docs), 'point': pt,
+                            'body': r.text[:300]}
+        except Exception as e:
+            out['kakao'] = {'exception': str(e)}
+
+    if not VWORLD_API_KEY:
+        return jsonify(out)
 
     def _try(base, headers):
         params = {'service': 'address', 'request': 'getcoord', 'version': '2.0',
@@ -2158,7 +2205,7 @@ def geocode_coords():
     body: { origin: "서울특별시 중랑구 중화동 274-77", items: [{id, addr}] }
     resp: { key: bool, origin: [lat,lng]|null, coords: { id: [lat,lng] } }
     """
-    if not VWORLD_API_KEY:
+    if not (KAKAO_REST_KEY or VWORLD_API_KEY):
         return jsonify({'key': False, 'origin': None, 'coords': {}})
     data = request.get_json(force=True, silent=True) or {}
     origin_addr = (data.get('origin') or '').strip()
