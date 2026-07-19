@@ -2118,15 +2118,12 @@ def _geocode_any(address):
 @app.route('/api/geocode/diag')
 def geocode_diag():
     """V-World 지오코딩이 왜 실패하는지 원문 응답(상태·에러문구)을 그대로 보여주는 진단.
-    URL: /api/geocode/diag?key=ADMIN_SECRET&addr=서울특별시 송파구 잠실동 40"""
-    if not ADMIN_SECRET:
-        return jsonify({'error': 'ADMIN_SECRET 미설정'}), 503
-    if request.args.get('key', '') != ADMIN_SECRET:
-        return jsonify({'error': '잘못된 관리자 키'}), 403
+    공개 주소 1건을 좌표변환해 V-World 응답만 노출(비밀값 미노출)하므로 키 없이 열람 가능.
+    URL: /api/geocode/diag?addr=서울특별시 송파구 잠실동 40"""
     if not VWORLD_API_KEY:
         return jsonify({'vworld_key_set': False})
     addr = (request.args.get('addr') or '서울특별시 송파구 잠실동 40').strip()
-    out = {'vworld_key_set': True, 'key_len': len(VWORLD_API_KEY), 'address': addr}
+    out = {'vworld_key_set': True, 'address': addr}
     for t in ('parcel', 'road'):
         params = {'service': 'address', 'request': 'getcoord', 'version': '2.0',
                   'crs': 'epsg:4326', 'address': addr, 'type': t,
