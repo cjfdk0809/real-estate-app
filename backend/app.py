@@ -2123,22 +2123,32 @@ def geocode_diag():
     if not VWORLD_API_KEY:
         return jsonify({'vworld_key_set': False})
     addr = (request.args.get('addr') or '서울특별시 송파구 잠실동 40').strip()
-    out = {'vworld_key_set': True, 'address': addr}
-    for t in ('parcel', 'road'):
+    referer = (request.args.get('referer') or 'https://real-estate-app-xzia.onrender.com').strip()
+    out = {'vworld_key_set': True, 'address': addr, 'referer_tested': referer}
+
+    def _try(base, headers):
         params = {'service': 'address', 'request': 'getcoord', 'version': '2.0',
-                  'crs': 'epsg:4326', 'address': addr, 'type': t,
+                  'crs': 'epsg:4326', 'address': addr, 'type': 'parcel',
                   'format': 'json', 'key': VWORLD_API_KEY}
         try:
-            r = requests.get(URL_VWORLD_GEOCODE, params=params, timeout=8)
+            r = requests.get(base, params=params, headers=headers, timeout=10)
+            body = r.text[:400]
+            status = pt = err = None
             try:
                 resp = (r.json() or {}).get('response', {})
+                status = resp.get('status'); err = resp.get('error')
+                pt = (resp.get('result') or {}).get('point')
             except Exception:
-                resp = {'_raw': r.text[:300]}
-            out[t] = {'http': r.status_code, 'status': resp.get('status'),
-                      'error': resp.get('error'),
-                      'point': (resp.get('result') or {}).get('point')}
+                pass
+            return {'http': r.status_code, 'status': status, 'error': err,
+                    'point': pt, 'body': body}
         except Exception as e:
-            out[t] = {'exception': str(e)}
+            return {'exception': str(e)}
+
+    # 3가지 조합으로 원인 격리: https(referer無/有) · http(referer無)
+    out['https_no_referer'] = _try(URL_VWORLD_GEOCODE, None)
+    out['https_with_referer'] = _try(URL_VWORLD_GEOCODE, {'Referer': referer})
+    out['http_no_referer'] = _try(URL_VWORLD_GEOCODE.replace('https://', 'http://'), None)
     return jsonify(out)
 
 
