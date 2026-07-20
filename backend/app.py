@@ -2907,13 +2907,11 @@ def admin_diag_fail_count():
 # 낙찰가율 추정 정확도 백테스트 (leave-one-out)
 #   완료된 낙찰 건을 '자기 자신을 빼고' 유사도 가중으로 예측 → 실제 낙찰가율과 비교.
 #   유사도 가중(신규) vs 단순 중앙값(구 방식)을 용도별로 비교해 개선 효과를 실측.
-#   ADMIN_SECRET 설정 시 ?key= 필요, 미설정이면 공개(읽기전용 집계).
+#   읽기전용 집계(민감정보 없음)라 키 없이 공개. (진단 페이지와 동일 정책)
 #   URL: /admin/backtest?sido=서울특별시&months=24&sample=250
 # ============================================================
 @app.route('/admin/backtest')
 def admin_backtest():
-    if ADMIN_SECRET and request.args.get('key', '') != ADMIN_SECRET:
-        return jsonify({'error': '잘못된 관리자 키'}), 403
     if not supabase:
         return jsonify({'error': 'Supabase 미설정'}), 503
 
