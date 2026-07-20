@@ -2354,7 +2354,7 @@ def _estimate_fail_slope(rows):
 # 연립·다세대·나홀로아파트처럼 표본이 얇고 개별성이 큰 물건에서 특히 효과적.
 _SIM_AREA_BW = 0.15               # 면적 근접 대역폭(본건 면적 대비 비율)
 _SIM_TIER_W = {'dong': 1.0, 'sigungu': 0.55, 'sido': 0.30}  # 지역 근접 가중
-_SIM_MONTHS = 24                  # 유사도 가중 집계 기간(개월)
+_SIM_MONTHS = 36                  # 유사도 가중 집계 기간(개월) — 지역은 시군구로 좁히되 기간은 넓혀 표본 확보
 _SIM_MIN_NEFF = 3.0               # 이 유효표본수 미만이면 미채택(→ 기존 방식 폴백)
 
 
@@ -2542,20 +2542,24 @@ def auction_rates():
             dong_stat = None
 
     # ── 유사도 가중 실측 낙찰가율 (면적×지역 근접 가중) ──────────────────────
-    # 본건 면적(area)이 주어졌을 때만 계산. 시도 범위의 같은 용도 낙찰기록을 모아
-    # 면적·지역 근접도로 가중 → 연립·다세대·나홀로아파트 등 개별성 큰 물건에 유효.
+    # 본건 면적(area)이 주어졌을 때만 계산. 범위는 '같은 시·군·구'로 한정한다.
+    #   ─ 시도 전체(예: 경기도)로 넓히면 파주 물건에 용인·화성이 섞여 시장이 달라짐 →
+    #     신뢰성 붕괴. 지역은 시군구까지만 좁히고, 표본은 시간(기간)을 넓혀 확보한다.
+    #   본건 시군구에 표본이 부족하면 sim_stat=None → 지역 통계(한국부동산원)로 폴백.
     area = request.args.get('area', type=float)
     sim_stat = None
-    if area and sido:
+    if area and sigungu:
         try:
             sq = (supabase.table('auction_sales')
                   .select('bid_rate,area_sqm,fail_count,address,sido,sigungu,use_group,sale_date')
                   .eq('use_group', use_group)
-                  .eq('sido', sido)
+                  .eq('sigungu', sigungu)
                   .not_.is_('bid_rate', 'null')
                   .not_.is_('area_sqm', 'null')
                   .order('sale_date', desc=True)
                   .limit(4000))
+            if sido:
+                sq = sq.eq('sido', sido)
             import datetime as _dt5
             _scut = (_dt5.date.today() - _dt5.timedelta(days=_SIM_MONTHS * 30)).isoformat()
             sq = sq.gte('sale_date', _scut)
@@ -2623,7 +2627,8 @@ def auction_comparables():
 
     import datetime as _dt
     today = _dt.date.today()
-    cutoff24 = (today - _dt.timedelta(days=24 * 30)).isoformat()
+    # 지역은 시군구까지만 좁히고, 표본은 기간(최대 60개월)을 넓혀 확보 → 타 시·군 혼입 방지.
+    cutoff24 = (today - _dt.timedelta(days=60 * 30)).isoformat()
 
     _SELECT = ('court_name,case_no,item_no,use_type,use_group,sido,sigungu,'
                'address,area_sqm,appraisal_price,sale_price,sale_date,'
@@ -2691,25 +2696,29 @@ def auction_comparables():
         return hits
 
     # 확대 사다리: (지역스코프, 면적허용%, 기간개월). 좁고 최근인 단계 → 넓고 오래된 단계.
-    # 지역이 넓어질수록 면적 허용범위·기간도 함께 넓힌다.
+    # ★ 지역은 '시군구'까지만 확대한다. 시도 전체(예: 경기도)로 넓히면 파주 물건에
+    #   용인·화성이 섞여 시장이 달라져 신뢰성이 붕괴되므로, 지역은 좁게 고정하고
+    #   부족분은 '기간(최대 60개월)'을 넓혀 같은 시·군의 예전 사례로 채운다.
+    #   시군구에도 사례가 없으면 → count 0 → 프론트가 '사례 없음'으로 표기.
     LADDER = [
         ('dong',    5,  6),
         ('dong',    10, 12),
         ('dong',    20, 24),
+        ('dong',    20, 36),
         ('sigungu', 10, 12),
         ('sigungu', 20, 24),
-        ('sido',    15, 24),
-        ('sido',    30, 24),   # 최종 단계: 비아파트는 여기서만 용도 완화
+        ('sigungu', 30, 36),
+        ('sigungu', 30, 60),   # 최종 단계: 비아파트는 여기서만 용도 완화
     ]
-    # 스코프별 채택 임계치(이 건수 이상이면 멈추고 채택). 좁을수록 낮게, 시도는 채우는 대로.
+    # 스코프별 채택 임계치(이 건수 이상이면 멈추고 채택). 좁을수록 낮게.
     THRESH = {'dong': min_dong, 'sigungu': min_results, 'sido': 1}
-    _LEVEL_LABEL = {'dong': '동', 'sigungu': '구', 'sido': '시도'}
+    _LEVEL_LABEL = {'dong': '동', 'sigungu': '시·군·구', 'sido': '시도'}
     _LEVEL_NAME = {'dong': dong, 'sigungu': sigungu, 'sido': sido}
 
-    chosen_level, chosen_tol_pct, chosen_period, picked = 'sigungu', 20, 24, []
+    chosen_level, chosen_tol_pct, chosen_period, picked = 'sigungu', 30, 60, []
     try:
         for idx, (level, tol_pct, m) in enumerate(LADDER):
-            # 시도 확대는 sido 인자가 있어야 가능. 없으면 해당 단계는 건너뛴다.
+            # 시도 확대는 사용하지 않음(지역 정합성 우선). 방어적으로 남겨둠.
             if level == 'sido' and not sido:
                 continue
             rows = _fetch('sido' if level == 'sido' else 'sigungu')
@@ -2764,7 +2773,7 @@ def auction_comparables():
         med = rates[n // 2] if n % 2 else round((rates[n // 2 - 1] + rates[n // 2]) / 2, 2)
 
     _plabel = {1: '최근 1개월', 3: '최근 3개월', 6: '최근 6개월',
-               12: '최근 12개월', 24: '최근 24개월'}
+               12: '최근 12개월', 24: '최근 24개월', 36: '최근 36개월', 60: '최근 60개월'}
     return jsonify({
         'available': True, 'count': len(picked),
         'area_tol_pct': chosen_tol_pct,
@@ -2978,15 +2987,14 @@ def admin_backtest():
                 continue
             sgg = row.get('sigungu')
             dong = _row_dong(row.get('address'), row.get('sido'), sgg)
-            pool_wo = pool[:t] + pool[t + 1:]        # leave-one-out (자기 제외)
-            sim = _similarity_weighted_stat(pool_wo, area, sido, sgg, dong)
+            # 운영과 동일하게 '같은 시·군·구'로만 한정(타 시·군 혼입 금지). 자기 자신 제외.
+            pool_sgg = [pool[j] for j in range(len(pool))
+                        if j != t and pool[j].get('sigungu') == sgg]
+            sim = _similarity_weighted_stat(pool_sgg, area, sido, sgg, dong)
             pred_sim = sim['rate'] if sim else None
-            # 베이스라인(구 방식): 같은 구 낙찰가율 중앙값(부족하면 시도 전체) — 면적 무관
-            same_sgg = [float(r['bid_rate']) for r in pool_wo
-                        if r.get('sigungu') == sgg and r.get('bid_rate') is not None]
-            base_pool = same_sgg if len(same_sgg) >= 3 else \
-                [float(r['bid_rate']) for r in pool_wo if r.get('bid_rate') is not None]
-            pred_base = _median(base_pool) if base_pool else None
+            # 베이스라인(구 방식): 같은 시·군·구 낙찰가율 중앙값 — 면적 무관
+            same_sgg = [float(r['bid_rate']) for r in pool_sgg if r.get('bid_rate') is not None]
+            pred_base = _median(same_sgg) if len(same_sgg) >= 3 else None
             if pred_sim is not None:
                 sim_all.append(pred_sim - actual)
                 if pred_base is not None:            # 공정비교: 둘 다 예측된 건만
