@@ -3130,7 +3130,7 @@ async function loadSimilarAuctionCases(p) {
     const r = await fetch(`${window.BACKEND_URL || ''}/api/auction/comparables?${qs}`);
     const d = await r.json();
     if (!d.available) { body.innerHTML = `유사 낙찰사례를 불러올 수 없습니다. <span class="text-muted">(${d.reason || '데이터 부족'})</span>`; return; }
-    if (!d.count) { body.innerHTML = `조건(동→구→시도 확대)에 맞는 낙찰사례가 최근 24개월 내 없습니다.`; return; }
+    if (!d.count) { body.innerHTML = `<div style="padding:10px 12px;background:#F1F5F9;border:1px solid #CBD5E1;border-radius:6px;color:#475569;">📭 <strong>${rg.sigungu || '본건 시·군·구'}</strong> 내 유사 낙찰사례가 (최근 60개월까지 찾아봐도) <strong>없습니다</strong>. <span class="text-muted">타 시·군(예: 다른 시) 사례는 시장이 달라 신뢰성이 낮으므로 섞지 않습니다. 추정은 지역 통계(한국부동산원)로 대체됩니다.</span></div>`; return; }
 
     updateAuctionAutoCards(d);   // 🆕 자동조회 결과를 상단 카드 보조표기에 반영
 
@@ -3163,7 +3163,7 @@ async function loadSimilarAuctionCases(p) {
         ${sameDongCount ? ` · <span style="color:var(--kiwoom-pink-deep,#CC00CC);font-weight:700;">본건 동일 ${rg.dong} ${sameDongCount}건</span>` : ''}
         <span class="text-muted text-small">(참고용 · 동 사례 5건↑이면 추정에 우선 반영)</span>
       </div>
-      ${d.region_level && d.region_level !== '동' && rg.dong ? `<div class="text-small" style="margin-bottom:10px;padding:8px 10px;background:#FFF7E6;border:1px solid #F0D9A8;border-radius:6px;color:#8A6D00;">ℹ️ <strong>${rg.dong}</strong> 낙찰사례가 아직 부족해 <strong>${d.region}(${d.region_level} 단위)</strong>로 넓혀 조회했습니다. ${rg.dong} 사례가 쌓이면 자동으로 <strong>${rg.dong} 사례만</strong> 표시·추정에 반영됩니다.</div>` : ''}
+      ${d.region_level && d.region_level !== '동' && rg.dong ? `<div class="text-small" style="margin-bottom:10px;padding:8px 10px;background:#FFF7E6;border:1px solid #F0D9A8;border-radius:6px;color:#8A6D00;">ℹ️ <strong>${rg.dong}</strong> 사례가 부족해 같은 <strong>${rg.sigungu || d.region}</strong> 범위(예전 사례 포함, ${d.period_label})까지 넓혀 조회했습니다. <strong>타 시·군은 시장이 달라 제외</strong>합니다. ${rg.dong} 사례가 쌓이면 자동으로 ${rg.dong}만 반영됩니다.</div>` : ''}
       <div style="max-height:340px;overflow-y:auto;border:1px solid var(--line);border-radius:6px;">
         <table class="tbl">
           <thead><tr><th>매각기일</th><th>사건번호</th><th>소재지</th><th class="text-right">면적</th><th class="text-right">감정가</th><th class="text-right">낙찰가</th><th class="text-right">낙찰가율</th><th>일치</th></tr></thead>
