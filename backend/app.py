@@ -3196,6 +3196,157 @@ def admin_coverage():
 
 
 # ============================================================
+# INFOCARE 시군구 통계 CSV 적재 — 집합건물 주거용만 추출해 auction_rate_stats 갱신
+#   용도(집합건물): 다세대·연립→rh, 아파트·주상복합(주거)→apt, 오피스텔·오피스텔(주거)→offi
+#   낙찰가율 = Σ총낙찰가/Σ총감정가(용도군 재집계), sample_n = Σ낙찰건수.
+#   GET: 업로드 폼. POST: 파싱→미리보기(기본). commit=1 + key=ADMIN_SECRET 이면 실제 적재.
+#   URL: /admin/import-rates
+# ============================================================
+_INFOCARE_MAP = {'아파트': 'apt', '주상복합(주거)': 'apt', '다세대': 'rh', '연립': 'rh',
+                 '오피스텔': 'offi', '오피스텔(주거)': 'offi'}
+
+
+def _infocare_num(s):
+    try:
+        return float(str(s).replace(',', '').replace('"', '').strip() or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _parse_infocare_csv(raw_bytes):
+    """INFOCARE 용도별 집계 CSV → 집합건물 주거용 6종 추출 → use_group 재집계.
+    반환: (agg_list, picked_detail) / 오류 시 예외."""
+    import csv as _csv
+    import io as _io
+    text = None
+    for enc in ('utf-8-sig', 'cp949', 'euc-kr', 'utf-8'):
+        try:
+            text = raw_bytes.decode(enc)
+            break
+        except Exception:
+            continue
+    if text is None:
+        raise ValueError('인코딩 판별 실패 (UTF-8/CP949 아님)')
+    reader = list(_csv.reader(_io.StringIO(text)))
+    section, picked = None, {}
+    for r in reader[1:]:
+        if len(r) < 8:
+            continue
+        c0 = (r[0] or '').strip()
+        c1 = (r[1] or '').strip()
+        if c0:
+            section = c0
+        if section == '집합건물' and c1 in _INFOCARE_MAP:
+            picked[c1] = {'appraisal': _infocare_num(r[2]), 'sale': _infocare_num(r[3]),
+                          'rate': _infocare_num(r[4]), 'n_total': int(_infocare_num(r[5])),
+                          'n_sold': int(_infocare_num(r[7]))}
+    if not picked:
+        raise ValueError("'집합건물' 구간에서 주거용 용도(다세대·아파트·연립·오피스텔 등)를 못 찾았습니다. 파일 형식을 확인하세요.")
+    agg = {}
+    for sub, d in picked.items():
+        ug = _INFOCARE_MAP[sub]
+        a = agg.setdefault(ug, {'appraisal': 0.0, 'sale': 0.0, 'n_sold': 0, 'n_total': 0, 'subs': []})
+        a['appraisal'] += d['appraisal']; a['sale'] += d['sale']
+        a['n_sold'] += d['n_sold']; a['n_total'] += d['n_total']; a['subs'].append(sub)
+    out = []
+    for ug, a in agg.items():
+        rate = round(100.0 * a['sale'] / a['appraisal'], 2) if a['appraisal'] > 0 else None
+        out.append({'use_group': ug, 'rate': rate, 'sample_n': a['n_sold'],
+                    'n_total': a['n_total'], 'subs': ', '.join(a['subs'])})
+    out.sort(key=lambda x: x['use_group'])
+    return out, picked
+
+
+@app.route('/admin/import-rates', methods=['GET', 'POST'])
+def admin_import_rates():
+    UG_LABEL = {'apt': '아파트(+주상복합주거)', 'rh': '연립·다세대', 'offi': '오피스텔'}
+    form = ('<form method="post" enctype="multipart/form-data" '
+            'style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px 18px;margin:12px 0;display:grid;gap:10px;max-width:520px">'
+            '<label>시도 <input name="sido" placeholder="예: 서울특별시" required style="width:100%;padding:6px 8px"></label>'
+            '<label>시군구 <input name="sigungu" placeholder="예: 강남구" required style="width:100%;padding:6px 8px"></label>'
+            '<label>기간(개월) <input name="months" value="12" style="width:100%;padding:6px 8px"></label>'
+            '<label>기준월(asof) <input name="asof" placeholder="예: 2026-06 (비우면 오늘)" style="width:100%;padding:6px 8px"></label>'
+            '<label>INFOCARE 용도별 CSV <input type="file" name="file" accept=".csv" required></label>'
+            '<label><input type="checkbox" name="commit" value="1"> 실제 적재(체크 안 하면 미리보기만)</label>'
+            '<label>관리자 키(적재 시 필요) <input name="key" style="width:100%;padding:6px 8px"></label>'
+            '<button type="submit" style="padding:9px;background:#0f766e;color:#fff;border:0;border-radius:6px;font-weight:700;cursor:pointer">파싱 / 적재</button>'
+            '</form>')
+    head = ('<!doctype html><meta charset="utf-8"><title>INFOCARE 낙찰가율 적재</title>'
+            '<style>body{font-family:system-ui,"Malgun Gothic",sans-serif;max-width:760px;margin:24px auto;padding:0 16px;color:#1e293b;line-height:1.55}'
+            'table{border-collapse:collapse;width:100%;font-size:14px;margin-top:8px}th,td{border:1px solid #e2e8f0;padding:6px 10px}'
+            'th{background:#f8fafc}.muted{color:#64748b;font-size:13px}.ok{color:#166534;font-weight:700}.err{color:#b91c1c;font-weight:700}</style>'
+            '<h1>INFOCARE 시군구 낙찰가율 적재</h1>'
+            '<p class="muted">INFOCARE 용도별 통계 CSV를 올리면 <b>집합건물 주거용</b>(다세대·아파트·연립·오피스텔·주상복합주거)만 뽑아 '
+            'use_group별로 재집계해 <code>auction_rate_stats</code>에 넣습니다. 먼저 <b>미리보기</b>로 확인 후 적재하세요.</p>')
+
+    if request.method == 'GET':
+        return Response(head + form, mimetype='text/html; charset=utf-8')
+
+    if not supabase:
+        return Response(head + form + '<p class="err">Supabase 미설정</p>', mimetype='text/html; charset=utf-8')
+    sido = (request.form.get('sido') or '').strip()
+    sigungu = (request.form.get('sigungu') or '').strip()
+    months = int(_infocare_num(request.form.get('months') or 12)) or 12
+    asof = (request.form.get('asof') or '').strip()
+    commit = request.form.get('commit') == '1'
+    key = request.form.get('key') or ''
+    f = request.files.get('file')
+    if not asof:
+        import datetime as _dti
+        asof = _dti.date.today().isoformat()
+    if not (sido and sigungu and f):
+        return Response(head + form + '<p class="err">시도·시군구·파일은 필수입니다.</p>', mimetype='text/html; charset=utf-8')
+    try:
+        agg, picked = _parse_infocare_csv(f.read())
+    except Exception as e:
+        return Response(head + form + f'<p class="err">파싱 실패: {e}</p>', mimetype='text/html; charset=utf-8')
+
+    prev = ''.join(
+        f'<tr><td>{UG_LABEL.get(x["use_group"], x["use_group"])} <span class="muted">({x["subs"]})</span></td>'
+        f'<td style="text-align:right"><b>{x["rate"]}</b>%</td>'
+        f'<td style="text-align:right">{x["sample_n"]}</td><td style="text-align:right">{x["n_total"]}</td></tr>'
+        for x in agg)
+    preview = (f'<h2>{sido} {sigungu} · 최근 {months}개월 · 기준 {asof}</h2>'
+               '<table><thead><tr><th>use_group</th><th>낙찰가율</th><th>낙찰건수(sample_n)</th><th>총건수</th></tr></thead>'
+               f'<tbody>{prev}</tbody></table>')
+
+    if not commit:
+        return Response(head + preview + '<p class="muted" style="margin-top:12px">☝️ 미리보기입니다. 값이 맞으면 아래에서 <b>실제 적재</b> 체크 + 관리자 키 입력 후 다시 올리세요.</p>' + form,
+                        mimetype='text/html; charset=utf-8')
+
+    if ADMIN_SECRET and key != ADMIN_SECRET:
+        return Response(head + preview + '<p class="err">적재하려면 올바른 관리자 키가 필요합니다.</p>' + form, mimetype='text/html; charset=utf-8')
+
+    # 적재: (sido,sigungu,use_group,period_months) 키로 select→update/insert (on_conflict 미가정)
+    results = []
+    for x in agg:
+        if x['rate'] is None:
+            continue
+        rec = {'sido': sido, 'sigungu': sigungu, 'use_group': x['use_group'],
+               'period_months': months, 'sample_n': x['sample_n'],
+               'median_rate': x['rate'], 'avg_rate': x['rate'], 'asof': asof}
+        try:
+            ex = (supabase.table('auction_rate_stats').select('*')
+                  .eq('sido', sido).eq('sigungu', sigungu)
+                  .eq('use_group', x['use_group']).eq('period_months', months)
+                  .limit(1).execute().data)
+            if ex:
+                (supabase.table('auction_rate_stats').update(rec)
+                 .eq('sido', sido).eq('sigungu', sigungu)
+                 .eq('use_group', x['use_group']).eq('period_months', months).execute())
+                results.append(f'<tr><td>{x["use_group"]}</td><td class="ok">갱신</td><td>{x["rate"]}% (n={x["sample_n"]})</td></tr>')
+            else:
+                supabase.table('auction_rate_stats').insert(rec).execute()
+                results.append(f'<tr><td>{x["use_group"]}</td><td class="ok">신규</td><td>{x["rate"]}% (n={x["sample_n"]})</td></tr>')
+        except Exception as e:
+            results.append(f'<tr><td>{x["use_group"]}</td><td class="err">실패</td><td>{e}</td></tr>')
+    done = ('<h2>적재 결과</h2><table><thead><tr><th>use_group</th><th>결과</th><th>내용</th></tr></thead>'
+            f'<tbody>{"".join(results)}</tbody></table>'
+            '<p class="muted" style="margin-top:12px">완료. 앱에서 해당 시군구 물건을 열면 이 통계가 낙찰가율로 반영됩니다(개별 실측이 쌓이면 자동으로 그쪽 우선).</p>')
+    return Response(head + preview + done + form, mimetype='text/html; charset=utf-8')
+
+
+# ============================================================
 # 자산 분석 리포트 PDF (매 페이지 CI 머릿말 — 서버사이드 reportlab)
 # ============================================================
 @app.route('/api/report/pdf', methods=['POST'])
