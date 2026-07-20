@@ -820,7 +820,15 @@ table { border-collapse: collapse; width: 100%; }
   flex-shrink: 0 !important;
   margin-top: -4px !important;
   z-index: 1 !important;
-} 
+}
+
+/* 지도 마커 글자 라벨 (본건/동 이름) */
+.map-lbl { background: rgba(255,255,255,.9); border: 1px solid rgba(0,0,0,.12);
+  border-radius: 4px; padding: 0 5px; font-size: 11px; font-weight: 700;
+  color: #1A2540; box-shadow: 0 1px 2px rgba(0,0,0,.12); white-space: nowrap; }
+.map-lbl::before { display: none; }  /* Leaflet 툴팁 화살표 제거 */
+.map-lbl-origin { color: #E6007E; border-color: #E6007E; }
+.map-lbl-same { color: #CC00CC; border-color: #CC00CC; }
 </style>
 <script src="/kfi_trade_collector.js"></script>
 <script src="/auction_rates.js"></script>
@@ -3042,6 +3050,7 @@ async function loadSimilarAuctionCases(p) {
         ${sameDongCount ? ` · <span style="color:var(--kiwoom-pink-deep,#CC00CC);font-weight:700;">본건 동일 ${rg.dong} ${sameDongCount}건</span>` : ''}
         <span class="text-muted text-small">(참고용 · 동 사례 5건↑이면 추정에 우선 반영)</span>
       </div>
+      ${d.region_level && d.region_level !== '동' && rg.dong ? `<div class="text-small" style="margin-bottom:10px;padding:8px 10px;background:#FFF7E6;border:1px solid #F0D9A8;border-radius:6px;color:#8A6D00;">ℹ️ <strong>${rg.dong}</strong> 낙찰사례가 아직 부족해 <strong>${d.region}(${d.region_level} 단위)</strong>로 넓혀 조회했습니다. ${rg.dong} 사례가 쌓이면 자동으로 <strong>${rg.dong} 사례만</strong> 표시·추정에 반영됩니다.</div>` : ''}
       <div style="max-height:340px;overflow-y:auto;border:1px solid var(--line);border-radius:6px;">
         <table class="tbl">
           <thead><tr><th>매각기일</th><th>사건번호</th><th>소재지</th><th class="text-right">면적</th><th class="text-right">감정가</th><th class="text-right">낙찰가</th><th class="text-right">낙찰가율</th><th>일치</th></tr></thead>
@@ -3049,7 +3058,7 @@ async function loadSimilarAuctionCases(p) {
         </table>
       </div>
       <div class="text-small text-muted" style="margin-top:6px;">일치 기준: 같은 동 / 같은 용도 / 면적 ±N% 중 2개 이상. 면적(1·3·5·7·10·15·20%)과 기간(1·3·6·12·24개월)을 함께 넓혀가며 조회 (채택: 면적 ±${d.area_tol_pct}% · ${d.period_label}).</div>
-      <div id="simMapNote" class="text-small text-muted" style="margin-top:12px;">🗺️ 낙찰사례 위치 <span style="color:var(--kiwoom-pink-deep,#CC00CC);">본건 동일 동은 분홍</span> · <span style="color:#1A2540;">타 동은 네이비</span> — 낙찰사례는 좌표가 없어 <strong>동 중심 근사 위치</strong>(참고용)입니다.</div>
+      <div id="simMapNote" class="text-small text-muted" style="margin-top:12px;">🗺️ <span style="color:#E6007E;font-weight:700;">본건(분홍)</span> · <span style="color:var(--kiwoom-pink-deep,#CC00CC);font-weight:700;">동일 동(자주)</span> · <span style="color:#1A2540;">타 동(네이비)</span> — 마커를 <strong>클릭</strong>하면 팝업에서 <strong>네이버 지도로 이동</strong>합니다. 낙찰사례는 좌표가 없어 동 중심 근사 위치(참고용)입니다.</div>
       <div id="simCasesMap" style="height:360px;border:1px solid var(--line);border-radius:6px;margin-top:4px;display:none;"></div>`;
 
     // 🆕 낙찰사례 동-근사 지도 (본건 + 사례 마커). V-World 키 없으면 조용히 숨김.
@@ -3099,10 +3108,14 @@ async function _renderAuctionMap(p, items, targetDong) {
   const center = origin || resp.coords[items.findIndex((x, i) => resp.coords[String(i)])];
   _auctionMap = L.map(box, { scrollWheelZoom: true }).setView(center, 13);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(_auctionMap);
+  // 주소를 네이버 지도 검색으로 여는 링크 (좌표 키 없이도 동작)
+  const naverUrl = q => `https://map.naver.com/p/search/${encodeURIComponent((q || '').trim())}`;
   const pts = [];
   if (origin) {
     L.circleMarker(origin, { radius: 9, color: '#fff', weight: 2, fillColor: '#E6007E', fillOpacity: 1 })
-      .addTo(_auctionMap).bindPopup(`<b>${p.name || '본건'}</b><br>본건${originApprox ? ' <span style="color:#888;">(동 중심 근사)</span>' : ''}`);
+      .addTo(_auctionMap)
+      .bindTooltip('본건', { permanent: true, direction: 'top', offset: [0, -8], className: 'map-lbl map-lbl-origin' })
+      .bindPopup(`<b>${p.name || '본건'}</b><br>본건${originApprox ? ' <span style="color:#888;">(동 중심 근사)</span>' : ''}${originAddr ? `<br><span style="color:#888;">${originAddr}</span>` : ''}<br><a href="${naverUrl(originAddr)}" target="_blank" rel="noopener" style="color:#E6007E;font-weight:600;">🔗 네이버 지도에서 보기</a>`);
     pts.push(origin);
   }
 
@@ -3117,10 +3130,13 @@ async function _renderAuctionMap(p, items, targetDong) {
     const lat = c[0] + rad * Math.cos(ang);
     const lng = c[1] + rad * Math.sin(ang) / Math.cos(c[0] * Math.PI / 180);
     const same = !!(targetDong && dong === targetDong);
-    L.circleMarker([lat, lng], { radius: 6, color: '#fff', weight: 1.5,
+    const caseAddr = (x.address || dong || '').trim();
+    const m = L.circleMarker([lat, lng], { radius: 6, color: '#fff', weight: 1.5,
       fillColor: same ? '#CC00CC' : '#1A2540', fillOpacity: 0.9 })
       .addTo(_auctionMap)
-      .bindPopup(`<b>${dong} ${x.use_type || ''}</b><br>${x.sale_date || ''} · 낙찰가율 <b>${x.bid_rate != null ? x.bid_rate + '%' : '-'}</b><br>${x.area_sqm != null ? x.area_sqm + '㎡' : ''}${x.fail_count != null ? ' · 유찰 ' + x.fail_count + '회' : ''}<br><span style="color:#888;">동 중심 근사 위치</span>`);
+      .bindPopup(`<b>${dong} ${x.use_type || ''}</b><br>${x.sale_date || ''} · 낙찰가율 <b>${x.bid_rate != null ? x.bid_rate + '%' : '-'}</b><br>${x.area_sqm != null ? x.area_sqm + '㎡' : ''}${x.fail_count != null ? ' · 유찰 ' + x.fail_count + '회' : ''}<br><span style="color:#888;">동 중심 근사 위치</span><br><a href="${naverUrl(caseAddr)}" target="_blank" rel="noopener" style="color:${same ? '#CC00CC' : '#1A2540'};font-weight:600;">🔗 네이버 지도에서 보기</a>`);
+    // 동 이름 글자 라벨: 동별 첫 마커에만(겹침 방지). 같은 동은 강조색.
+    if (k === 1) m.bindTooltip(dong, { permanent: true, direction: 'top', offset: [0, -6], className: 'map-lbl' + (same ? ' map-lbl-same' : '') });
     pts.push([lat, lng]);
   });
   if (pts.length > 1) _auctionMap.fitBounds(L.latLngBounds(pts).pad(0.15));
