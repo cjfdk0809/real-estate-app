@@ -2044,6 +2044,10 @@ function renderComparables() {
 
   const danjiTag = curDanji === '전체' ? '전체 단지' : curDanji;
 
+  // 유형 필터 적용된 목록 — 표와 지도가 같은 배열을 공유해 행 index ↔ 마커 index를 일치시킴
+  const _compTypeF = window._compsFilter || '전체';
+  const compsFiltered = (_compTypeF === '전체') ? comps : comps.filter(x => x.type === _compTypeF);
+
   c.innerHTML = `
     <div class="page-head">
       <div class="page-eyebrow">거래사례 비교 · Comparable Sales</div>
@@ -2130,12 +2134,10 @@ function renderComparables() {
         </div>
       </div>
       ${(() => {
-        const f = window._compsFilter || '전체';
-        let filtered = comps;  // comps는 이미 단지 필터됨
-        if (f !== '전체') filtered = filtered.filter(x => x.type === f);
-        if (filtered.length === 0) {
-          return `<div class="empty"><div class="empty-text">${f === '전체' ? '등록된 거래사례가 없습니다.' : `${f} 거래가 없습니다.`}</div></div>`;
+        if (compsFiltered.length === 0) {
+          return `<div class="empty"><div class="empty-text">${_compTypeF === '전체' ? '등록된 거래사례가 없습니다.' : `${_compTypeF} 거래가 없습니다.`}</div></div>`;
         }
+        const oName = p.name;
         return `
       <table class="tbl">
         <thead><tr>
@@ -2144,30 +2146,127 @@ function renderComparables() {
           <th style="text-align:center;">금액 / 월세</th><th style="text-align:center;">평당가</th><th style="text-align:center;">비고</th><th class="no-print"></th>
         </tr></thead>
         <tbody>
-          ${filtered.map(x => {
+          ${compsFiltered.map((x, i) => {
             const pyongPrice = x.area ? Math.round(x.price / (x.area / 3.305785)) : null;
             const priceCell = x.type === '월세' && x.monthly
               ? `<div>보증 <strong>${fmt.won(x.price)}</strong></div><div class="text-small" style="color:#a8884a;">월 ${x.monthly.toLocaleString()}만</div>`
               : `<strong>${fmt.won(x.price)}</strong>${x.monthly ? `<br><span class="text-small text-muted">월 ${x.monthly}만</span>` : ''}`;
-            return `<tr>
+            const sameDanji = oName && x.name === oName;
+            const nameStyle = sameDanji ? ' style="color:var(--kiwoom-pink-deep,#CC00CC);font-weight:700;"' : '';
+            return `<tr data-cidx="${i}" onclick="focusCompCase(${i})" style="cursor:pointer;" title="지도에서 이 거래 위치로 이동">
               <td class="num" style="text-align:center;">${fmt.date(x.date)}</td>
               <td style="text-align:center;"><span class="badge badge-${x.type}">${x.type}</span></td>
-              <td style="text-align:center;">${x.name}</td>
+              <td style="text-align:center;"${nameStyle}>${x.name}</td>
               <td class="text-small" style="text-align:center;">${x.building || ''} ${x.unit || ''}</td>
               <td class="num" style="text-align:center;">${x.area || '-'}㎡</td>
               <td class="num" style="text-align:center;">${x.floor || '-'}</td>
               <td class="price" style="text-align:center;">${priceCell}</td>
               <td class="num text-small" style="text-align:center;">${pyongPrice ? pyongPrice.toLocaleString() + '만/평' : '-'}</td>
               <td class="text-small text-muted" style="text-align:center;">${x.memo || ''}</td>
-              <td class="no-print" style="text-align:center;"><span class="tbl-action" onclick="editComparable('${x.id}')">편집</span><span class="tbl-action" onclick="deleteComparable('${x.id}')">삭제</span></td>
+              <td class="no-print" style="text-align:center;" onclick="event.stopPropagation();"><span class="tbl-action" onclick="editComparable('${x.id}')">편집</span><span class="tbl-action" onclick="deleteComparable('${x.id}')">삭제</span></td>
             </tr>`;
           }).join('')}
         </tbody>
       </table>`;
       })()}
+      ${compsFiltered.length ? `
+      <div id="compMapNote" class="text-small text-muted" style="margin-top:12px;">🗺️ <span style="color:#E6007E;font-weight:700;">본건(분홍)</span> · <span style="color:var(--kiwoom-pink-deep,#CC00CC);font-weight:700;">본건 단지(자주)</span> · <span style="color:#1A2540;">타 단지(네이비)</span> — 표의 <strong>행을 클릭</strong>하면 지도가 그 위치로 이동합니다. 마커를 클릭하면 <strong>네이버 지도로 이동</strong>합니다.</div>
+      <div id="compCasesMap" style="height:360px;border:1px solid var(--line);border-radius:6px;margin-top:4px;display:none;"></div>` : ''}
     </div>
   `;
   drawPriceChart(comps);
+  if (window.L && compsFiltered.length) _renderCompMap(p, compsFiltered);
+}
+
+// ============================================================
+// 거래사례 지도 — 본건 + 거래사례 마커 (표 행 클릭 시 이동)
+// 자동수집분은 동+지번으로 정밀 지오코딩, 그 외는 본건 동 근처로 폴백.
+// ============================================================
+let _compMap = null;
+let _compMarkers = {};   // 표 행 클릭 → 이동용: 거래 index → {marker, latlng}
+
+function focusCompCase(i) {
+  const rec = _compMarkers[i];
+  const box = document.getElementById('compCasesMap');
+  if (box && box.style.display !== 'none') box.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  if (!rec || !_compMap) return;
+  _compMap.invalidateSize();
+  _compMap.setView(rec.latlng, 16, { animate: true });
+  rec.marker.openPopup();
+}
+
+async function _renderCompMap(p, comps) {
+  const box = document.getElementById('compCasesMap');
+  const note = document.getElementById('compMapNote');
+  if (!box) return;
+  const originAddr = (p.addrLot || p.addrRoad || '').trim();
+  const rg = _simRegion(originAddr);
+  // 거래사례 주소 조합: 동+지번(정밀) → 동만 → 본건 동 폴백
+  const compAddr = x => {
+    const d = (x.dong || '').split(' ')[0];
+    if (d && x.jibun) return [rg.sido, rg.sigungu, d, x.jibun].filter(Boolean).join(' ');
+    if (d) return [rg.sido, rg.sigungu, d].filter(Boolean).join(' ');
+    return [rg.sido, rg.sigungu, rg.dong].filter(Boolean).join(' ');
+  };
+  const geoItems = comps.map((x, i) => ({ id: String(i), addr: compAddr(x) }))
+    .filter(it => it.addr.length > 0);
+  if (rg.dong) geoItems.push({ id: '__origin__', addr: [rg.sido, rg.sigungu, rg.dong].filter(Boolean).join(' ') });
+  let resp;
+  try {
+    const r = await fetch(`${window.BACKEND_URL || ''}/api/geocode/coords`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ origin: originAddr, items: geoItems }),
+    });
+    resp = await r.json();
+  } catch (e) { if (note) note.textContent = '🗺️ 지도 조회 오류'; return; }
+  if (!resp.key) { if (note) note.textContent = '🗺️ 거래사례 지도 미표시 (좌표변환 키 미설정 — KAKAO_REST_KEY 또는 VWORLD_API_KEY)'; return; }
+
+  const origin = resp.origin || resp.coords['__origin__'] || null;
+  const originApprox = !resp.origin && !!origin;
+  const anyItem = comps.some((x, i) => resp.coords[String(i)]);
+  if (!origin && !anyItem) {
+    if (note) note.textContent = '🗺️ 지도 미표시 (좌표 변환 실패 — 카카오맵 서비스 활성화/키 설정을 확인하세요)';
+    return;
+  }
+
+  box.style.display = '';
+  if (_compMap) { _compMap.remove(); _compMap = null; }
+  _compMarkers = {};
+  const center = origin || resp.coords[comps.findIndex((x, i) => resp.coords[String(i)])];
+  _compMap = L.map(box, { scrollWheelZoom: true }).setView(center, 14);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(_compMap);
+  const naverUrl = q => `https://map.naver.com/p/search/${encodeURIComponent((q || '').trim())}`;
+  const pts = [];
+  if (origin) {
+    L.circleMarker(origin, { radius: 9, color: '#fff', weight: 2, fillColor: '#E6007E', fillOpacity: 1 })
+      .addTo(_compMap)
+      .bindTooltip('본건', { permanent: true, direction: 'top', offset: [0, -8], className: 'map-lbl map-lbl-origin' })
+      .bindPopup(`<b>${p.name || '본건'}</b><br>본건${originApprox ? ' <span style="color:#888;">(동 중심 근사)</span>' : ''}${originAddr ? `<br><span style="color:#888;">${originAddr}</span>` : ''}<br><a href="${naverUrl(originAddr)}" target="_blank" rel="noopener" style="color:#E6007E;font-weight:600;">🔗 네이버 지도에서 보기</a>`);
+    pts.push(origin);
+  }
+
+  const nameSeen = {};
+  comps.forEach((x, i) => {
+    const c = resp.coords[String(i)];
+    if (!c) return;
+    const nm = x.name || (x.dong || '').split(' ')[0] || '거래';
+    const k = nameSeen[nm] = (nameSeen[nm] || 0) + 1;
+    // 같은 단지 겹침 완화: 황금각 나선으로 흩뿌림
+    const ang = k * 2.399963, rad = 0.00028 * Math.sqrt(k);
+    const lat = c[0] + rad * Math.cos(ang);
+    const lng = c[1] + rad * Math.sin(ang) / Math.cos(c[0] * Math.PI / 180);
+    const same = !!(p.name && x.name === p.name);
+    const addrFull = compAddr(x);
+    const m = L.circleMarker([lat, lng], { radius: 6, color: '#fff', weight: 1.5,
+      fillColor: same ? '#CC00CC' : '#1A2540', fillOpacity: 0.9 })
+      .addTo(_compMap)
+      .bindPopup(`<b>${nm}</b> <span style="color:#888;">${x.type || ''}</span><br>${fmt.date(x.date)} · <b>${fmt.won(x.price)}</b>${x.monthly ? ' / 월 ' + x.monthly + '만' : ''}<br>${x.area != null ? x.area + '㎡' : ''}${x.floor ? ' · ' + x.floor + '층' : ''}<br><a href="${naverUrl(addrFull)}" target="_blank" rel="noopener" style="color:${same ? '#CC00CC' : '#1A2540'};font-weight:600;">🔗 네이버 지도에서 보기</a>`);
+    if (k === 1) m.bindTooltip(nm, { permanent: true, direction: 'top', offset: [0, -6], className: 'map-lbl' + (same ? ' map-lbl-same' : '') });
+    _compMarkers[i] = { marker: m, latlng: [lat, lng] };
+    pts.push([lat, lng]);
+  });
+  if (pts.length > 1) _compMap.fitBounds(L.latLngBounds(pts).pad(0.15));
+  setTimeout(() => _compMap && _compMap.invalidateSize(), 100);
 }
 
 // ============================================================
