@@ -39,9 +39,17 @@
   };
 
   var CFG = {
-    minSameComplex: 3, minSigungu: 5, minDong: 5, spread: 5,
+    minSameComplex: 3, minSigungu: 5, minDong: 5, simMinNeff: 3, spread: 5,
     minRate: 30, maxRate: 130, def: { con: 85, mid: 90, agg: 95 }
   };
+
+  /* 신뢰도 등급: 유효표본수(N_eff)로 상/중/하. 표본 얇으면 '수기 검토 권장' 경고. */
+  function _confGrade(nEff) {
+    if (nEff == null || isNaN(nEff)) return null;
+    if (nEff >= 8) return { grade: '상', color: '#0f766e', label: '표본 충분' };
+    if (nEff >= 4) return { grade: '중', color: '#a8884a', label: '표본 보통' };
+    return { grade: '하', color: '#b45309', label: '표본 부족 · 수기 검토 권장' };
+  }
   var PINK = 'var(--kiwoom-pink-deep, #CC00CC)';
 
   /* ===== 용도 계수 (빠른버전) — 공표 용도별 평균 낙찰가율 비율 근사 =====
@@ -114,7 +122,8 @@
     var key = _rsKey(g, rg.sido, rg.sigungu, rg.dong);
     if (key in _realCache) return;
     try {
-      var qs = new URLSearchParams({ use_group: g, sido: rg.sido, sigungu: rg.sigungu, dong: rg.dong || '', months: '12', min_n: '5' });
+      var _area = (p.exclusiveArea || p.supplyArea || '') + '';
+      var qs = new URLSearchParams({ use_group: g, sido: rg.sido, sigungu: rg.sigungu, dong: rg.dong || '', area: _area, months: '12', min_n: '5' });
       var r = await fetch(window.BACKEND_URL + '/api/auction/rates?' + qs.toString());
       var d = await r.json();
       _realCache[key] = (d && d.available) ? {
@@ -125,6 +134,8 @@
         failSlope: d.fail_slope, failRef: d.fail_ref, failLevels: d.fail_levels,
         dongName: d.dong, dongRate: d.dong_rate, dongP25: d.dong_p25, dongP75: d.dong_p75,
         dongN: d.dong_n, dongRefFail: d.dong_ref_fail,
+        simRate: d.sim_rate, simP25: d.sim_p25, simP75: d.sim_p75,
+        simN: d.sim_n, simNeff: d.sim_neff, simRefFail: d.sim_ref_fail,
       } : null;
     } catch (e) { _realCache[key] = null; }
   }
@@ -249,20 +260,29 @@
     var failDelta = 0, failAdj = null;   // 유찰횟수 보정(실측 단계 전용)
     var _p25 = null, _p75 = null;        // 채택 분포의 사분위(시나리오용)
 
-    // 동 단위(≥5건)가 있으면 시도 실측보다 관련성이 높으므로 우선 채택.
-    var useDong = !!(real && real.dongRate != null && real.dongN >= CFG.minDong);
-    if (real && (real.median != null || useDong)) {
+    // 채택 우선순위: 유사도 가중(면적×지역) → 동 단위(≥5) → 시도 실측 집계.
+    // 유사도 가중은 같은 동 사례를 최대가중으로 포함하면서 면적 근접까지 반영하므로
+    // 표본만 충분하면(N_eff≥3) 가장 관련성이 높다. 연립·다세대·나홀로아파트에 특히 유효.
+    var useSim = !!(real && real.simRate != null && real.simNeff != null && real.simNeff >= CFG.simMinNeff);
+    var useDong = !useSim && !!(real && real.dongRate != null && real.dongN >= CFG.minDong);
+    var effN = null;
+    if (real && (real.median != null || useDong || useSim)) {
       var baseRate, baseRef;
-      if (useDong) {
+      if (useSim) {
+        tier = 'sim';
+        baseRate = real.simRate; _p25 = real.simP25; _p75 = real.simP75;
+        baseRef = (real.simRefFail != null) ? real.simRefFail : real.failRef;
+        sampleN = real.simN; effN = real.simNeff;
+      } else if (useDong) {
         tier = 'stat_dong';
         baseRate = real.dongRate; _p25 = real.dongP25; _p75 = real.dongP75;
         baseRef = (real.dongRefFail != null) ? real.dongRefFail : real.failRef;
-        sampleN = real.dongN;
+        sampleN = real.dongN; effN = real.dongN;
       } else {
         tier = 'stat_real';
         baseRate = real.median; _p25 = real.p25; _p75 = real.p75;
         baseRef = real.failRef;
-        sampleN = real.n;
+        sampleN = real.n; effN = real.n;
       }
       center = round1(baseRate);
       asof = real.asof; isStat = true; useFactor = 1; usedReal = true;
@@ -298,6 +318,8 @@
     switch (tier) {
       case 'same_complex': scope = '본건 동일단지 낙찰사례'; break;
       case 'sigungu':      scope = (targetSg || '시군구') + ' 낙찰사례'; break;
+      case 'sim':          scope = _useLabel(p.use) + ' 유사도 가중 낙찰가율 · '
+                                 + (targetSg || real.sigungu || real.region || '') + ' 등 (면적·지역 근접, 유효표본 ' + round1(real.simNeff) + ')'; break;
       case 'stat_dong':    scope = _useLabel(p.use) + ' 실측 낙찰가율 · '
                                  + (real.dongName || '동') + ' (동 단위, n=' + real.dongN + ')'; break;
       case 'stat_real':    scope = _useLabel(p.use) + ' 실측 낙찰가율 · '
@@ -308,11 +330,15 @@
     }
     if (!usedReal && useFactor !== 1) scope += ' · 용도보정(근사) ' + _useLabel(p.use) + '(×' + useFactor + ')';
 
+    if (effN == null) effN = sampleN;   // 동일단지·시군구 사례는 사례수로 신뢰도 산정
+    var conf = _confGrade(effN);
+
     return { tier: tier, center: sc.mid, scenarios: sc, isStat: isStat, asof: asof,
       sampleN: sampleN, scope: scope, targetSigungu: targetSg, targetSido: targetSido,
       sameComplexN: same.length, sigunguN: sg.length,
       useFactor: useFactor, useLabel: _useLabel(p.use), usedReal: usedReal,
-      failAdj: failAdj };
+      failAdj: failAdj, effN: effN, conf: conf,
+      rangeLo: sc.con, rangeHi: sc.agg };
   }
   window.resolveBidRateCascade = resolveBidRateCascade;
 
@@ -360,6 +386,7 @@
 
   var TIER = {
     same_complex: ['#0f6e5c', '1단계 · 동일단지'], sigungu: ['#1e2a44', '2단계 · 시군구 사례'],
+    sim: ['#0e7490', '유사도 가중 실측'],
     stat_dong: ['#0b7a53', '동 단위 실측'],
     stat_real: ['#0f766e', '실측 낙찰가율'],
     stat_sigungu: ['#1e3a5f', '3단계 · 시군구 통계'],
@@ -397,7 +424,9 @@
     var factorProd = be.factorProd;
 
     var note;
-    if (cas.tier === 'stat_dong') {
+    if (cas.tier === 'sim') {
+      note = '<div class="text-small text-muted">🎯 낙찰가율은 <strong>' + cas.scope + '</strong>입니다. 본건과 <strong>면적이 비슷하고 가까운 지역</strong>(같은 동 > 같은 구 > 같은 시)의 실측 낙찰사례에 <strong>가중치</strong>를 줘 산출했습니다 — 연립·다세대·나홀로아파트처럼 사례가 얇고 개별성이 큰 물건에 맞춘 방식입니다.</div>';
+    } else if (cas.tier === 'stat_dong') {
       note = '<div class="text-small text-muted">📍 낙찰가율은 <strong>' + cas.scope + '</strong> ' + cas.sampleN + '건의 중앙값입니다 (본건과 같은 동·용도의 실측 낙찰사례 우선 적용).</div>';
     } else if (cas.isStat) {
       note = '<div class="text-small text-muted">📊 낙찰가율은 <strong>' + cas.scope + '</strong> 종합 낙찰가율입니다 (한국부동산원 법원경매통계 ' + cas.asof + ', 용도무관). 아파트는 종합보다 다소 높을 수 있습니다.</div>';
@@ -412,6 +441,16 @@
       note += '<div class="text-small text-muted">↳ 유찰 ' + _fa.targetFail + '회 반영: '
         + (_fa.delta >= 0 ? '+' : '') + _fa.delta + '%p (표본 평균 ' + _fa.refFail + '회 대비, 유찰 1회당 '
         + (_fa.slope >= 0 ? '+' : '') + _fa.slope + '%p)</div>';
+    }
+    // 신뢰도 등급 + 추정 범위 (표본이 얇을 때 과신을 막기 위해 항상 범위로 함께 제시)
+    if (cas.conf && cas.rangeLo != null && cas.rangeHi != null) {
+      var _loAmt = Math.round(baseValue * cas.rangeLo / 100);
+      var _hiAmt = Math.round(baseValue * cas.rangeHi / 100);
+      note += '<div class="text-small" style="margin-top:7px;padding-top:7px;border-top:1px dashed var(--line,#dfe4ee);">'
+        + '<span style="display:inline-block;padding:1px 9px;border-radius:10px;font-weight:700;color:#fff;background:' + cas.conf.color + ';">신뢰도 ' + cas.conf.grade + '</span> '
+        + '<span class="text-muted">' + cas.conf.label + (cas.effN != null ? ' · 유효표본 ' + round1(cas.effN) + '건' : '') + '</span>'
+        + '<div class="text-muted" style="margin-top:4px;">추정 낙찰가율 범위 <strong>' + round1(cas.rangeLo) + '~' + round1(cas.rangeHi) + '%</strong> → 추정낙찰가 <strong>' + won(_loAmt) + ' ~ ' + won(_hiAmt) + '</strong> <span style="opacity:.8;">(25~75분위)</span></div>'
+        + '</div>';
     }
 
     var row = function (label, val, desc, strong) {
@@ -458,7 +497,9 @@
     return ''
       + '<div class="card mb-24" data-cascade="1" style="border-left:4px solid var(--accent);">'
       + '<div class="card-title">추정 낙찰가액 '
-      + '<span class="badge" style="background:' + badge[0] + ';color:#fff;">' + badge[1] + '</span></div>'
+      + '<span class="badge" style="background:' + badge[0] + ';color:#fff;">' + badge[1] + '</span>'
+      + (cas.conf ? ' <span class="badge" style="background:' + cas.conf.color + ';color:#fff;">신뢰도 ' + cas.conf.grade + '</span>' : '')
+      + '</div>'
       + '<div class="text-small text-muted" style="margin:-4px 0 14px;">거래사례비교법 — 기준시세 × 가치형성요인 × 낙찰가율. <strong>AI안</strong>(요인 1.00·낙찰가율 캐스케이드)과 <strong>담당자안</strong>(요인·낙찰가율 직접보정)을 산출해 둘 중 하나를 최종 채택합니다.</div>'
       + '<table style="width:100%;border-collapse:collapse;font-size:14px;">'
       + row('거래사례 평균단가', won(unitPrice) + '/㎡', '거래사례 평균매매가 ÷ 전용면적')
