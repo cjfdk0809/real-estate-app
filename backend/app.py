@@ -2347,6 +2347,92 @@ def _estimate_fail_slope(rows):
     return round(slope, 3), round(ref_fail, 2), levels
 
 
+# ── 유사도 가중 실측 낙찰가율 ────────────────────────────────────────────────
+# auction_sales에는 연식·대지지분·좌표가 없어, 신뢰 가능한 유사도 축은
+#   ① 면적 근접도(가우시안)  ② 지역 근접도(같은 동>같은 구>같은 시)  뿐이다.
+# 이 둘로 각 사례에 가중치를 줘 '가중 중앙 낙찰가율'과 '유효표본수(N_eff)'를 낸다.
+# 연립·다세대·나홀로아파트처럼 표본이 얇고 개별성이 큰 물건에서 특히 효과적.
+_SIM_AREA_BW = 0.15               # 면적 근접 대역폭(본건 면적 대비 비율)
+_SIM_TIER_W = {'dong': 1.0, 'sigungu': 0.55, 'sido': 0.30}  # 지역 근접 가중
+_SIM_MONTHS = 24                  # 유사도 가중 집계 기간(개월)
+_SIM_MIN_NEFF = 3.0               # 이 유효표본수 미만이면 미채택(→ 기존 방식 폴백)
+
+
+def _weighted_percentile(pairs, q):
+    """pairs=[(값, 가중치)], q∈[0,1] → 가중 분위수(스텝)."""
+    if not pairs:
+        return None
+    s = sorted(pairs, key=lambda t: t[0])
+    total = sum(w for _, w in s)
+    if total <= 0:
+        return None
+    thresh = q * total
+    acc = 0.0
+    for v, w in s:
+        acc += w
+        if acc >= thresh:
+            return round(v, 2)
+    return round(s[-1][0], 2)
+
+
+def _similarity_weighted_stat(rows, target_area, sido, sigungu, dong):
+    """면적 근접도 × 지역 근접도로 가중한 실측 낙찰가율.
+    반환: {rate,p25,p75,n,neff,ref_fail} 또는 None(면적 없음·표본 부족)."""
+    if not target_area or target_area <= 0:
+        return None
+    import math
+    weighted = []       # (bid_rate, weight)
+    fail_weighted = []  # (fail_count, weight)
+    for r in rows:
+        br = r.get('bid_rate')
+        ar = r.get('area_sqm')
+        if br is None or ar is None:
+            continue
+        try:
+            br = float(br)
+            ar = float(ar)
+        except (TypeError, ValueError):
+            continue
+        if ar <= 0 or br <= 0:
+            continue
+        # 지역 근접 tier — 행의 자기 시도/시군구로 동을 추출해 본건 동과 비교
+        rd = _row_dong(r.get('address'), r.get('sido'), r.get('sigungu'))
+        if dong and rd == dong:
+            tw = _SIM_TIER_W['dong']
+        elif sigungu and (r.get('sigungu') or '') == sigungu:
+            tw = _SIM_TIER_W['sigungu']
+        else:
+            tw = _SIM_TIER_W['sido']
+        # 면적 근접 (가우시안 커널)
+        z = (ar - target_area) / (target_area * _SIM_AREA_BW)
+        w = tw * math.exp(-0.5 * z * z)
+        if w <= 1e-6:
+            continue
+        weighted.append((br, w))
+        fc = r.get('fail_count')
+        if fc is not None:
+            try:
+                fail_weighted.append((int(fc), w))
+            except (TypeError, ValueError):
+                pass
+    if not weighted:
+        return None
+    sw = sum(w for _, w in weighted)
+    sw2 = sum(w * w for _, w in weighted)
+    neff = (sw * sw / sw2) if sw2 > 0 else 0.0
+    if neff < _SIM_MIN_NEFF:
+        return None
+    ref_fail = None
+    if fail_weighted:
+        fsw = sum(w for _, w in fail_weighted)
+        if fsw > 0:
+            ref_fail = round(sum(f * w for f, w in fail_weighted) / fsw, 2)
+    return {'rate': _weighted_percentile(weighted, 0.5),
+            'p25': _weighted_percentile(weighted, 0.25),
+            'p75': _weighted_percentile(weighted, 0.75),
+            'n': len(weighted), 'neff': round(neff, 1), 'ref_fail': ref_fail}
+
+
 @app.route('/api/auction/rates')
 def auction_rates():
     if not supabase:
@@ -2387,14 +2473,19 @@ def auction_rates():
         if hit:
             break
 
-    if not hit:
-        return jsonify({'available': False, 'reason': '표본 부족'})
-
-    scope_region = (hit.get('sigungu') if chosen_scope == 'sigungu'
-                    else hit.get('sido') if chosen_scope == 'sido' else '전국')
-    period_label = _PERIOD_LABEL.get(chosen_period, f'{chosen_period}개월')
-    # 산출근거 문구: "서울특별시 강남구 · 오피스텔 · 최근 6개월 (n=9, 중앙값)"
-    derivation = f'{scope_region} · {period_label} · 표본 {hit.get("sample_n")}건 (중앙값)'
+    # 집계(auction_rate_stats) 미존재해도 아래 동/유사도 가중은 원본에서 계산 가능하므로
+    # 여기서 바로 종료하지 않는다. 최종적으로 hit·dong·sim 모두 없을 때만 미제공 처리.
+    if hit:
+        scope_region = (hit.get('sigungu') if chosen_scope == 'sigungu'
+                        else hit.get('sido') if chosen_scope == 'sido' else '전국')
+        period_label = _PERIOD_LABEL.get(chosen_period, f'{chosen_period}개월')
+        # 산출근거 문구: "서울특별시 강남구 · 오피스텔 · 최근 6개월 (n=9, 중앙값)"
+        derivation = f'{scope_region} · {period_label} · 표본 {hit.get("sample_n")}건 (중앙값)'
+    else:
+        scope_region = sigungu or sido or '전국'
+        chosen_scope = 'sigungu' if sigungu else 'sido' if sido else 'national'
+        period_label = None
+        derivation = None
 
     # ── 유찰횟수 보정용 기울기 ────────────────────────────────────────────
     # 실측 중앙값은 '평균적인 유찰 섞임'을 반영하므로, 대상 물건이 표본 평균보다 더/덜
@@ -2410,12 +2501,14 @@ def auction_rates():
               .not_.is_('bid_rate', 'null')
               .not_.is_('fail_count', 'null')
               .limit(4000))
-        if chosen_scope == 'sigungu':
-            fq = fq.eq('sigungu', hit.get('sigungu'))
-            if hit.get('sido'):
-                fq = fq.eq('sido', hit.get('sido'))
-        elif chosen_scope == 'sido':
-            fq = fq.eq('sido', hit.get('sido'))
+        _fs_sigungu = (hit.get('sigungu') if hit else sigungu) or None
+        _fs_sido = (hit.get('sido') if hit else sido) or None
+        if chosen_scope == 'sigungu' and _fs_sigungu:
+            fq = fq.eq('sigungu', _fs_sigungu)
+            if _fs_sido:
+                fq = fq.eq('sido', _fs_sido)
+        elif chosen_scope == 'sido' and _fs_sido:
+            fq = fq.eq('sido', _fs_sido)
         if fail_slope_months:   # 0 = 전체 기간이면 날짜 필터 없음
             import datetime as _dt2
             _cut = (_dt2.date.today() - _dt2.timedelta(days=fail_slope_months * 30)).isoformat()
@@ -2448,15 +2541,43 @@ def auction_rates():
         except Exception:
             dong_stat = None
 
+    # ── 유사도 가중 실측 낙찰가율 (면적×지역 근접 가중) ──────────────────────
+    # 본건 면적(area)이 주어졌을 때만 계산. 시도 범위의 같은 용도 낙찰기록을 모아
+    # 면적·지역 근접도로 가중 → 연립·다세대·나홀로아파트 등 개별성 큰 물건에 유효.
+    area = request.args.get('area', type=float)
+    sim_stat = None
+    if area and sido:
+        try:
+            sq = (supabase.table('auction_sales')
+                  .select('bid_rate,area_sqm,fail_count,address,sido,sigungu,use_group,sale_date')
+                  .eq('use_group', use_group)
+                  .eq('sido', sido)
+                  .not_.is_('bid_rate', 'null')
+                  .not_.is_('area_sqm', 'null')
+                  .order('sale_date', desc=True)
+                  .limit(4000))
+            import datetime as _dt5
+            _scut = (_dt5.date.today() - _dt5.timedelta(days=_SIM_MONTHS * 30)).isoformat()
+            sq = sq.gte('sale_date', _scut)
+            srows = (sq.execute().data) or []
+            sim_stat = _similarity_weighted_stat(srows, area, sido, sigungu, dong)
+        except Exception:
+            sim_stat = None
+
+    # 집계·동·유사도 중 하나라도 있어야 제공. 모두 없으면 미제공(→ 프론트는 정적 통계 폴백).
+    if not (hit or dong_stat or sim_stat):
+        return jsonify({'available': False, 'reason': '표본 부족'})
+    _h = hit or {}
+
     return jsonify({
         'available': True,
         'scope': chosen_scope, 'region': scope_region,
         'period_months': chosen_period, 'period_label': period_label,
-        'use_group': use_group, 'sido': hit.get('sido'), 'sigungu': hit.get('sigungu'),
-        'sample_n': hit.get('sample_n'),
-        'median_rate': hit.get('median_rate'), 'avg_rate': hit.get('avg_rate'),
-        'p25_rate': hit.get('p25_rate'), 'p75_rate': hit.get('p75_rate'),
-        'avg_bidders': hit.get('avg_bidders'), 'asof': hit.get('asof'),
+        'use_group': use_group, 'sido': _h.get('sido') or sido, 'sigungu': _h.get('sigungu') or sigungu,
+        'sample_n': _h.get('sample_n'),
+        'median_rate': _h.get('median_rate'), 'avg_rate': _h.get('avg_rate'),
+        'p25_rate': _h.get('p25_rate'), 'p75_rate': _h.get('p75_rate'),
+        'avg_bidders': _h.get('avg_bidders'), 'asof': _h.get('asof'),
         'derivation': derivation,
         # 유찰보정: 유찰 1회당 %p 변화(fail_slope) · 기준 유찰횟수(fail_ref) · 단계별 내역
         # fail_slope_months = 기울기 추정에 사용한 기간(개월, 0=전체). 실측 기간과 분리됨.
@@ -2469,6 +2590,13 @@ def auction_rates():
         'dong_p75': (dong_stat or {}).get('p75'),
         'dong_n': (dong_stat or {}).get('n'),
         'dong_ref_fail': (dong_stat or {}).get('ref_fail'),
+        # 유사도 가중 실측(면적×지역 근접). 있으면 프론트가 우선 채택. 부족하면 None.
+        'sim_rate': (sim_stat or {}).get('rate'),
+        'sim_p25': (sim_stat or {}).get('p25'),
+        'sim_p75': (sim_stat or {}).get('p75'),
+        'sim_n': (sim_stat or {}).get('n'),
+        'sim_neff': (sim_stat or {}).get('neff'),
+        'sim_ref_fail': (sim_stat or {}).get('ref_fail'),
     })
 
 
