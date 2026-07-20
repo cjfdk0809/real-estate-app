@@ -2904,6 +2904,187 @@ def admin_diag_fail_count():
 
 
 # ============================================================
+# 낙찰가율 추정 정확도 백테스트 (leave-one-out)
+#   완료된 낙찰 건을 '자기 자신을 빼고' 유사도 가중으로 예측 → 실제 낙찰가율과 비교.
+#   유사도 가중(신규) vs 단순 중앙값(구 방식)을 용도별로 비교해 개선 효과를 실측.
+#   ADMIN_SECRET 설정 시 ?key= 필요, 미설정이면 공개(읽기전용 집계).
+#   URL: /admin/backtest?sido=서울특별시&months=24&sample=250
+# ============================================================
+@app.route('/admin/backtest')
+def admin_backtest():
+    if ADMIN_SECRET and request.args.get('key', '') != ADMIN_SECRET:
+        return jsonify({'error': '잘못된 관리자 키'}), 403
+    if not supabase:
+        return jsonify({'error': 'Supabase 미설정'}), 503
+
+    import datetime as _dtb
+    sido = (request.args.get('sido') or '서울특별시').strip()
+    months = request.args.get('months', default=24, type=int)
+    sample_n = request.args.get('sample', default=250, type=int)
+    fmt = (request.args.get('format') or 'html').strip()
+    cut = (_dtb.date.today() - _dtb.timedelta(days=months * 30)).isoformat()
+
+    USE_LABELS = {'apt': '아파트', 'rh': '연립·다세대', 'sh': '단독·다가구', 'offi': '오피스텔'}
+    POOL_MAX, MIN_POOL = 2500, 8
+
+    def _fetch_pool(ug):
+        out, page, PAGE = [], 0, 1000
+        while len(out) < POOL_MAX:
+            try:
+                rows = (supabase.table('auction_sales')
+                        .select('bid_rate,area_sqm,fail_count,address,sido,sigungu,sale_date')
+                        .eq('use_group', ug).eq('sido', sido)
+                        .not_.is_('bid_rate', 'null').not_.is_('area_sqm', 'null')
+                        .gte('sale_date', cut)
+                        .order('sale_date', desc=True)
+                        .range(page * PAGE, page * PAGE + PAGE - 1)
+                        .execute().data) or []
+            except Exception:
+                break
+            out.extend(rows)
+            if len(rows) < PAGE:
+                break
+            page += 1
+        return out[:POOL_MAX]
+
+    def _abs_stats(errs):
+        if not errs:
+            return None
+        a = [abs(e) for e in errs]
+        return {'n': len(a), 'mae': round(sum(a) / len(a), 2),
+                'med': round(_median(a), 2),
+                'hit5': round(100.0 * sum(1 for x in a if x <= 5) / len(a), 1),
+                'hit10': round(100.0 * sum(1 for x in a if x <= 10) / len(a), 1)}
+
+    results = []
+    g_sim, g_base = [], []   # 전체(용도무관) 공정비교용 누적
+    for ug in ['apt', 'rh', 'sh', 'offi']:
+        pool = _fetch_pool(ug)
+        if len(pool) < MIN_POOL:
+            results.append({'ug': ug, 'label': USE_LABELS[ug], 'pool': len(pool),
+                            'insufficient': True})
+            continue
+        idxs = list(range(len(pool)))
+        if len(idxs) > sample_n:                     # 균등 간격 샘플
+            step = len(idxs) / float(sample_n)
+            idxs = sorted(set(int(i * step) for i in range(sample_n)))
+        sim_all, sim_paired, base_paired = [], [], []
+        for t in idxs:
+            row = pool[t]
+            try:
+                actual = float(row.get('bid_rate'))
+                area = float(row.get('area_sqm'))
+            except (TypeError, ValueError):
+                continue
+            if actual <= 0 or area <= 0:
+                continue
+            sgg = row.get('sigungu')
+            dong = _row_dong(row.get('address'), row.get('sido'), sgg)
+            pool_wo = pool[:t] + pool[t + 1:]        # leave-one-out (자기 제외)
+            sim = _similarity_weighted_stat(pool_wo, area, sido, sgg, dong)
+            pred_sim = sim['rate'] if sim else None
+            # 베이스라인(구 방식): 같은 구 낙찰가율 중앙값(부족하면 시도 전체) — 면적 무관
+            same_sgg = [float(r['bid_rate']) for r in pool_wo
+                        if r.get('sigungu') == sgg and r.get('bid_rate') is not None]
+            base_pool = same_sgg if len(same_sgg) >= 3 else \
+                [float(r['bid_rate']) for r in pool_wo if r.get('bid_rate') is not None]
+            pred_base = _median(base_pool) if base_pool else None
+            if pred_sim is not None:
+                sim_all.append(pred_sim - actual)
+                if pred_base is not None:            # 공정비교: 둘 다 예측된 건만
+                    sim_paired.append(pred_sim - actual)
+                    base_paired.append(pred_base - actual)
+        g_sim.extend(sim_paired)
+        g_base.extend(base_paired)
+        results.append({
+            'ug': ug, 'label': USE_LABELS[ug], 'pool': len(pool), 'tested': len(idxs),
+            'coverage': round(100.0 * len(sim_all) / len(idxs), 1) if idxs else 0,
+            'sim': _abs_stats(sim_paired), 'base': _abs_stats(base_paired),
+            'sim_all': _abs_stats(sim_all),
+        })
+
+    overall = {'sim': _abs_stats(g_sim), 'base': _abs_stats(g_base)}
+
+    if fmt == 'json':
+        return jsonify({'sido': sido, 'months': months, 'sample': sample_n,
+                        'results': results, 'overall': overall})
+
+    # ── HTML 리포트 ──────────────────────────────────────────────────────
+    def _cell(s, k):
+        return f'{s[k]}' if s else '—'
+
+    def _row_html(r):
+        if r.get('insufficient'):
+            return (f'<tr><td><b>{r["label"]}</b></td>'
+                    f'<td colspan="8" class="muted">표본 부족(풀 {r["pool"]}건) — 백테스트 생략</td></tr>')
+        sim, base = r.get('sim'), r.get('base')
+        delta = None
+        if sim and base:
+            delta = round(base['mae'] - sim['mae'], 2)   # +면 유사도가중이 더 정확
+        dcol = '#0f766e' if (delta or 0) > 0 else '#b45309' if (delta or 0) < 0 else '#64748b'
+        return (f'<tr><td><b>{r["label"]}</b><div class="muted">풀 {r["pool"]:,} · 테스트 {r["tested"]} · 커버리지 {r["coverage"]}%</div></td>'
+                f'<td style="text-align:right">{_cell(base,"mae")}</td>'
+                f'<td style="text-align:right">{_cell(base,"med")}</td>'
+                f'<td style="text-align:right">{_cell(base,"hit5")}%</td>'
+                f'<td style="text-align:right;background:#f0fdfa"><b>{_cell(sim,"mae")}</b></td>'
+                f'<td style="text-align:right;background:#f0fdfa">{_cell(sim,"med")}</td>'
+                f'<td style="text-align:right;background:#f0fdfa">{_cell(sim,"hit5")}%</td>'
+                f'<td style="text-align:right;color:{dcol};font-weight:700">'
+                f'{("+" + str(delta)) if (delta is not None and delta > 0) else (str(delta) if delta is not None else "—")}%p</td></tr>')
+
+    rows_html = ''.join(_row_html(r) for r in results)
+    ov = overall
+    verdict = '표본 부족으로 판정 보류'
+    if ov['sim'] and ov['base']:
+        d = round(ov['base']['mae'] - ov['sim']['mae'], 2)
+        if d > 0.3:
+            verdict = f'✅ 유사도 가중이 단순 중앙값보다 평균오차를 <b>{d}%p</b> 줄였습니다 (전체 기준).'
+        elif d < -0.3:
+            verdict = f'⚠️ 이 지역·기간에선 유사도 가중이 오히려 <b>{abs(d)}%p</b> 더 큽니다. 가중치 조정 검토 필요.'
+        else:
+            verdict = f'➖ 두 방식 차이가 미미합니다(±{abs(d)}%p). 표본을 늘리거나 가중치 조정을 검토하세요.'
+
+    ov_sim_mae = ov['sim']['mae'] if ov['sim'] else '—'
+    ov_base_mae = ov['base']['mae'] if ov['base'] else '—'
+    ov_n = ov['sim']['n'] if ov['sim'] else 0
+
+    html = f'''<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>낙찰가율 정확도 백테스트</title>
+<style>
+ body{{font-family:system-ui,'Malgun Gothic',sans-serif;max-width:920px;margin:24px auto;padding:0 16px;color:#1e293b;line-height:1.55}}
+ h1{{font-size:20px}} h2{{font-size:15px;margin-top:24px;color:#334155}}
+ table{{border-collapse:collapse;width:100%;font-size:14px;margin-top:8px}}
+ th,td{{border:1px solid #e2e8f0;padding:7px 10px}} th{{background:#f8fafc;text-align:right}} th:first-child,td:first-child{{text-align:left}}
+ .muted{{color:#64748b;font-size:12px;font-weight:400}}
+ .verdict{{margin:14px 0;padding:13px 16px;border-radius:8px;background:#f0fdfa;border:1px solid #99f6e4;font-weight:600}}
+ .kpi{{display:flex;gap:14px;flex-wrap:wrap;margin:10px 0}}
+ .kpi div{{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;min-width:150px}}
+ .kpi b{{display:block;font-size:22px;color:#0f766e}}
+ .note{{color:#64748b;font-size:12.5px;margin-top:18px}}
+</style></head><body>
+<h1>낙찰가율 추정 정확도 백테스트 <span class="muted">· {sido} · 최근 {months}개월</span></h1>
+<p class="muted">완료된 낙찰 건을 <b>자기 자신을 빼고</b>(leave-one-out) 예측해 실제 낙찰가율과 비교합니다. 오차 = |예측 낙찰가율 − 실제 낙찰가율| (%p).</p>
+<div class="verdict">{verdict}</div>
+<div class="kpi">
+ <div>전체 평균오차(유사도)<b>{ov_sim_mae}%p</b><span class="muted">낮을수록 정확</span></div>
+ <div>전체 평균오차(단순)<b>{ov_base_mae}%p</b><span class="muted">구 방식</span></div>
+ <div>비교 표본<b>{ov_n:,}건</b><span class="muted">두 방식 모두 예측된 건</span></div>
+</div>
+<h2>용도별 비교 <span class="muted">(초록 = 유사도 가중 · 개선폭 = 단순−유사도, +면 개선)</span></h2>
+<table>
+<thead><tr><th>용도</th>
+<th>단순 MAE</th><th>단순 중앙</th><th>단순 ±5%p</th>
+<th>유사도 MAE</th><th>유사도 중앙</th><th>유사도 ±5%p</th><th>개선폭</th></tr></thead>
+<tbody>{rows_html or '<tr><td colspan=8>데이터 없음</td></tr>'}</tbody></table>
+<p class="note">※ MAE=평균절대오차, 중앙=중앙절대오차, ±5%p=오차 5%p 이내 적중률. 공정비교를 위해 두 방식 모두 예측한 건만 집계했습니다(커버리지=유사도 가중이 산출된 비율).<br>
+※ 이 백테스트는 <b>낙찰가율 산정 방식(유사도 가중 vs 단순 중앙값)</b>만 비교하며, 유찰횟수 보정은 아직 반영하지 않았습니다. 등기부는 감정가·낙찰가를 담지 않아 이 검증에 쓰이지 않습니다(정확도 검증엔 auction_sales의 완료 낙찰 건이 사용됨).<br>
+※ 파라미터: <code>?sido=서울특별시&amp;months=24&amp;sample=250</code> — 다른 시도/기간으로 바꿔 조회할 수 있습니다.</p>
+</body></html>'''
+    return Response(html, mimetype='text/html; charset=utf-8')
+
+
+# ============================================================
 # 자산 분석 리포트 PDF (매 페이지 CI 머릿말 — 서버사이드 reportlab)
 # ============================================================
 @app.route('/api/report/pdf', methods=['POST'])
