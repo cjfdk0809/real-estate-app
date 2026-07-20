@@ -3091,6 +3091,111 @@ def admin_backtest():
 
 
 # ============================================================
+# 데이터 커버리지 진단 — auction_sales에 전국 어느 지역·용도가 얼마나 있나
+#   시도 × 용도(아파트/연립·다세대/오피스텔/단독·다가구) 매트릭스(낙찰가율 보유 건수).
+#   읽기전용 집계라 키 없이 공개. URL: /admin/coverage
+# ============================================================
+@app.route('/admin/coverage')
+def admin_coverage():
+    if not supabase:
+        return jsonify({'error': 'Supabase 미설정'}), 503
+
+    def _count(build):
+        try:
+            return build(supabase.table('auction_sales').select('*', count='exact').limit(1)).execute().count
+        except Exception:
+            return None
+
+    total = _count(lambda q: q)
+    with_rate = _count(lambda q: q.not_.is_('bid_rate', 'null'))
+
+    # 분포 표본: 최근순 페이지네이션(시도·용도·낙찰가율·날짜만) — 지역 값을 자동 발견.
+    SAMPLE_MAX, page, PAGE = 20000, 0, 1000
+    sample = []
+    try:
+        while len(sample) < SAMPLE_MAX:
+            rows = (supabase.table('auction_sales')
+                    .select('sido,use_group,bid_rate,sale_date')
+                    .order('sale_date', desc=True)
+                    .range(page * PAGE, page * PAGE + PAGE - 1)
+                    .execute().data) or []
+            sample.extend(rows)
+            if len(rows) < PAGE:
+                break
+            page += 1
+    except Exception as e:
+        return jsonify({'error': f'표본 수집 실패: {e}'}), 502
+    sample_capped = len(sample) >= SAMPLE_MAX
+
+    UGS = ['apt', 'rh', 'offi', 'sh']
+    UG_LABEL = {'apt': '아파트', 'rh': '연립·다세대', 'offi': '오피스텔', 'sh': '단독·다가구', '기타': '기타'}
+    mat, sido_tot, dmin, dmax = {}, {}, None, None
+    for r in sample:
+        if r.get('bid_rate') is None:
+            continue
+        s = (r.get('sido') or '(미상)').strip()
+        ug = r.get('use_group') or '기타'
+        if ug not in UGS:
+            ug = '기타'
+        mat.setdefault(s, {}).setdefault(ug, 0)
+        mat[s][ug] += 1
+        sido_tot[s] = sido_tot.get(s, 0) + 1
+        d = r.get('sale_date')
+        if d:
+            dmin = d if (dmin is None or d < dmin) else dmin
+            dmax = d if (dmax is None or d > dmax) else dmax
+
+    cols = UGS + (['기타'] if any('기타' in v for v in mat.values()) else [])
+    order = sorted(sido_tot, key=lambda k: sido_tot[k], reverse=True)
+
+    def _c(s, ug):
+        v = mat.get(s, {}).get(ug, 0)
+        bg = '#fef2f2' if v == 0 else '#f0fdf4' if v >= 30 else ''
+        col = '#b91c1c' if v == 0 else '#166534' if v >= 30 else '#334155'
+        return f'<td style="text-align:right;background:{bg};color:{col}">{v:,}</td>'
+
+    body_rows = ''.join(
+        f'<tr><td><b>{s}</b></td>' + ''.join(_c(s, ug) for ug in cols)
+        + f'<td style="text-align:right;font-weight:700">{sido_tot[s]:,}</td></tr>'
+        for s in order) or '<tr><td colspan="9">데이터 없음</td></tr>'
+    col_head = ''.join(f'<th>{UG_LABEL.get(c, c)}</th>' for c in cols)
+    empty_sido = [s for s in order if any(mat.get(s, {}).get(ug, 0) == 0 for ug in ['apt', 'rh'])]
+
+    def _fmt(n):
+        return f'{n:,}' if n is not None else '—'
+
+    html = f'''<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>낙찰데이터 커버리지</title>
+<style>
+ body{{font-family:system-ui,'Malgun Gothic',sans-serif;max-width:900px;margin:24px auto;padding:0 16px;color:#1e293b;line-height:1.55}}
+ h1{{font-size:20px}} h2{{font-size:15px;margin-top:22px;color:#334155}}
+ table{{border-collapse:collapse;width:100%;font-size:14px;margin-top:8px}}
+ th,td{{border:1px solid #e2e8f0;padding:6px 10px}} th{{background:#f8fafc;text-align:right}} th:first-child,td:first-child{{text-align:left}}
+ .kpi{{display:flex;gap:14px;flex-wrap:wrap;margin:10px 0}}
+ .kpi div{{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;min-width:150px}}
+ .kpi b{{display:block;font-size:22px;color:#0f766e}}
+ .muted{{color:#64748b;font-size:12.5px}}
+ .warn{{margin-top:12px;padding:12px 16px;border-radius:8px;background:#fffbeb;border:1px solid #fde68a;font-weight:500}}
+</style></head><body>
+<h1>낙찰데이터 커버리지 <span class="muted">· auction_sales</span></h1>
+<p class="muted">전국 어느 지역·용도의 낙찰(낙찰가율) 데이터가 얼마나 있는지 봅니다. 값 = 낙찰가율 보유 건수(빨강=0건).</p>
+<div class="kpi">
+ <div>전체 행<b>{_fmt(total)}</b><span class="muted">auction_sales 전체</span></div>
+ <div>낙찰가율 보유<b>{_fmt(with_rate)}</b><span class="muted">추정에 쓸 수 있는 건</span></div>
+ <div>표본 기간<b style="font-size:15px">{(dmin or '—')} ~ {(dmax or '—')}</b><span class="muted">표본 {len(sample):,}건{' · 상한도달' if sample_capped else ''}</span></div>
+</div>
+<h2>시도 × 용도별 보유 건수 <span class="muted">(표본 {len(sample):,}건 기준 · 낙찰가율 보유분)</span></h2>
+<table><thead><tr><th>시도</th>{col_head}<th>합계</th></tr></thead>
+<tbody>{body_rows}</tbody></table>
+<div class="warn">🔎 <b>아파트·연립다세대가 0건(빨강)인 시도</b>가 곧 추정이 '사례 없음'으로 빠지는 지역입니다{f': {", ".join(empty_sido[:12])}' if empty_sido else ' — 없음(대체로 채워져 있음)'}.</div>
+<p class="muted" style="margin-top:16px">※ 매트릭스는 <b>최근 {SAMPLE_MAX:,}건 표본</b> 분포입니다(상한 도달 시 전체 아님). 전체 건수(위 KPI)는 정확한 count입니다.<br>
+※ 용도: 아파트·연립다세대·오피스텔 = 주거용 집합건물. 단독·다가구는 집합건물 아님.</p>
+</body></html>'''
+    return Response(html, mimetype='text/html; charset=utf-8')
+
+
+# ============================================================
 # 자산 분석 리포트 PDF (매 페이지 CI 머릿말 — 서버사이드 reportlab)
 # ============================================================
 @app.route('/api/report/pdf', methods=['POST'])
