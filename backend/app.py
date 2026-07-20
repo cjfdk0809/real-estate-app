@@ -3205,6 +3205,65 @@ def admin_coverage():
 _INFOCARE_MAP = {'아파트': 'apt', '주상복합(주거)': 'apt', '다세대': 'rh', '연립': 'rh',
                  '오피스텔': 'offi', '오피스텔(주거)': 'offi'}
 
+# 파일명 시도 인식 → 저장 표준형(주소 파싱과 동일한 현행 공식명)
+_SIDO_CANON = {
+    '서울특별시': '서울특별시', '서울': '서울특별시',
+    '부산광역시': '부산광역시', '부산': '부산광역시',
+    '대구광역시': '대구광역시', '대구': '대구광역시',
+    '인천광역시': '인천광역시', '인천': '인천광역시',
+    '광주광역시': '광주광역시', '광주': '광주광역시',
+    '대전광역시': '대전광역시', '대전': '대전광역시',
+    '울산광역시': '울산광역시', '울산': '울산광역시',
+    '세종특별자치시': '세종특별자치시', '세종': '세종특별자치시',
+    '경기도': '경기도', '경기': '경기도',
+    '강원특별자치도': '강원특별자치도', '강원도': '강원특별자치도', '강원': '강원특별자치도',
+    '충청북도': '충청북도', '충북': '충청북도',
+    '충청남도': '충청남도', '충남': '충청남도',
+    '전북특별자치도': '전북특별자치도', '전라북도': '전북특별자치도', '전북': '전북특별자치도',
+    '전라남도': '전라남도', '전남': '전라남도',
+    '경상북도': '경상북도', '경북': '경상북도',
+    '경상남도': '경상남도', '경남': '경상남도',
+    '제주특별자치도': '제주특별자치도', '제주도': '제주특별자치도', '제주': '제주특별자치도',
+}
+
+
+def _detect_region_from_name(fname):
+    """파일명에서 (시도표준형, 시군구) 추출. 못 찾으면 해당 값 None.
+    예: '서울특별시 강남구 통계.csv' → ('서울특별시','강남구')."""
+    import re as _re
+    base = (fname or '').replace('\\', '/').rsplit('/', 1)[-1]
+    base = _re.sub(r'\.csv$', '', base, flags=_re.I)
+    sido = None
+    rest = base
+    for k in sorted(_SIDO_CANON, key=len, reverse=True):
+        if k in base:
+            sido = _SIDO_CANON[k]
+            rest = base.replace(k, ' ')
+            break
+    # 앱의 주소 파싱(_parseRegion)은 시도 다음 '첫 시/군/구 토큰'을 시군구로 본다.
+    # (예: '경기도 성남시 분당구' → '성남시'). 조회가 맞물리도록 동일 규칙으로 첫 토큰 채택.
+    toks = _re.findall(r'[가-힣]{2,}?[시군구]', rest)
+    sgg = toks[0] if toks else None
+    return sido, sgg
+
+
+def _upsert_rate_stat(sido, sigungu, use_group, months, sample_n, rate, asof):
+    """(sido,sigungu,use_group,period_months) 키로 select→update/insert. on_conflict 미가정."""
+    rec = {'sido': sido, 'sigungu': sigungu, 'use_group': use_group,
+           'period_months': months, 'sample_n': sample_n,
+           'median_rate': rate, 'avg_rate': rate, 'asof': asof}
+    ex = (supabase.table('auction_rate_stats').select('sido')
+          .eq('sido', sido).eq('sigungu', sigungu)
+          .eq('use_group', use_group).eq('period_months', months)
+          .limit(1).execute().data)
+    if ex:
+        (supabase.table('auction_rate_stats').update(rec)
+         .eq('sido', sido).eq('sigungu', sigungu)
+         .eq('use_group', use_group).eq('period_months', months).execute())
+        return '갱신'
+    supabase.table('auction_rate_stats').insert(rec).execute()
+    return '신규'
+
 
 def _infocare_num(s):
     try:
@@ -3344,6 +3403,94 @@ def admin_import_rates():
             f'<tbody>{"".join(results)}</tbody></table>'
             '<p class="muted" style="margin-top:12px">완료. 앱에서 해당 시군구 물건을 열면 이 통계가 낙찰가율로 반영됩니다(개별 실측이 쌓이면 자동으로 그쪽 우선).</p>')
     return Response(head + preview + done + form, mimetype='text/html; charset=utf-8')
+
+
+# ============================================================
+# INFOCARE 대량 적재 — 여러 시군구 CSV를 한 번에. 파일명에서 시도·시군구 자동 인식.
+#   ※ 반드시 '앱의 이 화면(브라우저)'에서 업로드해야 진짜 파일명이 전달됩니다.
+#     (채팅 업로드는 파일명이 지워짐)  파일명 예: '서울특별시 강남구.csv'
+#   GET: 폼. POST: 파일별 파싱+지역인식→미리보기(기본). commit=1+key로 전체 적재.
+#   URL: /admin/import-rates-bulk
+# ============================================================
+@app.route('/admin/import-rates-bulk', methods=['GET', 'POST'])
+def admin_import_rates_bulk():
+    UG_LABEL = {'apt': '아파트', 'rh': '연립·다세대', 'offi': '오피스텔'}
+    form = ('<form method="post" enctype="multipart/form-data" '
+            'style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px 18px;margin:12px 0;display:grid;gap:10px;max-width:560px">'
+            '<label>기간(개월) <input name="months" value="12" style="width:100%;padding:6px 8px"></label>'
+            '<label>기준월(asof) <input name="asof" placeholder="예: 2026-06 (비우면 오늘)" style="width:100%;padding:6px 8px"></label>'
+            '<label>CSV 여러 개 선택 <input type="file" name="files" accept=".csv" multiple required></label>'
+            '<label><input type="checkbox" name="commit" value="1"> 전체 적재(체크 안 하면 미리보기만)</label>'
+            '<label>관리자 키(적재 시 필요) <input name="key" style="width:100%;padding:6px 8px"></label>'
+            '<button type="submit" style="padding:9px;background:#0f766e;color:#fff;border:0;border-radius:6px;font-weight:700;cursor:pointer">파싱 / 적재</button>'
+            '</form>')
+    head = ('<!doctype html><meta charset="utf-8"><title>INFOCARE 대량 적재</title>'
+            '<style>body{font-family:system-ui,"Malgun Gothic",sans-serif;max-width:900px;margin:24px auto;padding:0 16px;color:#1e293b;line-height:1.55}'
+            'table{border-collapse:collapse;width:100%;font-size:13.5px;margin-top:8px}th,td{border:1px solid #e2e8f0;padding:6px 9px}'
+            'th{background:#f8fafc}.muted{color:#64748b;font-size:13px}.ok{color:#166534;font-weight:700}.err{color:#b91c1c;font-weight:700}</style>'
+            '<h1>INFOCARE 시군구 낙찰가율 — 대량 적재</h1>'
+            '<p class="muted">여러 시군구 CSV를 한 번에 올립니다. <b>파일명에 시도+시군구</b>가 있어야 자동 인식됩니다(예: <code>서울특별시 강남구.csv</code>). '
+            '⚠️ 반드시 <b>이 브라우저 화면</b>에서 올리세요(채팅에 올리면 파일명이 지워집니다).</p>')
+
+    if request.method == 'GET':
+        return Response(head + form, mimetype='text/html; charset=utf-8')
+    if not supabase:
+        return Response(head + form + '<p class="err">Supabase 미설정</p>', mimetype='text/html; charset=utf-8')
+
+    months = int(_infocare_num(request.form.get('months') or 12)) or 12
+    asof = (request.form.get('asof') or '').strip()
+    commit = request.form.get('commit') == '1'
+    key = request.form.get('key') or ''
+    if not asof:
+        import datetime as _dtb2
+        asof = _dtb2.date.today().isoformat()
+    files = request.files.getlist('files')
+    if not files:
+        return Response(head + form + '<p class="err">파일을 선택하세요.</p>', mimetype='text/html; charset=utf-8')
+    if commit and ADMIN_SECRET and key != ADMIN_SECRET:
+        return Response(head + form + '<p class="err">전체 적재하려면 올바른 관리자 키가 필요합니다. (미리보기는 키 없이 가능)</p>', mimetype='text/html; charset=utf-8')
+
+    rows_html, ok_cnt, skip_cnt, write_cnt = [], 0, 0, 0
+    for f in files:
+        fname = f.filename or '(이름없음)'
+        sido, sgg = _detect_region_from_name(fname)
+        try:
+            agg, _picked = _parse_infocare_csv(f.read())
+        except Exception as e:
+            skip_cnt += 1
+            rows_html.append(f'<tr><td>{fname}</td><td class="err">파싱실패</td><td colspan="4">{e}</td></tr>')
+            continue
+        vals = {x['use_group']: x for x in agg}
+        cells = ''.join(
+            f'<td style="text-align:right">{(vals[u]["rate"] if u in vals else "—")}{"%" if u in vals else ""}'
+            f'<div class="muted">n={vals[u]["sample_n"] if u in vals else 0}</div></td>'
+            for u in ('apt', 'rh', 'offi'))
+        if not (sido and sgg):
+            skip_cnt += 1
+            rows_html.append(f'<tr><td>{fname}</td><td class="err">지역인식실패</td>'
+                             f'<td>{sido or "?"} {sgg or "?"}</td>{cells}</tr>')
+            continue
+        action = '미리보기'
+        if commit:
+            try:
+                for x in agg:
+                    if x['rate'] is not None:
+                        _upsert_rate_stat(sido, sgg, x['use_group'], months, x['sample_n'], x['rate'], asof)
+                        write_cnt += 1
+                action = '<span class="ok">적재완료</span>'
+            except Exception as e:
+                action = f'<span class="err">적재실패: {e}</span>'
+        ok_cnt += 1
+        rows_html.append(f'<tr><td>{fname}</td><td>{action}</td><td><b>{sido} {sgg}</b></td>{cells}</tr>')
+
+    summary = (f'<p style="margin-top:10px">인식 <b>{ok_cnt}</b>개 · 건너뜀 <b>{skip_cnt}</b>개'
+               + (f' · <span class="ok">적재 {write_cnt}건</span>' if commit else ' · <b>미리보기</b>(적재 안 함)') + '</p>')
+    tbl = ('<table><thead><tr><th>파일명</th><th>상태</th><th>인식지역</th>'
+           '<th>아파트</th><th>연립·다세대</th><th>오피스텔</th></tr></thead>'
+           f'<tbody>{"".join(rows_html)}</tbody></table>')
+    tip = ('' if commit else '<p class="muted" style="margin-top:12px">☝️ 값·지역이 맞으면 <b>전체 적재</b> 체크 + 관리자 키 입력 후 같은 파일들을 다시 올리세요. '
+           '지역인식 실패는 파일명에 <code>시도 시군구</code>를 넣어 다시 시도하세요.</p>')
+    return Response(head + summary + tbl + tip + form, mimetype='text/html; charset=utf-8')
 
 
 # ============================================================
