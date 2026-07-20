@@ -2237,7 +2237,7 @@ async function _renderCompMap(p, comps) {
   _compMarkers = {};
   const center = origin || resp.coords[comps.findIndex((x, i) => resp.coords[String(i)])];
   _compMap = L.map(box, { scrollWheelZoom: true }).setView(center, 14);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(_compMap);
+  _attachBaseLayers(_compMap);
   const naverUrl = q => `https://map.naver.com/p/search/${encodeURIComponent((q || '').trim())}`;
   const pts = [];
   const bigMarkers = [];   // 별도 창(크게 보기)에서 재현할 마커 데이터
@@ -3200,6 +3200,31 @@ function focusAuctionCase(i) {
   rec.marker.openPopup();
 }
 
+// 지도 배경(베이스) 레이어 모음 — 키 불필요. 위성사진·밝은지도·기본을 전환할 수 있다.
+// (한국 공공지도 '브이월드'는 인증키+도메인 등록이 필요해 별도 처리)
+function _mapBaseLayers() {
+  return {
+    '밝은 지도': L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+      { maxZoom: 20, subdomains: 'abcd', attribution: '© OpenStreetMap · © CARTO' }),
+    '위성사진': L.layerGroup([
+      L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        { maxZoom: 19, attribution: '© Esri' }),
+      L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+        { maxZoom: 19 }),
+    ]),
+    '기본 지도': L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      { maxZoom: 19, attribution: '© OpenStreetMap' }),
+  };
+}
+// 지도에 기본 배경(마지막 선택 기억) + 좌상단 배경 전환 컨트롤을 붙인다.
+function _attachBaseLayers(map) {
+  const bases = _mapBaseLayers();
+  const choice = window._mapBaseChoice && bases[window._mapBaseChoice] ? window._mapBaseChoice : '밝은 지도';
+  bases[choice].addTo(map);
+  L.control.layers(bases, null, { position: 'topright', collapsed: false }).addTo(map);
+  map.on('baselayerchange', e => { window._mapBaseChoice = e.name; });
+}
+
 // 지도를 별도 브라우저 창으로 크게 띄운다 (거래사례·경공매 공용).
 // 렌더 시 저장해 둔 window._bigMapData[kind] (본건+사례 마커 데이터)를 새 창에 다시 그린다.
 function openBigMap(kind) {
@@ -3231,7 +3256,13 @@ function openBigMap(kind) {
     + '<scr' + 'ipt>'
     + 'var D=' + json + ';'
     + 'var map=L.map("map").setView(D.center,D.zoom);'
-    + 'L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap"}).addTo(map);'
+    + 'var bases={'
+    + '"밝은 지도":L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",{maxZoom:20,subdomains:"abcd",attribution:"© OpenStreetMap · © CARTO"}),'
+    + '"위성사진":L.layerGroup([L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",{maxZoom:19,attribution:"© Esri"}),L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",{maxZoom:19})]),'
+    + '"기본 지도":L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap"})'
+    + '};'
+    + 'bases["밝은 지도"].addTo(map);'
+    + 'L.control.layers(bases,null,{position:"topright",collapsed:false}).addTo(map);'
     + 'var pts=[];'
     + 'D.markers.forEach(function(m){'
     + 'var mk=L.circleMarker([m.lat,m.lng],{radius:m.origin?10:7,color:"#fff",weight:m.origin?2:1.5,fillColor:m.fill,fillOpacity:m.origin?1:.9}).addTo(map).bindPopup(m.popup);'
@@ -3282,7 +3313,7 @@ async function _renderAuctionMap(p, items, targetDong) {
   _auctionMarkers = {};   // 재조회 시 이전 마커 참조 초기화
   const center = origin || resp.coords[items.findIndex((x, i) => resp.coords[String(i)])];
   _auctionMap = L.map(box, { scrollWheelZoom: true }).setView(center, 13);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(_auctionMap);
+  _attachBaseLayers(_auctionMap);
   // 주소를 네이버 지도 검색으로 여는 링크 (좌표 키 없이도 동작)
   const naverUrl = q => `https://map.naver.com/p/search/${encodeURIComponent((q || '').trim())}`;
   const pts = [];
