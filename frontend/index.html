@@ -3025,12 +3025,12 @@ async function loadSimilarAuctionCases(p) {
     // 본건과 같은 동(예: 잠실동) 낙찰사례는 관련성이 가장 높으므로 행을 강조한다.
     const sameDong = x => !!(rg.dong && (x.dong || '').split(' ')[0] === rg.dong);
     let sameDongCount = 0;
-    const rows = d.items.map(x => {
+    const rows = d.items.map((x, i) => {
       const hit = sameDong(x); if (hit) sameDongCount++;
-      const trStyle = hit ? ' style="background:var(--kiwoom-pink-soft,#FFE6FF);"' : '';
+      const trStyle = hit ? 'background:var(--kiwoom-pink-soft,#FFE6FF);' : '';
       const dongStyle = hit ? ' style="color:var(--kiwoom-pink-deep,#CC00CC);font-weight:700;"' : '';
       return `
-      <tr${trStyle}>
+      <tr data-idx="${i}" onclick="focusAuctionCase(${i})" style="cursor:pointer;${trStyle}" title="지도에서 이 사례 위치로 이동">
         <td class="num">${x.sale_date || '-'}</td>
         <td>${x.case_no || '-'}</td>
         <td${dongStyle}>${x.dong || ''} <span class="text-muted text-small" style="font-weight:400;">${x.use_type || ''}</span></td>
@@ -3069,6 +3069,23 @@ async function loadSimilarAuctionCases(p) {
 }
 
 let _auctionMap = null;
+let _auctionMarkers = {};   // 표 행 클릭 → 지도 이동용: 사례 index → {marker, latlng}
+
+// 표에서 사례 행을 클릭하면 지도를 그 사례 위치로 이동하고 팝업을 연다.
+function focusAuctionCase(i) {
+  const rec = _auctionMarkers[i];
+  const box = document.getElementById('simCasesMap');
+  if (!rec || !_auctionMap) {
+    // 좌표 변환 실패 등으로 마커가 없으면 지도만 보이게 스크롤
+    if (box && box.style.display !== 'none') box.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+  if (box && box.style.display !== 'none') box.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  _auctionMap.invalidateSize();
+  _auctionMap.setView(rec.latlng, 15, { animate: true });
+  rec.marker.openPopup();
+}
+
 // 낙찰사례 지도 — 본건(핑크 큰 점) + 사례 마커. auction_sales에 좌표가 없어 동 이름을
 // 좌표로 변환(V-World)해 '동 중심'에 찍고, 같은 동 겹침은 황금각 나선으로 흩뿌려 완화한다.
 async function _renderAuctionMap(p, items, targetDong) {
@@ -3105,6 +3122,7 @@ async function _renderAuctionMap(p, items, targetDong) {
 
   box.style.display = '';
   if (_auctionMap) { _auctionMap.remove(); _auctionMap = null; }
+  _auctionMarkers = {};   // 재조회 시 이전 마커 참조 초기화
   const center = origin || resp.coords[items.findIndex((x, i) => resp.coords[String(i)])];
   _auctionMap = L.map(box, { scrollWheelZoom: true }).setView(center, 13);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(_auctionMap);
@@ -3137,6 +3155,7 @@ async function _renderAuctionMap(p, items, targetDong) {
       .bindPopup(`<b>${dong} ${x.use_type || ''}</b><br>${x.sale_date || ''} · 낙찰가율 <b>${x.bid_rate != null ? x.bid_rate + '%' : '-'}</b><br>${x.area_sqm != null ? x.area_sqm + '㎡' : ''}${x.fail_count != null ? ' · 유찰 ' + x.fail_count + '회' : ''}<br><span style="color:#888;">동 중심 근사 위치</span><br><a href="${naverUrl(caseAddr)}" target="_blank" rel="noopener" style="color:${same ? '#CC00CC' : '#1A2540'};font-weight:600;">🔗 네이버 지도에서 보기</a>`);
     // 동 이름 글자 라벨: 동별 첫 마커에만(겹침 방지). 같은 동은 강조색.
     if (k === 1) m.bindTooltip(dong, { permanent: true, direction: 'top', offset: [0, -6], className: 'map-lbl' + (same ? ' map-lbl-same' : '') });
+    _auctionMarkers[i] = { marker: m, latlng: [lat, lng] };   // 표 행 클릭 → 이동용
     pts.push([lat, lng]);
   });
   if (pts.length > 1) _auctionMap.fitBounds(L.latLngBounds(pts).pad(0.15));
