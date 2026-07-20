@@ -2170,7 +2170,7 @@ function renderComparables() {
       </table>`;
       })()}
       ${compsFiltered.length ? `
-      <div id="compMapNote" class="text-small text-muted" style="margin-top:12px;">🗺️ <span style="color:#E6007E;font-weight:700;">본건(분홍)</span> · <span style="color:var(--kiwoom-pink-deep,#CC00CC);font-weight:700;">본건 단지(자주)</span> · <span style="color:#1A2540;">타 단지(네이비)</span> — 표의 <strong>행을 클릭</strong>하면 지도가 그 위치로 이동합니다. 마커를 클릭하면 <strong>네이버 지도로 이동</strong>합니다.</div>
+      <div id="compMapNote" class="text-small text-muted" style="margin-top:12px;">🗺️ <span style="color:#E6007E;font-weight:700;">본건(분홍)</span> · <span style="color:var(--kiwoom-pink-deep,#CC00CC);font-weight:700;">본건 단지(자주)</span> · <span style="color:#1A2540;">타 단지(네이비)</span> — <strong>매매 거래만</strong> 표시합니다(경매 낙찰가 추정용). 표의 <strong>매매 행을 클릭</strong>하면 지도가 그 위치로 이동, 마커 클릭 시 <strong>네이버 지도로 이동</strong>합니다.</div>
       <div style="margin-top:6px;"><button id="compBigBtn" class="btn btn-ghost" style="display:none;" onclick="openBigMap('comp')">🔎 지도 별도 창으로 크게 보기</button></div>
       <div id="compCasesMap" style="height:360px;border:1px solid var(--line);border-radius:6px;margin-top:4px;display:none;"></div>` : ''}
     </div>
@@ -2209,8 +2209,10 @@ async function _renderCompMap(p, comps) {
     if (d) return [rg.sido, rg.sigungu, d].filter(Boolean).join(' ');
     return [rg.sido, rg.sigungu, rg.dong].filter(Boolean).join(' ');
   };
-  const geoItems = comps.map((x, i) => ({ id: String(i), addr: compAddr(x) }))
-    .filter(it => it.addr.length > 0);
+  // 경매 낙찰가 추정용이므로 지도에는 '매매' 거래만 표시(전세·월세 제외). 표 index는 유지.
+  const geoItems = comps.map((x, i) => ({ id: String(i), addr: compAddr(x), type: x.type }))
+    .filter(it => it.type === '매매' && it.addr.length > 0)
+    .map(it => ({ id: it.id, addr: it.addr }));
   if (rg.dong) geoItems.push({ id: '__origin__', addr: [rg.sido, rg.sigungu, rg.dong].filter(Boolean).join(' ') });
   let resp;
   try {
@@ -2251,6 +2253,7 @@ async function _renderCompMap(p, comps) {
 
   const nameSeen = {};
   comps.forEach((x, i) => {
+    if (x.type !== '매매') return;   // 지도는 매매 거래만
     const c = resp.coords[String(i)];
     if (!c) return;
     const nm = x.name || (x.dong || '').split(' ')[0] || '거래';
@@ -2273,6 +2276,8 @@ async function _renderCompMap(p, comps) {
   });
   if (pts.length > 1) _compMap.fitBounds(L.latLngBounds(pts).pad(0.15));
   setTimeout(() => _compMap && _compMap.invalidateSize(), 100);
+  const saleShown = Object.keys(_compMarkers).length;
+  if (!saleShown && note) note.innerHTML = '🗺️ 이 목록에 <strong>매매 거래가 없어</strong> 본건만 표시됩니다. (지도는 매매 거래만 · 경매 낙찰가 추정용)';
   window._bigMapData = window._bigMapData || {};
   window._bigMapData.comp = { title: '거래사례 지도 · ' + (p.name || '본건'), center, zoom: 14, markers: bigMarkers };
   const btn = document.getElementById('compBigBtn'); if (btn) btn.style.display = '';
