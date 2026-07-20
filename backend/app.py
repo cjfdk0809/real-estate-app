@@ -3242,7 +3242,8 @@ def _detect_region_from_name(fname):
             break
     # 앱의 주소 파싱(_parseRegion)은 시도 다음 '첫 시/군/구 토큰'을 시군구로 본다.
     # (예: '경기도 성남시 분당구' → '성남시'). 조회가 맞물리도록 동일 규칙으로 첫 토큰 채택.
-    toks = _re.findall(r'[가-힣]{2,}?[시군구]', rest)
+    # {1,}?로 한 글자+구(중구·동구·서구·남구·북구)도 인식.
+    toks = _re.findall(r'[가-힣]{1,}?[시군구]', rest)
     sgg = toks[0] if toks else None
     return sido, sgg
 
