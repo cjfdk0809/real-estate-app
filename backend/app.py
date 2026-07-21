@@ -25,7 +25,7 @@ from dotenv import load_dotenv
 
 from lawd_codes import LAWD_CODES, find_lawd_code
 from registry_analyzer import registry_bp  # 🆕 등기부 분석 모듈
-from housing_price_api import housing_bp  # 🆕 공시가격 조회 모듈
+from housing_price_api import housing_bp, lookup_housing_price  # 🆕 공시가격 조회 모듈
 from complex_identifier import identify_complex, identify_dong  # 🆕 Day 8: 단지 교차검증
 
 # Supabase 클라이언트 (선택적 - 미설치/미설정 시에도 기존 기능은 정상 작동)
@@ -3574,6 +3574,116 @@ def admin_rate_stats():
             '<p class="muted" style="margin-top:14px">※ 삭제: 위 키 입력 후 해당 행의 [삭제] 클릭. (전체)=시도 통계는 삭제 버튼 없음.<br>'
             '※ 다른 시도는 <code>?sido=경기도</code> 처럼 바꿔서 조회하세요.</p>')
     return Response(html, mimetype='text/html; charset=utf-8')
+
+
+# ============================================================
+# 거래사례 × 공시비율 개별보정 시세 추정 (연립·다세대 핵심)
+#   본건 추정시세 = 본건공시 × 종합[ 사례실거래 ÷ 사례공시 ](=실거래/공시 배율)
+#   공시 절대값 대신 '배율'을 써 개별성(층·호·면적)은 본건 공시에, 시장수준은 배율에 반영.
+#   POST body: { origin:{addr,dong,ho,area,legal_dong}, sido, sigungu, comps:[{price(만원),jibun,dong(법정동),area,date,name,floor,type}] }
+# ============================================================
+_CA_AREA_BW = 0.15          # 면적 근접 대역폭
+_CA_RECENCY_HALFLIFE = 18   # 최근성 반감기(개월)
+_CA_RATIO_MIN, _CA_RATIO_MAX = 0.5, 5.0   # 실거래/공시 배율 상식 범위(벗어나면 제외)
+
+
+@app.route('/api/valuation/comp-adjusted', methods=['POST'])
+def valuation_comp_adjusted():
+    import math
+    import datetime as _dtv
+    data = request.get_json(force=True, silent=True) or {}
+    origin = data.get('origin') or {}
+    sido = (data.get('sido') or '').strip()
+    sigungu = (data.get('sigungu') or '').strip()
+    o_area = origin.get('area')
+    o_legal = (origin.get('legal_dong') or '').strip()
+    comps = data.get('comps') or []
+
+    # 1) 본건 공시가격 (호 단위, 정밀)
+    o = lookup_housing_price(addr=(origin.get('addr') or ''), dong=(origin.get('dong') or ''),
+                             ho=(origin.get('ho') or ''), area=str(o_area or ''))
+    if not o.get('found') or not o.get('housing_price'):
+        return jsonify({'available': False, 'reason': '본건 공시가격을 찾지 못했습니다. ' + (o.get('reason') or ''),
+                        'origin_lookup': o})
+    o_gongsi = float(o['housing_price'])   # 원
+
+    try:
+        o_area_f = float(o_area)
+    except (TypeError, ValueError):
+        o_area_f = None
+    today = _dtv.date.today()
+
+    def _months_ago(d):
+        try:
+            y, m = int(str(d)[0:4]), int(str(d)[5:7])
+            return max(0, (today.year - y) * 12 + (today.month - m))
+        except Exception:
+            return 999
+
+    out_comps, pairs, fpairs = [], [], []   # pairs=(배율,weight) for 가중분위
+    for c in comps:
+        if (c.get('type') or '매매') != '매매':
+            continue
+        price = c.get('price')
+        c_area = c.get('area')
+        c_dong = (c.get('dong') or '').strip()      # 법정동
+        jibun = (c.get('jibun') or '').strip()
+        rec = {'name': c.get('name'), 'date': c.get('date'), 'area': c_area, 'floor': c.get('floor'),
+               'price': price, 'gongsi': None, 'ratio': None, 'weight': None, 'adjusted': None,
+               'used': False, 'reason': ''}
+        if not (price and c_area and jibun):
+            rec['reason'] = '지번/면적/가격 누락'
+            out_comps.append(rec); continue
+        addr = ' '.join(x for x in [sido, sigungu, c_dong, jibun] if x)
+        cg = lookup_housing_price(addr=addr, area=str(c_area))
+        if not cg.get('found') or not cg.get('housing_price'):
+            rec['reason'] = '사례 공시가격 없음'
+            out_comps.append(rec); continue
+        c_gongsi = float(cg['housing_price'])
+        ratio = (float(price) * 10000.0) / c_gongsi     # 실거래(만원→원)/공시(원)
+        rec['gongsi'] = int(c_gongsi)
+        rec['ratio'] = round(ratio, 3)
+        if ratio < _CA_RATIO_MIN or ratio > _CA_RATIO_MAX:
+            rec['reason'] = f'배율 비정상({round(ratio,2)})'
+            out_comps.append(rec); continue
+        # 가중치: 최근성 × 면적근접 × 같은 법정동
+        w = math.exp(-_months_ago(c.get('date')) / float(_CA_RECENCY_HALFLIFE))
+        if o_area_f and c_area:
+            z = (float(c_area) - o_area_f) / (o_area_f * _CA_AREA_BW)
+            w *= math.exp(-0.5 * z * z)
+        if o_legal and c_dong:
+            w *= 1.0 if c_dong == o_legal else 0.6
+        rec['weight'] = round(w, 3)
+        rec['adjusted'] = int(round(o_gongsi * ratio / 10000.0))   # 만원
+        rec['used'] = True
+        out_comps.append(rec)
+        pairs.append((ratio, w))
+
+    if not pairs:
+        return jsonify({'available': False, 'reason': '보정에 쓸 유효 거래사례가 없습니다(사례 공시가격 매칭 실패).',
+                        'origin_gongsi': int(o_gongsi), 'comps': out_comps})
+
+    ratio_star = _weighted_percentile(pairs, 0.5)
+    r_lo = _weighted_percentile(pairs, 0.25)
+    r_hi = _weighted_percentile(pairs, 0.75)
+    sw = sum(w for _, w in pairs); sw2 = sum(w * w for _, w in pairs)
+    neff = round((sw * sw / sw2), 1) if sw2 > 0 else 0.0
+
+    est = int(round(o_gongsi * ratio_star / 10000.0))          # 만원
+    est_lo = int(round(o_gongsi * r_lo / 10000.0))
+    est_hi = int(round(o_gongsi * r_hi / 10000.0))
+    return jsonify({
+        'available': True,
+        'origin_gongsi': int(o_gongsi),                 # 원
+        'origin_gongsi_manwon': int(round(o_gongsi / 10000.0)),
+        'origin_matched': o.get('matched'),
+        'ratio': ratio_star, 'ratio_lo': r_lo, 'ratio_hi': r_hi,
+        'estimate_manwon': est, 'estimate_lo_manwon': est_lo, 'estimate_hi_manwon': est_hi,
+        'n_used': len(pairs), 'n_total': len([c for c in comps if (c.get('type') or '매매') == '매매']),
+        'neff': neff,
+        'comps': out_comps,
+        'method': '거래사례 실거래/공시 배율 × 본건 공시가격 (개별성 보정)',
+    })
 
 
 # ============================================================

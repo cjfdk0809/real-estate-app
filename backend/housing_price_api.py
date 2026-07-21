@@ -100,29 +100,15 @@ def _lookup_bjd_code(sigungu, dong):
 # ------------------------------------------------------------
 # 엔드포인트
 # ------------------------------------------------------------
-@housing_bp.route('/api/housing-price')
-def housing_price():
-    """본건 공동주택 공시가격 조회.
-
-    Query params:
-        addr  : 지번주소 (예: '경기 하남시 감이동 530')  ← 권장
-        dong  : 동 (예: '1208' 또는 '1208동')
-        ho    : 호 (예: '1904')
-        area  : 전용면적 ㎡ (예: '84.92')
-        (선택) bjd_code, bonbun, bubun 를 직접 넘기면 주소 파싱을 건너뜀
-    """
+def lookup_housing_price(addr='', dong='', ho='', area='', bjd_code='', bonbun='', bubun=''):
+    """본건/사례 공동주택 공시가격 조회 (재사용 가능한 함수).
+    반환: {found, housing_price(원), matched{...}, candidates_in_jibun, reason?}"""
     if not _sb:
-        return jsonify({'error': 'Supabase 미연결 (SUPABASE_URL/KEY 확인)'}), 503
+        return {'found': False, 'reason': 'Supabase 미연결'}
+    addr = (addr or '').strip(); dong = (dong or '').strip(); ho = (ho or '').strip()
+    area = (area or '').strip(); bjd_code = (bjd_code or '').strip()
+    bonbun = (bonbun or '').strip(); bubun = (bubun or '').strip()
 
-    addr     = request.args.get('addr', '').strip()
-    dong     = request.args.get('dong', '').strip()
-    ho       = request.args.get('ho', '').strip()
-    area     = request.args.get('area', '').strip()
-    bjd_code = request.args.get('bjd_code', '').strip()
-    bonbun   = request.args.get('bonbun', '').strip()
-    bubun    = request.args.get('bubun', '').strip()
-
-    # 1) 주소 파싱 (bjd_code/본번이 직접 안 들어온 경우)
     sigungu = dongli = None
     if addr:
         sigungu, dongli, p_bonbun, p_bubun = _parse_jibun(addr)
@@ -132,34 +118,26 @@ def housing_price():
             bubun = p_bubun or '0'
     if not bjd_code and dongli:
         bjd_code = _lookup_bjd_code(sigungu, dongli) or ''
-
     if not bonbun:
-        return jsonify({'found': False, 'reason': '지번(본번)을 확인할 수 없습니다.',
-                        'addr': addr}), 200
+        return {'found': False, 'reason': '지번(본번)을 확인할 수 없습니다.', 'addr': addr}
 
-    # 2) housing_price 후보 조회 (지번 단위)
     try:
         q = _sb.table('housing_price').select(
             'danji_name, dong_name, ho_name, exclusive_area, '
-            'housing_price, bjd_code, bonbun, bubun, road_addr'
-        )
+            'housing_price, bjd_code, bonbun, bubun, road_addr')
         if bjd_code:
-            q = q.eq('bjd_code', bjd_code)          # 인덱스 사용 (빠름)
+            q = q.eq('bjd_code', bjd_code)
         elif dongli:
-            q = q.eq('dongli', dongli)              # 폴백
+            q = q.eq('dongli', dongli)
         q = (q.eq('bonbun', str(int(bonbun)))
-              .eq('bubun', str(int(bubun or '0')))
-              .limit(3000))
+              .eq('bubun', str(int(bubun or '0'))).limit(3000))
         rows = q.execute().data or []
     except Exception as e:
-        return jsonify({'error': f'조회 실패: {e}'}), 502
-
+        return {'found': False, 'reason': f'조회 실패: {e}'}
     if not rows:
-        return jsonify({'found': False,
-                        'reason': '해당 지번의 공시가격 데이터가 없습니다.',
-                        'bjd_code': bjd_code, 'bonbun': bonbun, 'bubun': bubun}), 200
+        return {'found': False, 'reason': '해당 지번의 공시가격 데이터가 없습니다.',
+                'bjd_code': bjd_code, 'bonbun': bonbun, 'bubun': bubun}
 
-    # 3) 동/호 숫자 정규화 매칭
     cands = rows
     t_dong, t_ho = _digits(dong), _digits(ho)
     if t_dong:
@@ -170,32 +148,34 @@ def housing_price():
         f = [r for r in cands if _digits(r.get('ho_name')) == t_ho]
         if f:
             cands = f
-
-    # 4) 전용면적 가장 가까운 순
     if area:
         try:
             fa = float(area)
             cands = sorted(cands, key=lambda r: abs(float(r.get('exclusive_area') or 0) - fa))
         except ValueError:
             pass
-
     if not cands:
-        return jsonify({'found': False, 'reason': '동/호 매칭 실패',
-                        'candidates_count': len(rows)}), 200
-
+        return {'found': False, 'reason': '동/호 매칭 실패', 'candidates_count': len(rows)}
     best = cands[0]
-    return jsonify({
+    return {
         'found': True,
-        'housing_price': best.get('housing_price'),     # 원 단위 정수
+        'housing_price': best.get('housing_price'),
         'matched': {
-            'danji_name': best.get('danji_name'),
-            'dong_name': best.get('dong_name'),
-            'ho_name': best.get('ho_name'),
-            'exclusive_area': best.get('exclusive_area'),
-            'road_addr': best.get('road_addr'),
-            'bjd_code': best.get('bjd_code'),
-            'bonbun': best.get('bonbun'),
-            'bubun': best.get('bubun'),
+            'danji_name': best.get('danji_name'), 'dong_name': best.get('dong_name'),
+            'ho_name': best.get('ho_name'), 'exclusive_area': best.get('exclusive_area'),
+            'road_addr': best.get('road_addr'), 'bjd_code': best.get('bjd_code'),
+            'bonbun': best.get('bonbun'), 'bubun': best.get('bubun'),
         },
         'candidates_in_jibun': len(rows),
-    }), 200
+    }
+
+
+@housing_bp.route('/api/housing-price')
+def housing_price():
+    """본건 공동주택 공시가격 조회 (얇은 라우트 — lookup_housing_price 위임)."""
+    r = lookup_housing_price(
+        addr=request.args.get('addr', ''), dong=request.args.get('dong', ''),
+        ho=request.args.get('ho', ''), area=request.args.get('area', ''),
+        bjd_code=request.args.get('bjd_code', ''), bonbun=request.args.get('bonbun', ''),
+        bubun=request.args.get('bubun', ''))
+    return jsonify(r), 200
