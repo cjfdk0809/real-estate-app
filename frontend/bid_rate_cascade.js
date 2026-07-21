@@ -656,9 +656,11 @@
         : '동일면적 거래 없음';
       var card = document.createElement('div');
       card.style.cssText = 'background:linear-gradient(135deg, var(--kiwoom-navy-soft) 0%, #d4dcf0 100%);border:1px solid rgba(30,42,68,.18);border-left:4px solid var(--kiwoom-navy);border-radius:8px;padding:22px 26px;margin-bottom:16px;';
+      var ppa = (info.avg && area) ? Math.round(info.avg / area) : null;   // 전용면적당(㎡당) 단가(만원)
       card.innerHTML =
         '<div style="font-size:11px;letter-spacing:.18em;color:var(--kiwoom-navy);text-transform:uppercase;font-weight:700;margin-bottom:8px;">📊 평균 매매가 · AVERAGE SALE PRICE (동일 면적대)</div>'
-        + '<div style="font-family:var(--mono);font-size:32px;font-weight:800;color:var(--kiwoom-navy-deep);line-height:1.15;">' + won(info.avg) + '</div>'
+        + '<div style="font-family:var(--mono);font-size:32px;font-weight:800;color:var(--kiwoom-navy-deep);line-height:1.15;">' + won(info.avg)
+        + (ppa ? ' <span style="font-size:15px;font-weight:700;color:var(--ink-soft,#5b6473);">· ㎡당 ' + won(ppa) + '</span>' : '') + '</div>'
         + '<div style="font-size:13px;color:var(--ink-soft,#5b6473);margin-top:6px;font-family:var(--mono);">' + sub + '</div>';
       nplCard.replaceWith(card);
     }

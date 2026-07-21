@@ -2010,8 +2010,9 @@ function renderComparables() {
   const allComps = (state.comparables[p.id] || []).slice().sort((a,b) => b.date.localeCompare(a.date));
   const danjiList = [...new Set(allComps.map(x => x.name).filter(Boolean))].sort();
 
-  // [핵심] 단지 선택값: 저장된 선택 우선, 없으면 본건 단지명이 목록에 있으면 그것, 아니면 전체
-  let curDanji = window._compsDanjiFilter || (danjiList.includes(p.name) ? p.name : '전체');
+  // [핵심] 단지 선택값: 저장된 선택 우선, 없으면 '전체'가 기본.
+  //   (수집한 시군구 다세대 전체를 보여주고 평균·개별보정에 쓰기 위함 — 본건 단지로 좁히지 않는다)
+  let curDanji = window._compsDanjiFilter || '전체';
   // 현재 물건에 없는 단지명이 남아있으면(물건 전환 등) 전체로 되돌림
   if (curDanji !== '전체' && !danjiList.includes(curDanji)) curDanji = '전체';
 
@@ -2059,6 +2060,27 @@ function renderComparables() {
     _acBanner = `<div style="margin-bottom:16px;padding:12px 16px;background:#fff4e5;border:1px solid #ffd9a8;border-radius:8px;color:#92400e;font-size:14px;">⚠️ 실거래 자동수집을 완료하지 못했습니다 (${_why}). 상단 <strong>⚡ 국토부 자동수집</strong> 버튼으로 직접 수집해 주세요.</div>`;
   }
 
+  // 🆕 공시가격 개별보정 추정시세(본건 대표값) — 매매 유사사례 상위 N건의 공시배율 가중평균.
+  //   comps가 있으면 백엔드에서 프리페치(1회) 후 재렌더. 결과를 상단에 요약 표시.
+  if (sales.length && typeof prefetchCompAdjusted === 'function' && !(window._compAdj || {})[p.id]) {
+    prefetchCompAdjusted(p).then(() => {
+      if (state.currentPropertyId === p.id && state.currentView === 'comparables') renderComparables();
+    });
+  }
+  const _ca = (window._compAdj || {})[p.id];
+  let _caBanner = '';
+  if (_ca && _ca.available && _ca.estimate_manwon) {
+    const _u = _ca.unit_ppa_manwon ? ` · 선정사례 ㎡당 <strong>${fmt.won(_ca.unit_ppa_manwon)}</strong>/㎡` : '';
+    _caBanner = `<div style="margin-bottom:16px;padding:14px 18px;background:linear-gradient(135deg,#fff0f7 0%,#ffe6f3 100%);border:1px solid #ffb3d9;border-left:4px solid var(--kiwoom-pink,#E6007E);border-radius:8px;">
+      <div style="font-size:11px;letter-spacing:.14em;color:var(--kiwoom-pink,#E6007E);font-weight:700;text-transform:uppercase;margin-bottom:6px;">📐 공시가격 개별보정 추정시세 · 본건 대표값</div>
+      <div style="font-family:var(--mono);font-size:30px;font-weight:800;color:var(--kiwoom-pink-deep,#b3005f);line-height:1.1;">${fmt.won(_ca.estimate_manwon)}</div>
+      <div style="font-size:13px;color:var(--ink-soft);margin-top:6px;">본건 공시 <strong>${fmt.won(_ca.origin_gongsi_manwon)}</strong> × 공시배율 <strong>×${_ca.ratio}</strong> <span class="text-muted">(유사도 상위 ${_ca.n_used}/${_ca.n_total}건 매매 가중평균)</span>${_u}</div>
+      <div class="text-small text-muted" style="margin-top:3px;">범위 ${fmt.won(_ca.estimate_lo_manwon)} ~ ${fmt.won(_ca.estimate_hi_manwon)} · 유사도순위 ①동일건물 ②거래일 ③사용승인일 ④면적 ⑤지역 · 추정낙찰가(05)에 반영</div>
+    </div>`;
+  } else if (_ca && !_ca.available && sales.length) {
+    _caBanner = `<div style="margin-bottom:16px;padding:12px 16px;background:#fff4e5;border:1px solid #ffd9a8;border-radius:8px;color:#92400e;font-size:13px;">ℹ️ 공시 개별보정 미적용 — ${_ca.reason || '조건 부족'}. (거래사례 평균으로 추정합니다. 지번·공시가격 매칭이 안 되는 경우 재수집을 권장합니다.)</div>`;
+  }
+
   c.innerHTML = `
     <div class="page-head">
       <div class="page-eyebrow">거래사례 비교 · Comparable Sales</div>
@@ -2066,6 +2088,7 @@ function renderComparables() {
       <div class="page-sub">동일 단지·동일 면적대 거래를 자동 필터링하여 본건 시세를 추정합니다. <strong style="color:var(--kiwoom-navy);">(현재 분석 대상: ${danjiTag})</strong></div>
     </div>
     ${_acBanner}
+    ${_caBanner}
 
     <div class="grid grid-4 mb-24">
       <div class="stat-card">
@@ -2839,12 +2862,15 @@ async function prefetchCompAdjusted(p) {
     return;
   }
   const comps = allc.map(x => ({ price: x.price, jibun: x.jibun, dong: (x.dong || '').split(' ')[0],
-    area: x.area, date: x.date, name: x.name, floor: x.floor, type: x.type }));
+    area: x.area, date: x.date, name: x.name, floor: x.floor, type: x.type,
+    build_year: x.build_year || '' }));   // 🆕 사용승인일 유사도(③)용
   try {
     const r = await fetch(`${window.BACKEND_URL || ''}/api/valuation/comp-adjusted`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ origin: { addr: p.addrLot, dong: p.building, ho: p.unit,
-        area: p.exclusiveArea, legal_dong: rg.dong }, sido: rg.sido, sigungu: rg.sigungu, comps }),
+        area: p.exclusiveArea, legal_dong: rg.dong,
+        name: p.name, build_year: p.completionDate || p.build_year || '' },   // 🆕 ①동일건물·③사용승인일용
+        sido: rg.sido, sigungu: rg.sigungu, comps }),
     });
     window._compAdj[p.id] = await r.json();
   } catch (e) { window._compAdj[p.id] = { available: false, reason: '조회 오류: ' + e.message }; }
@@ -6155,6 +6181,8 @@ function _importCompItems(id, items) {
       building: x.building || '', unit: '', area: x.area, floor: x.floor, price: x.price,
       monthly: x.monthly || undefined, memo: x.memo || '',
       build_year: x.build_year || '', house_type: x.house_type || '',
+      // 🆕 공시 개별보정(comp-adjusted)에 필요 — 지번·법정동을 반드시 보존
+      jibun: x.jibun || '', dong: x.dong || '',
       lat: x._lat != null ? x._lat : undefined, lng: x._lng != null ? x._lng : undefined,
       dist_m: x._dist != null ? Math.round(x._dist) : undefined, source: 'api'
     });
