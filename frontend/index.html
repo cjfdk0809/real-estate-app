@@ -4491,11 +4491,15 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
 
   // 본건 유형 → 거래사례 데이터셋 분기 (아파트/오피스텔/연립다세대/단독다가구)
   const _useRaw = (propertyData.use || '').replace(/\s/g, '');
+  const _nmRaw = (propertyData.name || '').replace(/\s/g, '');
   let kind = 'apt';
   if (_useRaw.includes('오피스텔')) kind = 'offi';
   else if (_useRaw.includes('다세대') || _useRaw.includes('연립')) kind = 'rh';
   else if (_useRaw.includes('단독') || _useRaw.includes('다가구')) kind = 'sh';
-  else if (_useRaw === '' || _useRaw.includes('아파트')) kind = 'apt';
+  else if (/빌라|연립|다세대/.test(_nmRaw) || /빌$/.test(_nmRaw)) kind = 'rh';   // …빌/…빌라 명칭
+  else if (_useRaw.includes('아파트')) kind = 'apt';
+  else if (_useRaw.includes('공동주택')) kind = 'rh';   // 아파트 명시 없는 공동주택 → 연립·다세대
+  else if (_useRaw === '') kind = 'apt';
   else kind = null;  // 공장/창고·토지·근린상가·기타 → 미지원
   const _EP = { apt: 'bulk', offi: 'offi-bulk', rh: 'rh-bulk', sh: 'sh-bulk' };
   const _KINDLABEL = { apt: '아파트', offi: '오피스텔', rh: '연립·다세대', sh: '단독·다가구' };
@@ -5914,12 +5918,8 @@ async function openApiImport() {
   });
   const _m = document.getElementById('apiMonths'); if (_m) _m.value = 24;   // 조회 24개월 고정
   if (p) {
-    // 건물유형 자동선택 (도시형생활주택·빌라 → 연립·다세대)
-    const _u = (p.use || p.usage || '').replace(/\s/g, '');
-    let _kind = 'apt';
-    if (/오피스텔/.test(_u)) _kind = 'offi';
-    else if (/다세대|연립|빌라|도시형생활|도생/.test(_u)) _kind = 'rh';
-    else if (/단독|다가구/.test(_u)) _kind = 'sh';
+    // 건물유형 자동선택 (도시형생활·빌라·공동주택 → 연립·다세대). 공통 판정: _guessUseKind
+    const _kind = _guessUseKind(p);
     const _sel = document.getElementById('apiUseType');
     if (_sel) { _sel.value = _kind; if (typeof _onApiUseTypeChange === 'function') _onApiUseTypeChange(); }
     // 법정동코드 자동확정 — 본건 시도로 서울/부산 강서구 등 동명 시군구를 구분해 자동 선택
@@ -6242,16 +6242,27 @@ function _autoWidenComps(base, p) {
   return { items, note };
 }
 
+// 본건 용도·명칭으로 국토부 데이터셋 유형(apt/offi/rh/sh) 판정. openApiImport·autoCollect 공통.
+//   핵심: '공동주택'(아파트 명시 없는 일반 공동주택)과 '…빌/…빌라' 명칭은 연립·다세대(rh)로 본다.
+//   (등기부상 '공동주택(연립주택)'이 앱에는 주용도 '공동주택'으로만 들어오는 경우가 많아 아파트로 오판되던 문제 해결)
+function _guessUseKind(p) {
+  const u = ((p && (p.use || p.usage)) || '').replace(/\s/g, '');
+  const nm = ((p && p.name) || '').replace(/\s/g, '');
+  if (/오피스텔/.test(u) || /오피스텔/.test(nm)) return 'offi';
+  if (/단독|다가구/.test(u)) return 'sh';
+  if (/다세대|연립|빌라|도시형생활|도생/.test(u)) return 'rh';
+  if (/빌라|연립|다세대|빌리지/.test(nm) || /빌$/.test(nm)) return 'rh';   // …빌/…빌라 명칭
+  if (/아파트/.test(u) || /아파트/.test(nm)) return 'apt';
+  if (/공동주택/.test(u)) return 'rh';   // 아파트 명시 없는 공동주택 → 연립·다세대(본 시스템 대상)
+  return 'apt';
+}
+
 // 본건 유형·지역·24개월로 국토부 실거래를 자동 수집·등록. 반환 {ok, count?, reason?}.
 // (모달 없이 동작하므로 반경/지오코딩은 생략 — 배경 자동수집이라 거리정보는 붙지 않음.)
 async function autoCollectComparables(p) {
   if (!p) return { ok: false, reason: 'no-property' };
-  // 유형 결정 (openApiImport와 동일 규칙)
-  const _u = (p.use || p.usage || '').replace(/\s/g, '');
-  let kind = 'apt';
-  if (/오피스텔/.test(_u)) kind = 'offi';
-  else if (/다세대|연립|빌라|도시형생활|도생/.test(_u)) kind = 'rh';
-  else if (/단독|다가구/.test(_u)) kind = 'sh';
+  // 유형 결정 (openApiImport와 동일 규칙: _guessUseKind)
+  const kind = _guessUseKind(p);
   const endpoint = ({ apt: 'bulk', offi: 'offi-bulk', rh: 'rh-bulk', sh: 'sh-bulk' })[kind] || 'bulk';
   // 법정동코드 결정 (본건 시도로 동명 시군구 구분)
   const rg = (typeof _simRegion === 'function') ? _simRegion(p.addrLot || p.addrRoad || '') : {};
