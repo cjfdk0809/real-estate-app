@@ -5994,11 +5994,13 @@ async function fetchTransactions() {
     });
 
     // 🆕 자동 점진 확대: 본건 면적·건축연도 기준 (면적±%, 건축±년)을 넓혀가며 5건 이상 확보
-    //    면적 1→3→5→7→10% · 건축연도 ±3→5→7→10년. 담당자가 면적을 직접 지정하면 자동확대 생략.
+    //    면적 1→3→…→30% · 건축연도 ±3→…→25년. 담당자가 면적을 직접 지정하면 자동확대 생략.
+    //    ⚠️ 작은/희소 면적(예: 전용 23㎡ 다세대)은 좁은 밴드에 사례가 없어 0건이 될 수 있으므로,
+    //       확대 끝까지 0건이면 (1) 연도조건 제거 → (2) 전체 표시 순으로 폴백해 데이터가 사라지지 않게 한다.
     const _pOrigin = state.properties[state.currentPropertyId] || {};
     const oArea = Number(_pOrigin.exclusiveArea) || null;
     const oYear = _originYear(_pOrigin);
-    const LADDER = [[0.01, 3], [0.03, 5], [0.05, 7], [0.07, 10], [0.10, 10]];
+    const LADDER = [[0.01, 3], [0.03, 5], [0.05, 7], [0.07, 10], [0.10, 10], [0.15, 15], [0.20, 20], [0.30, 25]];
     const TARGET = 5;
     let items = base, _autoNote = '';
     if (oArea && !uMinArea && !uMaxArea) {
@@ -6013,7 +6015,15 @@ async function fetchTransactions() {
         items = f; used = [aTol, yTol];
         if (f.length >= TARGET) break;
       }
-      if (used) _autoNote = ` · 자동확대 면적±${Math.round(used[0] * 100)}%${oYear ? ` · 건축±${used[1]}년` : ''} (본건 ${oArea}㎡${oYear ? '·' + oYear + '년' : ''})`;
+      // 폴백1: 면적+연도로 0건이면 연도 조건을 버리고 면적(±최대)만으로 재시도
+      if (items.length === 0 && oYear) {
+        const wa = LADDER[LADDER.length - 1][0];
+        const f = base.filter(x => { const a = Number(x.area); return a && Math.abs(a - oArea) / oArea <= wa; });
+        if (f.length) { items = f; used = [wa, null]; }
+      }
+      // 폴백2: 그래도 0건이면 면적 자동확대를 포기하고 전체 표시(수천 건이 0건으로 사라지는 것 방지)
+      if (items.length === 0) { items = base; used = null; _autoNote = ` · 면적 근접 사례 없음 → 전체 ${base.length}건 표시`; }
+      else if (used) _autoNote = ` · 자동확대 면적±${Math.round(used[0] * 100)}%${(oYear && used[1]) ? ` · 건축±${used[1]}년` : ''} (본건 ${oArea}㎡${oYear ? '·' + oYear + '년' : ''})`;
     }
     window._apiAutoNote = _autoNote;
     const _filtered = items.length !== d.count;
