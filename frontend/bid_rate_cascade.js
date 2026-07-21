@@ -59,21 +59,21 @@
   function _useFactor(use) {
     var u = (use || '').replace(/\s/g, '');
     if (/오피스텔/.test(u)) return USE_FACTOR.offi;
-    if (/다세대|연립|빌라/.test(u)) return USE_FACTOR.rh;
+    if (/다세대|연립|빌라|도시형생활|도생/.test(u)) return USE_FACTOR.rh;
     if (/단독|다가구/.test(u)) return USE_FACTOR.sh;
     return USE_FACTOR.apt;
   }
   function _useLabel(use) {
     var u = (use || '').replace(/\s/g, '');
     if (/오피스텔/.test(u)) return '오피스텔';
-    if (/다세대|연립|빌라/.test(u)) return '연립·다세대';
+    if (/다세대|연립|빌라|도시형생활|도생/.test(u)) return '연립·다세대';
     if (/단독|다가구/.test(u)) return '단독·다가구';
     return '아파트';
   }
   function _useGroup(use) {
     var u = (use || '').replace(/\s/g, '');
     if (/오피스텔/.test(u)) return 'offi';
-    if (/다세대|연립|빌라/.test(u)) return 'rh';
+    if (/다세대|연립|빌라|도시형생활|도생/.test(u)) return 'rh';
     if (/단독|다가구/.test(u)) return 'sh';
     return 'apt';
   }
@@ -108,7 +108,7 @@
   }
 
   function _realStat(p) {
-    var g = _useGroup(p.use);
+    var g = _useGroup(p.use || p.usage);
     var rg = _parseRegion(p.addrLot || p.addrRoad || '');
     var v = _realCache[_rsKey(g, rg.sido, rg.sigungu, rg.dong)];
     return v || null;
@@ -117,7 +117,7 @@
   // 물건 선택/저장 시 호출 → 실측 통계 미리 로드 (없으면 조용히 근사계수로 폴백)
   async function prefetchRealRates(p) {
     if (!p || typeof window.BACKEND_URL !== 'string') return;
-    var g = _useGroup(p.use);
+    var g = _useGroup(p.use || p.usage);
     var rg = _parseRegion(p.addrLot || p.addrRoad || '');
     var key = _rsKey(g, rg.sido, rg.sigungu, rg.dong);
     if (key in _realCache) return;
@@ -254,7 +254,7 @@
     else { tier = 'default'; center = CFG.def.mid; }
 
     // 용도 계수 (근사) — 실측 통계가 없을 때만 적용. 실측이 있으면 그 값을 그대로 쓴다.
-    var useFactor = _useFactor(p.use);
+    var useFactor = _useFactor(p.use || p.usage);
     var real = _realStat(p);   // {median, p25, p75, n, ..., dongRate, dongN, dongRefFail} | null
     var usedReal = false;
     var failDelta = 0, failAdj = null;   // 유찰횟수 보정(실측 단계 전용)
@@ -318,17 +318,17 @@
     switch (tier) {
       case 'same_complex': scope = '본건 동일단지 낙찰사례'; break;
       case 'sigungu':      scope = (targetSg || '시군구') + ' 낙찰사례'; break;
-      case 'sim':          scope = _useLabel(p.use) + ' 유사도 가중 낙찰가율 · '
+      case 'sim':          scope = _useLabel(p.use || p.usage) + ' 유사도 가중 낙찰가율 · '
                                  + (targetSg || real.sigungu || real.region || '') + ' 등 (면적·지역 근접, 유효표본 ' + round1(real.simNeff) + ')'; break;
-      case 'stat_dong':    scope = _useLabel(p.use) + ' 실측 낙찰가율 · '
+      case 'stat_dong':    scope = _useLabel(p.use || p.usage) + ' 실측 낙찰가율 · '
                                  + (real.dongName || '동') + ' (동 단위, n=' + real.dongN + ')'; break;
-      case 'stat_real':    scope = _useLabel(p.use) + ' 실측 낙찰가율 · '
+      case 'stat_real':    scope = _useLabel(p.use || p.usage) + ' 실측 낙찰가율 · '
                                  + (real.derivation || ((real.region || '전국') + ' (n=' + real.n + ')')); break;
       case 'stat_sigungu': scope = (targetSg || '시군구') + ' 통계'; break;
       case 'stat_national':scope = '전국 평균'; break;
       default:             scope = '기본값(지역 미확인)';
     }
-    if (!usedReal && useFactor !== 1) scope += ' · 용도보정(근사) ' + _useLabel(p.use) + '(×' + useFactor + ')';
+    if (!usedReal && useFactor !== 1) scope += ' · 용도보정(근사) ' + _useLabel(p.use || p.usage) + '(×' + useFactor + ')';
 
     if (effN == null) effN = sampleN;   // 동일단지·시군구 사례는 사례수로 신뢰도 산정
     var conf = _confGrade(effN);
@@ -336,7 +336,7 @@
     return { tier: tier, center: sc.mid, scenarios: sc, isStat: isStat, asof: asof,
       sampleN: sampleN, scope: scope, targetSigungu: targetSg, targetSido: targetSido,
       sameComplexN: same.length, sigunguN: sg.length,
-      useFactor: useFactor, useLabel: _useLabel(p.use), usedReal: usedReal,
+      useFactor: useFactor, useLabel: _useLabel(p.use || p.usage), usedReal: usedReal,
       failAdj: failAdj, effN: effN, conf: conf,
       rangeLo: sc.con, rangeHi: sc.agg };
   }
