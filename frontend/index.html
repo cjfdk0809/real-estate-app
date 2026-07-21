@@ -2048,12 +2048,24 @@ function renderComparables() {
   const _compTypeF = window._compsFilter || '전체';
   const compsFiltered = (_compTypeF === '전체') ? comps : comps.filter(x => x.type === _compTypeF);
 
+  // 🆕 거래사례가 0건이면 국토부 실거래 자동수집(버튼 없이, 물건당 1회). 진행상태로 배너 표시.
+  _maybeAutoCollect(p);
+  const _acSt = (window._autoCollectState || {})[p.id] || '';
+  let _acBanner = '';
+  if (_acSt === 'collecting') {
+    _acBanner = `<div style="margin-bottom:16px;padding:12px 16px;background:#eef4ff;border:1px solid #cfe0ff;border-radius:8px;color:#1e3a8a;font-size:14px;">⏳ 국토부 실거래 <strong>자동수집 중</strong>… 24개월 조회라 20~40초 걸립니다. 완료되면 표·차트·추정낙찰가에 자동 반영됩니다.</div>`;
+  } else if (_acSt.indexOf('fail:') === 0 || _acSt === 'noregion') {
+    const _why = _acSt === 'noregion' ? '본건 주소에서 시군구를 읽지 못함' : _acSt.slice(5);
+    _acBanner = `<div style="margin-bottom:16px;padding:12px 16px;background:#fff4e5;border:1px solid #ffd9a8;border-radius:8px;color:#92400e;font-size:14px;">⚠️ 실거래 자동수집을 완료하지 못했습니다 (${_why}). 상단 <strong>⚡ 국토부 자동수집</strong> 버튼으로 직접 수집해 주세요.</div>`;
+  }
+
   c.innerHTML = `
     <div class="page-head">
       <div class="page-eyebrow">거래사례 비교 · Comparable Sales</div>
       <h1 class="page-title">${p.name}</h1>
       <div class="page-sub">동일 단지·동일 면적대 거래를 자동 필터링하여 본건 시세를 추정합니다. <strong style="color:var(--kiwoom-navy);">(현재 분석 대상: ${danjiTag})</strong></div>
     </div>
+    ${_acBanner}
 
     <div class="grid grid-4 mb-24">
       <div class="stat-card">
@@ -5993,37 +6005,13 @@ async function fetchTransactions() {
       return true;
     });
 
-    // 🆕 자동 점진 확대: 본건 면적·건축연도 기준 (면적±%, 건축±년)을 넓혀가며 5건 이상 확보
-    //    면적 1→3→…→30% · 건축연도 ±3→…→25년. 담당자가 면적을 직접 지정하면 자동확대 생략.
-    //    ⚠️ 작은/희소 면적(예: 전용 23㎡ 다세대)은 좁은 밴드에 사례가 없어 0건이 될 수 있으므로,
-    //       확대 끝까지 0건이면 (1) 연도조건 제거 → (2) 전체 표시 순으로 폴백해 데이터가 사라지지 않게 한다.
+    // 🆕 자동 점진 확대(면적±%·건축±년) + 0건 폴백 — 자동수집·수동수집 공통(_autoWidenComps).
+    //    담당자가 면적을 직접 지정하면(면적 override) 자동확대는 생략한다.
     const _pOrigin = state.properties[state.currentPropertyId] || {};
-    const oArea = Number(_pOrigin.exclusiveArea) || null;
-    const oYear = _originYear(_pOrigin);
-    const LADDER = [[0.01, 3], [0.03, 5], [0.05, 7], [0.07, 10], [0.10, 10], [0.15, 15], [0.20, 20], [0.30, 25]];
-    const TARGET = 5;
     let items = base, _autoNote = '';
-    if (oArea && !uMinArea && !uMaxArea) {
-      let used = null;
-      for (const lv of LADDER) {
-        const aTol = lv[0], yTol = lv[1];
-        const f = base.filter(x => {
-          const a = Number(x.area); if (!a || Math.abs(a - oArea) / oArea > aTol) return false;
-          if (oYear) { const y = _yr(x); if (y && Math.abs(y - oYear) > yTol) return false; }
-          return true;
-        });
-        items = f; used = [aTol, yTol];
-        if (f.length >= TARGET) break;
-      }
-      // 폴백1: 면적+연도로 0건이면 연도 조건을 버리고 면적(±최대)만으로 재시도
-      if (items.length === 0 && oYear) {
-        const wa = LADDER[LADDER.length - 1][0];
-        const f = base.filter(x => { const a = Number(x.area); return a && Math.abs(a - oArea) / oArea <= wa; });
-        if (f.length) { items = f; used = [wa, null]; }
-      }
-      // 폴백2: 그래도 0건이면 면적 자동확대를 포기하고 전체 표시(수천 건이 0건으로 사라지는 것 방지)
-      if (items.length === 0) { items = base; used = null; _autoNote = ` · 면적 근접 사례 없음 → 전체 ${base.length}건 표시`; }
-      else if (used) _autoNote = ` · 자동확대 면적±${Math.round(used[0] * 100)}%${(oYear && used[1]) ? ` · 건축±${used[1]}년` : ''} (본건 ${oArea}㎡${oYear ? '·' + oYear + '년' : ''})`;
+    if ((Number(_pOrigin.exclusiveArea) || null) && !uMinArea && !uMaxArea) {
+      const _w = _autoWidenComps(base, _pOrigin);
+      items = _w.items; _autoNote = _w.note;
     }
     window._apiAutoNote = _autoNote;
     const _filtered = items.length !== d.count;
@@ -6145,70 +6133,141 @@ function _renderCompsMap(origin, items, radius, originName) {
   setTimeout(() => _compsMap && _compsMap.invalidateSize(), 100);  // 모달 내 렌더 보정
 }
 
-async function importItems(items) {
-  const id = state.currentPropertyId;
-  if (!id) { alert('먼저 본건을 선택하세요.'); return; }
+// 자동수집·수동수집 공통 등록: 기존 자동수집(API) 거래는 교체, 수동 거래는 보호·중복 스킵.
+// 반환 {added, skipped, removed}. saveState/알림/렌더는 호출측 책임(자동은 조용히, 수동은 alert).
+function _importCompItems(id, items) {
+  if (!id) return { added: 0, skipped: 0, removed: 0 };
   if (!state.comparables[id]) state.comparables[id] = [];
-  
-  // 🆕 기존 자동수집(API) 거래는 모두 제거 (수동 추가 거래는 보호)
   const before = state.comparables[id].length;
   state.comparables[id] = state.comparables[id].filter(e => e.source !== 'api');
   const removed = before - state.comparables[id].length;
-  
   const existing = state.comparables[id];
-  let added = 0;
-  let skipped = 0;
-  
-  items.forEach(x => {
-    // 수동 추가 거래와 중복이면 스킵
-    const isDuplicate = existing.some(e => 
-      e.date === x.date && 
-      e.type === x.type &&
-      Number(e.area) === Number(x.area) && 
-      Number(e.floor) === Number(x.floor) && 
-      Number(e.price) === Number(x.price)
-    );
-    
-    if (isDuplicate) {
-      skipped++;
-      return;
-    }
-    
+  let added = 0, skipped = 0;
+  (items || []).forEach(x => {
+    const isDuplicate = existing.some(e =>
+      e.date === x.date && e.type === x.type &&
+      Number(e.area) === Number(x.area) &&
+      Number(e.floor) === Number(x.floor) &&
+      Number(e.price) === Number(x.price));
+    if (isDuplicate) { skipped++; return; }
     state.comparables[id].push({
-      id: uid(),
-      date: x.date,
-      type: x.type,
-      name: x.name,
-      building: x.building || '',
-      unit: '',
-      area: x.area,
-      floor: x.floor,
-      price: x.price,
-      monthly: x.monthly || undefined,
-      memo: x.memo || '',
-      build_year: x.build_year || '',
-      house_type: x.house_type || '',
-      lat: x._lat != null ? x._lat : undefined,
-      lng: x._lng != null ? x._lng : undefined,
-      dist_m: x._dist != null ? Math.round(x._dist) : undefined,
-      source: 'api'
+      id: uid(), date: x.date, type: x.type, name: x.name,
+      building: x.building || '', unit: '', area: x.area, floor: x.floor, price: x.price,
+      monthly: x.monthly || undefined, memo: x.memo || '',
+      build_year: x.build_year || '', house_type: x.house_type || '',
+      lat: x._lat != null ? x._lat : undefined, lng: x._lng != null ? x._lng : undefined,
+      dist_m: x._dist != null ? Math.round(x._dist) : undefined, source: 'api'
     });
     added++;
   });
-  
+  return { added, skipped, removed };
+}
+
+async function importItems(items) {
+  const id = state.currentPropertyId;
+  if (!id) { alert('먼저 본건을 선택하세요.'); return; }
+  const { added, skipped, removed } = _importCompItems(id, items);
   await saveState();
   closeModal('apiImportModal');
-  
-  let msg = '';
-  if (removed > 0) {
-    msg = `이전 자동수집 ${removed}건 제거 → `;
-  }
+  let msg = removed > 0 ? `이전 자동수집 ${removed}건 제거 → ` : '';
   msg += `${added}건이 거래사례에 추가되었습니다.`;
-  if (skipped > 0) {
-    msg += `\n(수동 추가 거래와 중복 ${skipped}건 제외)`;
-  }
+  if (skipped > 0) msg += `\n(수동 추가 거래와 중복 ${skipped}건 제외)`;
   alert(msg);
   renderView();
+}
+
+// ============================================================
+// 🆕 거래사례 자동수집 (버튼 없이) — 02 탭 진입 시 거래사례 0건이면 자동 실행
+// ============================================================
+// 본건 면적·건축연도 기준 자동 점진 확대(+0건 폴백). 자동수집·수동수집이 공유.
+// 반환 { items, note }. 끝까지 0건이면 연도조건 제거 → 전체 순으로 폴백해 데이터가 사라지지 않게 한다.
+function _autoWidenComps(base, p) {
+  const oArea = Number(p && p.exclusiveArea) || null;
+  const oYear = (typeof _originYear === 'function') ? _originYear(p) : null;
+  const _yr = x => parseInt(x.build_year) || null;
+  if (!oArea) return { items: base, note: '' };
+  const LADDER = [[0.01, 3], [0.03, 5], [0.05, 7], [0.07, 10], [0.10, 10], [0.15, 15], [0.20, 20], [0.30, 25]];
+  const TARGET = 5;
+  let items = base, used = null;
+  for (const lv of LADDER) {
+    const aTol = lv[0], yTol = lv[1];
+    const f = base.filter(x => {
+      const a = Number(x.area); if (!a || Math.abs(a - oArea) / oArea > aTol) return false;
+      if (oYear) { const y = _yr(x); if (y && Math.abs(y - oYear) > yTol) return false; }
+      return true;
+    });
+    items = f; used = [aTol, yTol];
+    if (f.length >= TARGET) break;
+  }
+  // 폴백1: 면적+연도로 0건이면 연도 조건을 버리고 면적(±최대)만으로 재시도
+  if (items.length === 0 && oYear) {
+    const wa = LADDER[LADDER.length - 1][0];
+    const f = base.filter(x => { const a = Number(x.area); return a && Math.abs(a - oArea) / oArea <= wa; });
+    if (f.length) { items = f; used = [wa, null]; }
+  }
+  // 폴백2: 그래도 0건이면 자동확대를 포기하고 전체 표시(수천 건이 0건으로 사라지는 것 방지)
+  if (items.length === 0) return { items: base, note: ` · 면적 근접 사례 없음 → 전체 ${base.length}건 표시` };
+  const note = used ? ` · 자동확대 면적±${Math.round(used[0] * 100)}%${(oYear && used[1]) ? ` · 건축±${used[1]}년` : ''} (본건 ${oArea}㎡${oYear ? '·' + oYear + '년' : ''})` : '';
+  return { items, note };
+}
+
+// 본건 유형·지역·24개월로 국토부 실거래를 자동 수집·등록. 반환 {ok, count?, reason?}.
+// (모달 없이 동작하므로 반경/지오코딩은 생략 — 배경 자동수집이라 거리정보는 붙지 않음.)
+async function autoCollectComparables(p) {
+  if (!p) return { ok: false, reason: 'no-property' };
+  // 유형 결정 (openApiImport와 동일 규칙)
+  const _u = (p.use || p.usage || '').replace(/\s/g, '');
+  let kind = 'apt';
+  if (/오피스텔/.test(_u)) kind = 'offi';
+  else if (/다세대|연립|빌라|도시형생활|도생/.test(_u)) kind = 'rh';
+  else if (/단독|다가구/.test(_u)) kind = 'sh';
+  const endpoint = ({ apt: 'bulk', offi: 'offi-bulk', rh: 'rh-bulk', sh: 'sh-bulk' })[kind] || 'bulk';
+  // 법정동코드 결정 (본건 시도로 동명 시군구 구분)
+  const rg = (typeof _simRegion === 'function') ? _simRegion(p.addrLot || p.addrRoad || '') : {};
+  if (!rg.sigungu) return { ok: false, reason: '시군구 미확인' };
+  let code = null;
+  try {
+    const r = await fetch(`${BACKEND_URL}/api/lawd-codes?q=${encodeURIComponent(rg.sigungu)}`);
+    const dd = await r.json();
+    const list = dd.items || [];
+    if (list.length) {
+      const short = (typeof _sidoShort === 'function') ? _sidoShort(rg.sido) : '';
+      const hit = (short && list.find(([name]) => (name || '').replace(/\s/g, '').startsWith(short))) || list[0];
+      code = hit && hit[0];
+    }
+  } catch (e) { return { ok: false, reason: '법정동코드 조회 실패' }; }
+  if (!code || String(code).length !== 5) return { ok: false, reason: '법정동코드 없음' };
+  // 백엔드 수집 (24개월)
+  let d;
+  try {
+    const r = await fetch(`${BACKEND_URL}/api/transactions/${endpoint}?${new URLSearchParams({ lawd_cd: code, months: 24 })}`);
+    d = await r.json();
+  } catch (e) { return { ok: false, reason: '백엔드 연결 실패' }; }
+  if (d.error) return { ok: false, reason: d.error };
+  if (!d.items || !d.items.length) return { ok: false, reason: '실거래 0건' };
+  // 자동확대 필터(수동수집과 동일) 후 조용히 등록
+  const { items } = _autoWidenComps(d.items, p);
+  if (!items || !items.length) return { ok: false, reason: '조건 매칭 0건' };
+  const { added } = _importCompItems(p.id, items);
+  try { await saveState(); } catch (e) {}
+  return { ok: true, count: added };
+}
+
+// 02 탭 진입 시 거래사례가 0건이면 자동수집을 1회 실행. (state로 진행/완료/실패를 추적해 재렌더 유발)
+window._autoCollectState = window._autoCollectState || {};
+async function _maybeAutoCollect(p) {
+  if (!p) return;
+  const S = window._autoCollectState;
+  if (S[p.id]) return;                                    // 이미 시도(진행/완료/실패) → 물건당 1회
+  if ((state.comparables[p.id] || []).length > 0) { S[p.id] = 'skip'; return; }
+  const rg = (typeof _simRegion === 'function') ? _simRegion(p.addrLot || p.addrRoad || '') : {};
+  if (!rg.sigungu) { S[p.id] = 'noregion'; return; }      // 지역 못 읽으면 수동 버튼으로 안내
+  S[p.id] = 'collecting';                                 // 동기 설정 → 현재 렌더가 로딩 배너 표시
+  let res;
+  try { res = await autoCollectComparables(p); } catch (e) { res = { ok: false, reason: '오류' }; }
+  S[p.id] = (res && res.ok) ? ('done:' + (res.count || 0)) : ('fail:' + ((res && res.reason) || '오류'));
+  // 수집 후 여전히 이 물건의 거래사례 화면이면 재렌더(표·차트·추정낙찰가 갱신)
+  if (state.currentPropertyId === p.id && state.currentView === 'comparables') renderView();
 }
 </script>
 
