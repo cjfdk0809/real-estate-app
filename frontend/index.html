@@ -2792,8 +2792,8 @@ function updateRightOurs(id, checked) {
 // 감정가 확보: 경공매 사건 → 직접입력 → 거래사례 평균(대용) 순
 // 동일면적 비교 허용폭(㎡) — 아파트·오피스텔은 균질(±1㎡), 빌라(다세대·연립)는 면적 편차 커서 넓게(±10%, 최소 2㎡)
 function _sameAreaTol(p) {
-  const u = ((p && p.use) || '').replace(/\s/g, '');
-  if (/다세대|연립|빌라/.test(u)) return Math.max(2, (p.exclusiveArea || 0) * 0.10);
+  const u = ((p && (p.use || p.usage)) || '').replace(/\s/g, '');
+  if (/다세대|연립|빌라|도시형생활|도생/.test(u)) return Math.max(2, (p.exclusiveArea || 0) * 0.10);
   return 1;
 }
 
@@ -3101,7 +3101,7 @@ function _simRegion(addr) {
 function _simUseGroup(use) {
   const u = (use || '').replace(/\s/g, '');
   if (/오피스텔/.test(u)) return 'offi';
-  if (/다세대|연립|빌라/.test(u)) return 'rh';
+  if (/다세대|연립|빌라|도시형생활|도생/.test(u)) return 'rh';
   if (/단독|다가구/.test(u)) return 'sh';
   if (/근린|상가|점포|업무/.test(u)) return 'commercial';
   if (/토지|임야|대지|전|답/.test(u)) return 'land';
@@ -3151,7 +3151,7 @@ async function loadSimilarAuctionCases(p) {
 
   const qs = new URLSearchParams({
     sido: rg.sido, sigungu: rg.sigungu, dong: rg.dong,
-    use_group: _simUseGroup(p.use),
+    use_group: _simUseGroup(p.use || p.usage),
     area: (p.exclusiveArea || p.supplyArea || '') + '',
     area_tol: '0.20', min_match: '2', min_results: '5',
   });
@@ -4058,7 +4058,7 @@ function _mapUseFromRegistry(prop) {
   const nm = (prop.complex_name || '');
   const hay = (bt + ' ' + mu + ' ' + nm).replace(/\s/g, '');
   if (/오피스텔/.test(hay)) return '오피스텔';
-  if (/다세대|연립/.test(hay)) return '다세대/연립';
+  if (/다세대|연립|도시형생활주택|도시형생활|도생/.test(hay)) return '다세대/연립';
   if (/다가구|단독/.test(hay)) return '단독/다가구';
   if (/아파트/.test(hay)) return '아파트';
   if (/근린|상가|점포/.test(hay)) return '근린상가';
@@ -5874,7 +5874,7 @@ async function openApiImport() {
   const _m = document.getElementById('apiMonths'); if (_m) _m.value = 24;   // 조회 24개월 고정
   if (p) {
     // 건물유형 자동선택 (도시형생활주택·빌라 → 연립·다세대)
-    const _u = (p.use || '').replace(/\s/g, '');
+    const _u = (p.use || p.usage || '').replace(/\s/g, '');
     let _kind = 'apt';
     if (/오피스텔/.test(_u)) _kind = 'offi';
     else if (/다세대|연립|빌라|도시형생활|도생/.test(_u)) _kind = 'rh';
