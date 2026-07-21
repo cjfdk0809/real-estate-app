@@ -5866,39 +5866,59 @@ async function openApiImport() {
   document.getElementById('apiResultBox').innerHTML = '';
   // 본건 정보로 사전 채우기
   const p = state.properties[state.currentPropertyId];
+  // 단지명 필터는 자동으로 넣지 않음(비움) — 나홀로·연립·다세대는 같은 단지 사례가 드물어
+  // 단지명을 강제하면 '사례 없음'이 되므로, 원할 때만 담당자가 직접 입력.
+  ['apiDanjiFilter', 'apiMinArea', 'apiMaxArea', 'apiMinYear', 'apiMaxYear'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  const _m = document.getElementById('apiMonths'); if (_m) _m.value = 24;   // 조회 24개월 고정
   if (p) {
-    if (p.name) document.getElementById('apiDanjiFilter').value = p.name;
-    if (p.exclusiveArea) {
-      document.getElementById('apiMinArea').value = (p.exclusiveArea - 1).toFixed(2);
-      document.getElementById('apiMaxArea').value = (p.exclusiveArea + 1).toFixed(2);
-    }
-    // 주소에서 시군구 추출 시도
-    if (p.addrRoad || p.addrLot) {
-      const addr = p.addrRoad || p.addrLot;
-      const guess = addr.match(/([가-힣]+(시|구|군))\s*([가-힣]+(시|구|군))?/);
-      if (guess) {
-        const searchTerm = guess[3] || guess[1];
-        document.getElementById('apiLawdSearch').value = searchTerm;
-        searchLawdCode(searchTerm);
-      }
-    }
-    // 등기 유형 자동선택 (본건 용도 → 데이터셋, 유형 수동선택 불필요)
+    // 건물유형 자동선택 (도시형생활주택·빌라 → 연립·다세대)
     const _u = (p.use || '').replace(/\s/g, '');
     let _kind = 'apt';
     if (/오피스텔/.test(_u)) _kind = 'offi';
-    else if (/다세대|연립|빌라/.test(_u)) _kind = 'rh';
+    else if (/다세대|연립|빌라|도시형생활|도생/.test(_u)) _kind = 'rh';
     else if (/단독|다가구/.test(_u)) _kind = 'sh';
     const _sel = document.getElementById('apiUseType');
-    if (_sel) {
-      _sel.value = _kind;
-      if (_kind === 'sh') {
-        const pa = (window.KFITradeCollector && KFITradeCollector.parseAddress(p.addrLot || p.addrRoad || '')) || {};
-        document.getElementById('apiDanjiFilter').value = pa.umdNm || '';
-      }
-      if (typeof _onApiUseTypeChange === 'function') _onApiUseTypeChange();
+    if (_sel) { _sel.value = _kind; if (typeof _onApiUseTypeChange === 'function') _onApiUseTypeChange(); }
+    // 법정동코드 자동확정 — 본건 시도로 서울/부산 강서구 등 동명 시군구를 구분해 자동 선택
+    const rg = (typeof _simRegion === 'function') ? _simRegion(p.addrLot || p.addrRoad || '') : {};
+    if (rg.sigungu) { await _autoSelectLawd(rg.sido, rg.sigungu); }
+    else if (p.addrRoad || p.addrLot) {
+      const guess = (p.addrRoad || p.addrLot).match(/([가-힣]+(시|구|군))\s*([가-힣]+(시|구|군))?/);
+      if (guess) { const t = guess[3] || guess[1]; document.getElementById('apiLawdSearch').value = t; searchLawdCode(t); }
     }
   }
   await checkApiHealth();
+}
+
+// 본건 시도로 동명 시군구를 구분해 법정동코드 자동 선택 (예: 서울 강서구 vs 부산 강서구)
+function _sidoShort(sidoFull) {
+  const M = { '서울특별시': '서울', '부산광역시': '부산', '대구광역시': '대구', '인천광역시': '인천',
+    '광주광역시': '광주', '대전광역시': '대전', '울산광역시': '울산', '세종특별자치시': '세종',
+    '경기도': '경기', '강원특별자치도': '강원', '강원도': '강원', '충청북도': '충북', '충청남도': '충남',
+    '전북특별자치도': '전북', '전라북도': '전북', '전라남도': '전남', '경상북도': '경북',
+    '경상남도': '경남', '제주특별자치도': '제주' };
+  return M[sidoFull] || (sidoFull || '').slice(0, 2);
+}
+async function _autoSelectLawd(sidoFull, sigungu) {
+  try {
+    const r = await fetch(`${BACKEND_URL}/api/lawd-codes?q=${encodeURIComponent(sigungu)}`);
+    const d = await r.json();
+    const items = d.items || [];
+    if (!items.length) { document.getElementById('apiLawdSearch').value = sigungu; return false; }
+    const short = _sidoShort(sidoFull);
+    const hit = (short && items.find(([name]) => (name || '').replace(/\s/g, '').startsWith(short))) || items[0];
+    selectLawd(hit[0], hit[1]);
+    return true;
+  } catch (e) { document.getElementById('apiLawdSearch').value = sigungu; return false; }
+}
+// 본건 건축연도 추출 ('2019-06-10' 또는 '19.05.02' → 2019)
+function _originYear(p) {
+  const s = String((p && (p.completionDate || p.build_year)) || '').trim();
+  const m4 = s.match(/(19|20)\d{2}/); if (m4) return parseInt(m4[0]);
+  const m2 = s.match(/^(\d{2})[.\-/]/); if (m2) { const y = parseInt(m2[1]); return y < 50 ? 2000 + y : 1900 + y; }
+  return null;
 }
 
 function _onApiUseTypeChange() {
@@ -5937,10 +5957,9 @@ async function fetchTransactions() {
   const _epMap = { apt: 'bulk', offi: 'offi-bulk', rh: 'rh-bulk', sh: 'sh-bulk' };
   const endpoint = _epMap[useType] || 'bulk';
 
-  const params = new URLSearchParams({ lawd_cd: code, months: months });
+  // 조회 24개월 고정. 면적·건축연도는 자동 점진 확대(클라이언트)라 서버 파라미터로 넣지 않음.
+  const params = new URLSearchParams({ lawd_cd: code, months: 24 });
   if (danji) params.set(useType === 'sh' ? 'dong' : 'danji_name', danji);
-  if (minArea) params.set('min_area', minArea);
-  if (maxArea) params.set('max_area', maxArea);
 
   try {
     const r = await fetch(`${BACKEND_URL}/api/transactions/${endpoint}?${params}`);
@@ -5951,25 +5970,52 @@ async function fetchTransactions() {
     }
 
     if (d.count === 0) {
-      resultBox.innerHTML = `<div style="padding: 12px; background: var(--bg-subtle); border-radius: 6px;">조회 결과 없음. 단지명 필터를 줄이거나 법정동을 다시 확인하세요.</div>`;
+      resultBox.innerHTML = `<div style="padding: 12px; background: var(--bg-subtle); border-radius: 6px;">이 시군구에 최근 24개월 해당 유형(${useType}) 실거래가 없습니다. 법정동·건물유형을 확인하세요.</div>`;
       return;
     }
 
-    // 🆕 조건 필터 (건축연도·층·연립/다세대) — 클라이언트 측 적용
+    // 하드 필터: 층·연립다세대구분 + (담당자가 직접 입력한 면적/연도 override만)
     const _num = id => { const v = (document.getElementById(id) || {}).value; return (v === '' || v == null) ? null : Number(v); };
-    const minYear = _num('apiMinYear'), maxYear = _num('apiMaxYear');
+    const uMinYear = _num('apiMinYear'), uMaxYear = _num('apiMaxYear');
+    const uMinArea = _num('apiMinArea'), uMaxArea = _num('apiMaxArea');
     const minFloor = _num('apiMinFloor'), maxFloor = _num('apiMaxFloor');
     const rhType = (document.getElementById('apiRhType') || {}).value || '';
     const _yr = x => parseInt(x.build_year) || null;
-    let items = (d.items || []).filter(x => {
-      const y = _yr(x);
-      if (minYear && (!y || y < minYear)) return false;
-      if (maxYear && (!y || y > maxYear)) return false;
+    const base = (d.items || []).filter(x => {
+      const y = _yr(x), a = Number(x.area);
+      if (uMinYear && (!y || y < uMinYear)) return false;
+      if (uMaxYear && (!y || y > uMaxYear)) return false;
+      if (uMinArea && (!a || a < uMinArea)) return false;
+      if (uMaxArea && (!a || a > uMaxArea)) return false;
       if (minFloor != null && (x.floor == null || x.floor < minFloor)) return false;
       if (maxFloor != null && (x.floor == null || x.floor > maxFloor)) return false;
       if (rhType && !((x.house_type || '').includes(rhType))) return false;
       return true;
     });
+
+    // 🆕 자동 점진 확대: 본건 면적·건축연도 기준 (면적±%, 건축±년)을 넓혀가며 5건 이상 확보
+    //    면적 1→3→5→7→10% · 건축연도 ±3→5→7→10년. 담당자가 면적을 직접 지정하면 자동확대 생략.
+    const _pOrigin = state.properties[state.currentPropertyId] || {};
+    const oArea = Number(_pOrigin.exclusiveArea) || null;
+    const oYear = _originYear(_pOrigin);
+    const LADDER = [[0.01, 3], [0.03, 5], [0.05, 7], [0.07, 10], [0.10, 10]];
+    const TARGET = 5;
+    let items = base, _autoNote = '';
+    if (oArea && !uMinArea && !uMaxArea) {
+      let used = null;
+      for (const lv of LADDER) {
+        const aTol = lv[0], yTol = lv[1];
+        const f = base.filter(x => {
+          const a = Number(x.area); if (!a || Math.abs(a - oArea) / oArea > aTol) return false;
+          if (oYear) { const y = _yr(x); if (y && Math.abs(y - oYear) > yTol) return false; }
+          return true;
+        });
+        items = f; used = [aTol, yTol];
+        if (f.length >= TARGET) break;
+      }
+      if (used) _autoNote = ` · 자동확대 면적±${Math.round(used[0] * 100)}%${oYear ? ` · 건축±${used[1]}년` : ''} (본건 ${oArea}㎡${oYear ? '·' + oYear + '년' : ''})`;
+    }
+    window._apiAutoNote = _autoNote;
     const _filtered = items.length !== d.count;
 
     // 🆕 반경(정밀): 본건·거래 지번 지오코딩 → 거리 계산·정렬, 선택 반경으로 필터
@@ -6015,7 +6061,7 @@ async function fetchTransactions() {
     // 미리보기
     resultBox.innerHTML = `
       <div style="padding: 12px; background: #f0f7f0; border-radius: 6px; margin-bottom: 10px;">
-        <strong style="color: var(--green);">✓ ${items.length}건</strong>${_filtered ? ` (전체 ${d.count}건 중 조건 필터)` : ''}${_radiusSel > 0 ? ` · 반경 ${_radiusSel >= 1000 ? (_radiusSel / 1000) + 'km' : _radiusSel + 'm'} 이내` : ''} · 조회 ${d.months_queried.length}개월${_radiusNote}
+        <strong style="color: var(--green);">✓ ${items.length}건</strong>${_filtered ? ` (전체 ${d.count}건 중 조건 필터)` : ''}${_radiusSel > 0 ? ` · 반경 ${_radiusSel >= 1000 ? (_radiusSel / 1000) + 'km' : _radiusSel + 'm'} 이내` : ''} · 조회 ${d.months_queried.length}개월${_autoNote}${_radiusNote}
       </div>
       <div id="apiMapBox" style="height: 320px; border: 1px solid var(--line); border-radius: 6px; margin-bottom: 10px; ${_origin ? '' : 'display:none;'}"></div>
       <div style="max-height: 250px; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px;">
