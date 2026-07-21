@@ -2053,8 +2053,11 @@ function renderComparables() {
   _maybeAutoCollect(p);
   const _acSt = (window._autoCollectState || {})[p.id] || '';
   let _acBanner = '';
-  if (_acSt === 'collecting') {
-    _acBanner = `<div style="margin-bottom:16px;padding:12px 16px;background:#eef4ff;border:1px solid #cfe0ff;border-radius:8px;color:#1e3a8a;font-size:14px;">⏳ 국토부 실거래 <strong>자동수집 중</strong>… 24개월 조회라 20~40초 걸립니다. 완료되면 표·차트·추정낙찰가에 자동 반영됩니다.</div>`;
+  if (_acSt === 'collecting' || _acSt === 'recollecting') {
+    const _lead = _acSt === 'recollecting'
+      ? '기존 수집분에 지번이 없어 <strong>지번 포함으로 자동 재수집 중</strong>'
+      : '국토부 실거래 <strong>자동수집 중</strong>';
+    _acBanner = `<div style="margin-bottom:16px;padding:12px 16px;background:#eef4ff;border:1px solid #cfe0ff;border-radius:8px;color:#1e3a8a;font-size:14px;">⏳ ${_lead}… 24개월 조회라 20~40초 걸립니다. 완료되면 표·차트·추정낙찰가에 자동 반영됩니다.</div>`;
   } else if (_acSt.indexOf('fail:') === 0 || _acSt === 'noregion') {
     const _why = _acSt === 'noregion' ? '본건 주소에서 시군구를 읽지 못함' : _acSt.slice(5);
     _acBanner = `<div style="margin-bottom:16px;padding:12px 16px;background:#fff4e5;border:1px solid #ffd9a8;border-radius:8px;color:#92400e;font-size:14px;">⚠️ 실거래 자동수집을 완료하지 못했습니다 (${_why}). 상단 <strong>⚡ 국토부 자동수집</strong> 버튼으로 직접 수집해 주세요.</div>`;
@@ -6281,16 +6284,24 @@ async function autoCollectComparables(p) {
   return { ok: true, count: added };
 }
 
-// 02 탭 진입 시 거래사례가 0건이면 자동수집을 1회 실행. (state로 진행/완료/실패를 추적해 재렌더 유발)
+// 02 탭 진입 시 자동수집을 1회 실행. (state로 진행/완료/실패를 추적해 재렌더 유발)
+//   실행 조건: (1) 거래사례가 아예 없거나, (2) 자동수집분에 지번(jibun)이 없어
+//   공시 개별보정이 불가한 '옛 스키마' 데이터뿐인 경우 → 지번 포함해 자동 재수집.
 window._autoCollectState = window._autoCollectState || {};
 async function _maybeAutoCollect(p) {
   if (!p) return;
   const S = window._autoCollectState;
-  if (S[p.id]) return;                                    // 이미 시도(진행/완료/실패) → 물건당 1회
-  if ((state.comparables[p.id] || []).length > 0) { S[p.id] = 'skip'; return; }
+  if (S[p.id]) return;                                    // 이미 시도(진행/완료/실패) → 물건당 1회(세션)
+  const comps = state.comparables[p.id] || [];
+  const apiComps = comps.filter(e => e.source === 'api');
+  const manualComps = comps.filter(e => e.source !== 'api');
+  // 자동수집분이 있는데 전부 지번이 없으면(옛 스키마) 재수집 필요. 수동 입력 거래는 보존됨(_importCompItems).
+  const staleApi = apiComps.length > 0 && apiComps.every(e => !e.jibun);
+  const needCollect = comps.length === 0 || (manualComps.length === 0 && staleApi);
+  if (!needCollect) { S[p.id] = 'skip'; return; }
   const rg = (typeof _simRegion === 'function') ? _simRegion(p.addrLot || p.addrRoad || '') : {};
   if (!rg.sigungu) { S[p.id] = 'noregion'; return; }      // 지역 못 읽으면 수동 버튼으로 안내
-  S[p.id] = 'collecting';                                 // 동기 설정 → 현재 렌더가 로딩 배너 표시
+  S[p.id] = staleApi ? 'recollecting' : 'collecting';     // 동기 설정 → 현재 렌더가 로딩 배너 표시
   let res;
   try { res = await autoCollectComparables(p); } catch (e) { res = { ok: false, reason: '오류' }; }
   S[p.id] = (res && res.ok) ? ('done:' + (res.count || 0)) : ('fail:' + ((res && res.reason) || '오류'));
