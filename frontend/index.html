@@ -2722,7 +2722,7 @@ function drawPriceChart(comps) {
           ticks: {
             font: { family: 'Pretendard', size: 11, weight: '500' },
             color: 'var(--ink-muted)',
-            callback: (v) => v + '억',
+            callback: (v) => (Math.round(v * 100) / 100) + '억',   // 부동소수점(2.6500000000000004억) 방지
           },
         },
         y1: {
