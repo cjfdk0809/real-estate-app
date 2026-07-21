@@ -2802,13 +2802,42 @@ function getActiveAppraisal(p, auctions) {
   const active = (auctions || []).find(x => !x.winningBid) || (auctions || [])[0];
   if (active && active.appraisal) return { value: active.appraisal, source: `사건 ${active.caseNo || ''} 감정가` };
   if (sc.appraisal) return { value: sc.appraisal, source: '직접 입력 감정가' };
-  // 거래사례 평균(감정가 대용): 본건정보 '평균매매가'와 동일 방식 — 매매·해제제외·동일면적±1㎡·windowed
+  // 🆕 거래사례 × 공시가격 개별보정 추정 (연립·다세대 핵심) — 감정가 없을 때 최우선.
+  //    본건 추정시세 = 본건공시 × 종합(사례실거래/사례공시). 개별성(층·호)은 본건 공시에 반영.
+  const ca = (window._compAdj || {})[p.id];
+  if (ca && ca.available && ca.estimate_manwon) {
+    return { value: ca.estimate_manwon, source: '거래사례×공시 개별보정 추정', compAdj: ca };
+  }
+  // 거래사례 단순평균(감정가 대용): 공시보정이 안 될 때 폴백 — 매매·해제제외·동일면적±1㎡·windowed
   const _validAP = (state.comparables[p.id] || []).filter(x => x.type === '매매' && (!x.memo || !x.memo.includes('해제')));
   const _sameAP = _validAP.filter(x => Math.abs((x.area || 0) - (p.exclusiveArea || 0)) < _sameAreaTol(p));
   const _wAP = (typeof windowedSameAreaAvg === 'function') ? windowedSameAreaAvg(_sameAP) : null;
   if (_wAP && _wAP.avg) { return { value: _wAP.avg, source: '거래사례 평균(감정가 대용 추정)' }; }
   return { value: null, source: null };
 }
+
+// 🆕 거래사례×공시 개별보정 시세를 백엔드에서 프리페치해 window._compAdj[pid]에 캐시.
+async function prefetchCompAdjusted(p) {
+  if (!p) return;
+  window._compAdj = window._compAdj || {};
+  const rg = _simRegion(p.addrLot || p.addrRoad || '');
+  const allc = (state.comparables[p.id] || []).filter(x => x.type === '매매' && (!x.memo || !x.memo.includes('해제')));
+  if (!rg.sigungu || !allc.length || !p.exclusiveArea) {
+    window._compAdj[p.id] = { available: false, reason: '입력 부족(주소·매매 거래사례·전용면적 필요)' };
+    return;
+  }
+  const comps = allc.map(x => ({ price: x.price, jibun: x.jibun, dong: (x.dong || '').split(' ')[0],
+    area: x.area, date: x.date, name: x.name, floor: x.floor, type: x.type }));
+  try {
+    const r = await fetch(`${window.BACKEND_URL || ''}/api/valuation/comp-adjusted`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ origin: { addr: p.addrLot, dong: p.building, ho: p.unit,
+        area: p.exclusiveArea, legal_dong: rg.dong }, sido: rg.sido, sigungu: rg.sigungu, comps }),
+    });
+    window._compAdj[p.id] = await r.json();
+  } catch (e) { window._compAdj[p.id] = { available: false, reason: '조회 오류: ' + e.message }; }
+}
+window.prefetchCompAdjusted = prefetchCompAdjusted;
 
 // 시나리오 낙찰가율/감정가 편집 저장
 function updateScenario(field, value) {
@@ -3375,6 +3404,10 @@ function renderBidEst() {
   `;
   // AI 추정 낙찰가액 카드는 bid_rate_cascade.js가 #bidEstHost에 주입합니다.
   if (typeof window.injectBidEst === 'function') { try { window.injectBidEst(); } catch (e) {} }
+  // 🆕 거래사례×공시 개별보정 시세를 프리페치 후 카드 재주입(감정가 없을 때 기준시세로 반영).
+  if (typeof prefetchCompAdjusted === 'function' && !(window._compAdj || {})[p.id]) {
+    prefetchCompAdjusted(p).then(() => { try { window.injectBidEst(); } catch (e) {} });
+  }
 }
 
 // ============================================================

@@ -414,6 +414,40 @@
     return false;
   }
 
+  /* ===== 기준시세 산출근거 — 거래사례 × 공시가격 개별보정 (연립·다세대 핵심) ===== */
+  function _compAdjHTML(pid) {
+    var ca = (window._compAdj || {})[pid];
+    if (!ca) return '';
+    if (!ca.available) {
+      return '<div class="text-small text-muted" style="margin-top:10px;padding:9px 11px;background:#f8fafc;border:1px solid var(--line,#e2e8f0);border-radius:6px;">'
+        + 'ℹ️ 거래사례×공시 개별보정 미적용 — ' + (ca.reason || '조건 부족') + '. (감정가·거래사례로 추정합니다)</div>';
+    }
+    var rows = (ca.comps || []).map(function (c) {
+      var used = c.used;
+      return '<tr style="' + (used ? '' : 'opacity:.45;') + '">'
+        + '<td>' + (c.name || '-') + ' <span class="text-muted">' + (c.floor ? c.floor + '층' : '') + '</span></td>'
+        + '<td class="num">' + (c.date || '-') + '</td>'
+        + '<td class="num">' + (c.area != null ? c.area + '㎡' : '-') + '</td>'
+        + '<td class="num">' + (c.price ? won(c.price) : '-') + '</td>'
+        + '<td class="num">' + (c.gongsi != null ? won(Math.round(c.gongsi / 10000)) : '-') + '</td>'
+        + '<td class="num">' + (c.ratio != null ? '×' + c.ratio : '-') + '</td>'
+        + '<td class="num">' + (c.adjusted != null ? '<b>' + won(c.adjusted) + '</b>' : '<span class="text-muted">' + (c.reason || '제외') + '</span>') + '</td>'
+        + '</tr>';
+    }).join('');
+    return '<div style="margin-top:14px;padding:12px 14px;border:1px solid var(--line,#e2e8f0);border-radius:8px;background:#f8fafc;">'
+      + '<div style="font-weight:700;font-size:13px;margin-bottom:6px;">📐 기준시세 산출근거 · 거래사례 × 공시가격 개별보정</div>'
+      + '<div class="text-small" style="margin-bottom:9px;">본건 공시가격 <b>' + won(ca.origin_gongsi_manwon) + '</b> × 종합배율 <b>×' + ca.ratio + '</b>'
+      + ' <span class="text-muted">(실거래÷공시, ' + ca.n_used + '/' + ca.n_total + '건 가중종합·유효표본 ' + (ca.neff != null ? ca.neff : '-') + ')</span>'
+      + ' = 추정시세 <b style="color:' + PINK + '">' + won(ca.estimate_manwon) + '</b>'
+      + ' <span class="text-muted">(범위 ' + won(ca.estimate_lo_manwon) + ' ~ ' + won(ca.estimate_hi_manwon) + ')</span></div>'
+      + '<div style="overflow-x:auto;"><table class="tbl" style="font-size:12px;min-width:560px;"><thead><tr>'
+      + '<th>거래사례</th><th>거래일</th><th class="text-right">면적</th><th class="text-right">실거래가</th><th class="text-right">사례공시</th><th class="text-right">배율</th><th class="text-right">보정후시세</th>'
+      + '</tr></thead><tbody>' + rows + '</tbody></table></div>'
+      + '<div class="text-small text-muted" style="margin-top:6px;">배율 = 실거래가 ÷ 사례 공시가격. 본건공시 × 배율 = 보정후 시세. '
+      + '층·호·면적 등 개별성은 <b>본건 공시가격</b>에 이미 반영됩니다. 사례엔 호 정보가 없어 공시는 지번·면적 근사입니다(참고).</div>'
+      + '</div>';
+  }
+
   /* ===== (2) 04 경공매 캐스케이드 카드 ===== */
   function cardHTML(pid) {
     var be = resolveBidEstimate(pid); if (!be) return '';
@@ -527,6 +561,7 @@
       + '</div>'
       + '<div class="text-small text-muted" style="margin-top:12px;">✅ 최종 채택값은 <strong>08 담당자 의견</strong> · <strong>리포트(3-2 낙찰가 산정 결정·분석요약)</strong>에 자동 반영됩니다.</div>'
       + note
+      + _compAdjHTML(pid)
       + '</div>';
   }
 
