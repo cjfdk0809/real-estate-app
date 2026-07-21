@@ -3495,6 +3495,57 @@ def admin_import_rates_bulk():
 
 
 # ============================================================
+# 적재된 지역 낙찰가율 통계 조회 — 구별로 값이 제대로 들어갔는지 확인
+#   URL: /admin/rate-stats?sido=서울특별시&months=12  (읽기전용, 키 불필요)
+# ============================================================
+@app.route('/admin/rate-stats')
+def admin_rate_stats():
+    if not supabase:
+        return jsonify({'error': 'Supabase 미설정'}), 503
+    sido = (request.args.get('sido') or '서울특별시').strip()
+    months = request.args.get('months', default=12, type=int)
+    try:
+        rows = (supabase.table('auction_rate_stats')
+                .select('sido,sigungu,use_group,median_rate,sample_n,period_months,asof')
+                .eq('sido', sido).eq('period_months', months)
+                .limit(3000).execute().data) or []
+    except Exception as e:
+        return jsonify({'error': str(e)}), 502
+
+    mat = {}
+    for r in rows:
+        sg = r.get('sigungu') or '(전체)'
+        mat.setdefault(sg, {})[r.get('use_group')] = (r.get('median_rate'), r.get('sample_n'), r.get('asof'))
+    order = sorted(mat)
+    apt_vals = [mat[s].get('apt', (None,))[0] for s in order if 'apt' in mat[s]]
+    all_same = len(apt_vals) >= 3 and len(set(apt_vals)) == 1
+
+    def _cell(sg, ug):
+        v = mat.get(sg, {}).get(ug)
+        if not v or v[0] is None:
+            return '<td style="text-align:right;color:#b91c1c">—</td>'
+        return f'<td style="text-align:right">{v[0]}%<div class="muted">n={v[1]}</div></td>'
+
+    body = ''.join(f'<tr><td><b>{sg}</b></td>' + ''.join(_cell(sg, u) for u in ('apt', 'rh', 'offi'))
+                   + f'<td class="muted">{mat[sg].get("apt",(None,None,""))[2] or ""}</td></tr>' for sg in order)
+    warn = ('<div style="margin:12px 0;padding:12px 16px;border-radius:8px;background:#fef2f2;border:1px solid #fecaca;color:#b91c1c;font-weight:600">'
+            '⚠️ 모든 구의 아파트 낙찰가율이 동일합니다 — INFOCARE에서 <b>‘시군구전체’</b>로 받으셨을 가능성이 큽니다. '
+            '구를 하나씩 바꿔가며 다시 받아 올려주세요.</div>' if all_same else
+            ('<div style="margin:12px 0;padding:12px 16px;border-radius:8px;background:#f0fdf4;border:1px solid #bbf7d0;color:#166534;font-weight:600">'
+             f'✅ 구별로 값이 다르게 들어갔습니다 ({len(order)}개 지역). 정상입니다.</div>' if order else ''))
+    html = (f'<!doctype html><meta charset="utf-8"><title>적재된 낙찰가율</title>'
+            '<style>body{font-family:system-ui,"Malgun Gothic",sans-serif;max-width:760px;margin:24px auto;padding:0 16px;color:#1e293b;line-height:1.5}'
+            'table{border-collapse:collapse;width:100%;font-size:14px;margin-top:8px}th,td{border:1px solid #e2e8f0;padding:6px 10px}'
+            'th{background:#f8fafc;text-align:right}th:first-child,td:first-child{text-align:left}.muted{color:#64748b;font-size:12px}</style>'
+            f'<h1>적재된 낙찰가율 · {sido} <span class="muted">· 최근 {months}개월 · {len(order)}개 지역</span></h1>'
+            f'{warn}'
+            '<table><thead><tr><th>시군구</th><th>아파트</th><th>연립·다세대</th><th>오피스텔</th><th>기준월</th></tr></thead>'
+            f'<tbody>{body or "<tr><td colspan=5>데이터 없음</td></tr>"}</tbody></table>'
+            '<p class="muted" style="margin-top:14px">※ 다른 시도는 <code>?sido=경기도</code> 처럼 바꿔서 조회하세요.</p>')
+    return Response(html, mimetype='text/html; charset=utf-8')
+
+
+# ============================================================
 # 자산 분석 리포트 PDF (매 페이지 CI 머릿말 — 서버사이드 reportlab)
 # ============================================================
 @app.route('/api/report/pdf', methods=['POST'])
