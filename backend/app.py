@@ -3500,10 +3500,29 @@ def admin_import_rates_bulk():
 # ============================================================
 @app.route('/admin/rate-stats')
 def admin_rate_stats():
+    import html as _html
     if not supabase:
         return jsonify({'error': 'Supabase 미설정'}), 503
     sido = (request.args.get('sido') or '서울특별시').strip()
     months = request.args.get('months', default=12, type=int)
+    delv = request.args.get('del')
+    key = request.args.get('key') or ''
+
+    msg = ''
+    if delv is not None and delv != '':
+        if ADMIN_SECRET and key != ADMIN_SECRET:
+            msg = ('<div style="margin:12px 0;padding:12px 16px;border-radius:8px;background:#fef2f2;'
+                   'border:1px solid #fecaca;color:#b91c1c;font-weight:600">삭제하려면 올바른 관리자 키가 필요합니다.</div>')
+        else:
+            try:
+                (supabase.table('auction_rate_stats').delete()
+                 .eq('sido', sido).eq('sigungu', delv).eq('period_months', months).execute())
+                msg = ('<div style="margin:12px 0;padding:12px 16px;border-radius:8px;background:#f0fdf4;'
+                       f'border:1px solid #bbf7d0;color:#166534;font-weight:600">🗑 삭제 완료: {_html.escape(sido)} {_html.escape(delv)}</div>')
+            except Exception as e:
+                msg = ('<div style="margin:12px 0;padding:12px 16px;border-radius:8px;background:#fef2f2;'
+                       f'border:1px solid #fecaca;color:#b91c1c;font-weight:600">삭제 실패: {_html.escape(str(e))}</div>')
+
     try:
         rows = (supabase.table('auction_rate_stats')
                 .select('sido,sigungu,use_group,median_rate,sample_n,period_months,asof')
@@ -3512,9 +3531,11 @@ def admin_rate_stats():
     except Exception as e:
         return jsonify({'error': str(e)}), 502
 
-    mat = {}
+    mat, raw_of = {}, {}
     for r in rows:
-        sg = r.get('sigungu') or '(전체)'
+        raw = r.get('sigungu')
+        sg = raw or '(전체)'
+        raw_of[sg] = raw
         mat.setdefault(sg, {})[r.get('use_group')] = (r.get('median_rate'), r.get('sample_n'), r.get('asof'))
     order = sorted(mat)
     apt_vals = [mat[s].get('apt', (None,))[0] for s in order if 'apt' in mat[s]]
@@ -3526,22 +3547,32 @@ def admin_rate_stats():
             return '<td style="text-align:right;color:#b91c1c">—</td>'
         return f'<td style="text-align:right">{v[0]}%<div class="muted">n={v[1]}</div></td>'
 
-    body = ''.join(f'<tr><td><b>{sg}</b></td>' + ''.join(_cell(sg, u) for u in ('apt', 'rh', 'offi'))
-                   + f'<td class="muted">{mat[sg].get("apt",(None,None,""))[2] or ""}</td></tr>' for sg in order)
+    def _delbtn(sg):
+        raw = raw_of.get(sg)
+        if not raw:   # (전체)=시도 통계는 삭제 버튼 없음
+            return '<td></td>'
+        return (f'<td style="text-align:center"><button type="submit" name="del" value="{_html.escape(raw, quote=True)}" '
+                'style="padding:3px 9px;background:#fee2e2;color:#b91c1c;border:1px solid #fecaca;border-radius:6px;cursor:pointer">삭제</button></td>')
+
+    body = ''.join(f'<tr><td><b>{_html.escape(sg)}</b></td>' + ''.join(_cell(sg, u) for u in ('apt', 'rh', 'offi'))
+                   + f'<td class="muted">{mat[sg].get("apt",(None,None,""))[2] or ""}</td>' + _delbtn(sg) + '</tr>'
+                   for sg in order)
     warn = ('<div style="margin:12px 0;padding:12px 16px;border-radius:8px;background:#fef2f2;border:1px solid #fecaca;color:#b91c1c;font-weight:600">'
-            '⚠️ 모든 구의 아파트 낙찰가율이 동일합니다 — INFOCARE에서 <b>‘시군구전체’</b>로 받으셨을 가능성이 큽니다. '
-            '구를 하나씩 바꿔가며 다시 받아 올려주세요.</div>' if all_same else
+            '⚠️ 모든 구의 아파트 낙찰가율이 동일합니다 — INFOCARE에서 <b>‘시군구전체’</b>로 받으셨을 가능성이 큽니다.</div>' if all_same else
             ('<div style="margin:12px 0;padding:12px 16px;border-radius:8px;background:#f0fdf4;border:1px solid #bbf7d0;color:#166534;font-weight:600">'
              f'✅ 구별로 값이 다르게 들어갔습니다 ({len(order)}개 지역). 정상입니다.</div>' if order else ''))
     html = (f'<!doctype html><meta charset="utf-8"><title>적재된 낙찰가율</title>'
-            '<style>body{font-family:system-ui,"Malgun Gothic",sans-serif;max-width:760px;margin:24px auto;padding:0 16px;color:#1e293b;line-height:1.5}'
+            '<style>body{font-family:system-ui,"Malgun Gothic",sans-serif;max-width:820px;margin:24px auto;padding:0 16px;color:#1e293b;line-height:1.5}'
             'table{border-collapse:collapse;width:100%;font-size:14px;margin-top:8px}th,td{border:1px solid #e2e8f0;padding:6px 10px}'
             'th{background:#f8fafc;text-align:right}th:first-child,td:first-child{text-align:left}.muted{color:#64748b;font-size:12px}</style>'
-            f'<h1>적재된 낙찰가율 · {sido} <span class="muted">· 최근 {months}개월 · {len(order)}개 지역</span></h1>'
-            f'{warn}'
-            '<table><thead><tr><th>시군구</th><th>아파트</th><th>연립·다세대</th><th>오피스텔</th><th>기준월</th></tr></thead>'
-            f'<tbody>{body or "<tr><td colspan=5>데이터 없음</td></tr>"}</tbody></table>'
-            '<p class="muted" style="margin-top:14px">※ 다른 시도는 <code>?sido=경기도</code> 처럼 바꿔서 조회하세요.</p>')
+            f'<h1>적재된 낙찰가율 · {_html.escape(sido)} <span class="muted">· 최근 {months}개월 · {len(order)}개 지역</span></h1>'
+            f'{msg}{warn}'
+            f'<form method="get"><input type="hidden" name="sido" value="{_html.escape(sido, quote=True)}"><input type="hidden" name="months" value="{months}">'
+            '<div style="margin:8px 0"><label>관리자 키(삭제 시 필요) <input name="key" style="padding:5px 8px;width:280px"></label></div>'
+            '<table><thead><tr><th>시군구</th><th>아파트</th><th>연립·다세대</th><th>오피스텔</th><th>기준월</th><th></th></tr></thead>'
+            f'<tbody>{body or "<tr><td colspan=6>데이터 없음</td></tr>"}</tbody></table></form>'
+            '<p class="muted" style="margin-top:14px">※ 삭제: 위 키 입력 후 해당 행의 [삭제] 클릭. (전체)=시도 통계는 삭제 버튼 없음.<br>'
+            '※ 다른 시도는 <code>?sido=경기도</code> 처럼 바꿔서 조회하세요.</p>')
     return Response(html, mimetype='text/html; charset=utf-8')
 
 
