@@ -874,7 +874,7 @@ table { border-collapse: collapse; width: 100%; }
 
     <div class="sidebar-footer">
       <button class="btn-add" onclick="openPropertyModal()">🔍 물건 검색</button>
-      <div id="buildStamp" style="margin-top:8px;text-align:center;font-size:10px;color:var(--ink-muted,#9aa3b2);letter-spacing:.02em;">build 2026-07-22 · 자동수집 v2</div>
+      <div id="buildStamp" style="margin-top:8px;text-align:center;font-size:10px;color:var(--ink-muted,#9aa3b2);letter-spacing:.02em;">build 2026-07-22 · 자동수집 v3</div>
     </div>
   </aside>
 
@@ -1679,6 +1679,8 @@ function selectProperty(id) {
   if (_p && typeof prefetchRealRates === 'function') {
     prefetchRealRates(_p).then(() => { if (state.currentPropertyId === id) renderView(); });
   }
+  // 🆕 물건을 열면 즉시 거래사례 자동수집 시작(02 탭 안 거쳐도) → 추정가 자동산출. 물건당 1회.
+  if (_p && typeof _maybeAutoCollect === 'function') _maybeAutoCollect(_p);
 }
 
 document.querySelectorAll('.nav-item').forEach(item => {
@@ -5790,6 +5792,9 @@ document.getElementById('rightForm').addEventListener('submit', async (e) => {
   await loadState();
   renderPropertyList();
   renderView();
+  // 🆕 앱 시작 시 현재 물건도 배경 자동수집 시작(02 탭 안 거쳐도) → 추정가 자동산출
+  const _cp = state.properties[state.currentPropertyId];
+  if (_cp && typeof _maybeAutoCollect === 'function') _maybeAutoCollect(_cp);
 })();
 </script>
 
@@ -6276,7 +6281,9 @@ async function autoCollectComparables(p) {
     if (list.length) {
       const short = (typeof _sidoShort === 'function') ? _sidoShort(rg.sido) : '';
       const hit = (short && list.find(([name]) => (name || '').replace(/\s/g, '').startsWith(short))) || list[0];
-      code = hit && hit[0];
+      // items는 [name, code] 형태 → 코드는 hit[1]. (안전하게 5자리 숫자 필드를 골라낸다)
+      const _pick = v => { const m = String(v == null ? '' : v).match(/\d{5}/); return m ? m[0] : null; };
+      code = hit ? (_pick(hit[1]) || _pick(hit[0])) : null;
     }
   } catch (e) { return { ok: false, reason: '법정동코드 조회 실패' }; }
   if (!code || String(code).length !== 5) return { ok: false, reason: '법정동코드 없음' };
@@ -6296,9 +6303,10 @@ async function autoCollectComparables(p) {
   return { ok: true, count: added };
 }
 
-// 02 탭 진입 시 자동수집을 1회 실행. (state로 진행/완료/실패를 추적해 재렌더 유발)
+// 물건을 열면(선택·등록·앱 시작) 자동수집을 1회 실행 — 02 탭을 안 거쳐도 처음부터 배경 수집.
 //   실행 조건: (1) 거래사례가 아예 없거나, (2) 자동수집분에 지번(jibun)이 없어
 //   공시 개별보정이 불가한 '옛 스키마' 데이터뿐인 경우 → 지번 포함해 자동 재수집.
+//   성공 시 공시 개별보정(추정가)도 자동 프리페치 → 어느 탭에서 보든 추정가가 준비됨.
 window._autoCollectState = window._autoCollectState || {};
 async function _maybeAutoCollect(p) {
   if (!p) return;
@@ -6314,11 +6322,17 @@ async function _maybeAutoCollect(p) {
   const rg = (typeof _simRegion === 'function') ? _simRegion(p.addrLot || p.addrRoad || '') : {};
   if (!rg.sigungu) { S[p.id] = 'noregion'; return; }      // 지역 못 읽으면 수동 버튼으로 안내
   S[p.id] = staleApi ? 'recollecting' : 'collecting';     // 동기 설정 → 현재 렌더가 로딩 배너 표시
+  // 진행 배너 즉시 표시(어느 탭이든). setTimeout으로 현재 렌더 사이클 밖에서 → 재진입 방지
+  setTimeout(() => { if (state.currentPropertyId === p.id) renderView(); }, 0);
   let res;
   try { res = await autoCollectComparables(p); } catch (e) { res = { ok: false, reason: '오류' }; }
   S[p.id] = (res && res.ok) ? ('done:' + (res.count || 0)) : ('fail:' + ((res && res.reason) || '오류'));
-  // 수집 후 여전히 이 물건의 거래사례 화면이면 재렌더(표·차트·추정낙찰가 갱신)
-  if (state.currentPropertyId === p.id && state.currentView === 'comparables') renderView();
+  // 성공 시 추정가(공시 개별보정) 자동 산출 프리페치 → 클릭 없이 추정가 준비
+  if (res && res.ok && typeof prefetchCompAdjusted === 'function') {
+    try { await prefetchCompAdjusted(p); } catch (e) {}
+  }
+  // 수집·추정 완료 후 현재 이 물건을 보고 있으면 어느 탭이든 갱신(표·차트·추정낙찰가)
+  if (state.currentPropertyId === p.id) renderView();
 }
 </script>
 
