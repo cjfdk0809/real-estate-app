@@ -3585,6 +3585,31 @@ def admin_rate_stats():
 _CA_AREA_BW = 0.15          # 면적 근접 대역폭
 _CA_RECENCY_HALFLIFE = 18   # 최근성 반감기(개월)
 _CA_RATIO_MIN, _CA_RATIO_MAX = 0.5, 5.0   # 실거래/공시 배율 상식 범위(벗어나면 제외)
+_CA_TOP_N = 5               # 유사도 상위 N건만 개별보정에 사용(가중평균)
+
+
+def _ca_year(v):
+    """문자열/날짜에서 4자리 연도 추출. '2019-06-10'·'19.05'·2019 → 2019."""
+    import re as _re
+    s = str(v or '')
+    m = _re.search(r'(19|20)\d{2}', s)
+    if m:
+        return int(m.group(0))
+    m2 = _re.match(r'\s*(\d{2})[.\-/]', s)
+    if m2:
+        y = int(m2.group(1))
+        return 2000 + y if y < 50 else 1900 + y
+    return None
+
+
+def _ca_same_building(o_name, c_name, o_dong, c_dong):
+    """동일건물 판정: 건물명(공백제거) 완전일치 + (법정동 미상이거나 동일)."""
+    import re as _re
+    on = _re.sub(r'\s', '', str(o_name or ''))
+    cn = _re.sub(r'\s', '', str(c_name or ''))
+    if not (on and cn) or on != cn:
+        return False
+    return (not o_dong) or (not c_dong) or (o_dong == c_dong)
 
 
 @app.route('/api/valuation/comp-adjusted', methods=['POST'])
@@ -3620,17 +3645,21 @@ def valuation_comp_adjusted():
         except Exception:
             return 999
 
-    out_comps, pairs, fpairs = [], [], []   # pairs=(배율,weight) for 가중분위
+    o_year = _ca_year(origin.get('build_year'))     # 본건 사용승인(건축)연도
+    out_comps, cand = [], []      # cand=(ratio, sim, rec) — 매매 유효사례
+    n_sale = 0
     for c in comps:
-        if (c.get('type') or '매매') != '매매':
+        if (c.get('type') or '매매') != '매매':      # 추정가격은 매매만 사용(전세·월세는 표시전용)
             continue
+        n_sale += 1
         price = c.get('price')
         c_area = c.get('area')
         c_dong = (c.get('dong') or '').strip()      # 법정동
         jibun = (c.get('jibun') or '').strip()
+        c_year = _ca_year(c.get('build_year'))
         rec = {'name': c.get('name'), 'date': c.get('date'), 'area': c_area, 'floor': c.get('floor'),
-               'price': price, 'gongsi': None, 'ratio': None, 'weight': None, 'adjusted': None,
-               'used': False, 'reason': ''}
+               'build_year': c_year, 'price': price, 'gongsi': None, 'ratio': None, 'sim': None,
+               'same_building': False, 'adjusted': None, 'used': False, 'reason': ''}
         if not (price and c_area and jibun):
             rec['reason'] = '지번/면적/가격 누락'
             out_comps.append(rec); continue
@@ -3646,43 +3675,58 @@ def valuation_comp_adjusted():
         if ratio < _CA_RATIO_MIN or ratio > _CA_RATIO_MAX:
             rec['reason'] = f'배율 비정상({round(ratio,2)})'
             out_comps.append(rec); continue
-        # 가중치: 최근성 × 면적근접 × 같은 법정동
-        w = math.exp(-_months_ago(c.get('date')) / float(_CA_RECENCY_HALFLIFE))
-        if o_area_f and c_area:
+        # 유사도(순위) 가중: ①동일건물 ②거래일 ③사용승인일 ④면적 ⑤지역
+        same_bldg = _ca_same_building(origin.get('name'), c.get('name'), o_legal, c_dong)
+        sim = 4.0 if same_bldg else 1.0                                     # ① 동일건물 최우선
+        sim *= math.exp(-_months_ago(c.get('date')) / float(_CA_RECENCY_HALFLIFE))   # ② 거래일(최근성)
+        if o_year and c_year:                                              # ③ 사용승인일(±5년 대역)
+            sim *= math.exp(-0.5 * ((c_year - o_year) / 5.0) ** 2)
+        if o_area_f and c_area:                                            # ④ 면적유사성
             z = (float(c_area) - o_area_f) / (o_area_f * _CA_AREA_BW)
-            w *= math.exp(-0.5 * z * z)
-        if o_legal and c_dong:
-            w *= 1.0 if c_dong == o_legal else 0.6
-        rec['weight'] = round(w, 3)
+            sim *= math.exp(-0.5 * z * z)
+        if o_legal and c_dong:                                             # ⑤ 지역동일성(법정동)
+            sim *= 1.0 if c_dong == o_legal else 0.7
+        rec['sim'] = round(sim, 4)
+        rec['same_building'] = same_bldg
         rec['adjusted'] = int(round(o_gongsi * ratio / 10000.0))   # 만원
-        rec['used'] = True
         out_comps.append(rec)
-        pairs.append((ratio, w))
+        cand.append((ratio, sim, rec))
 
-    if not pairs:
+    if not cand:
         return jsonify({'available': False, 'reason': '보정에 쓸 유효 거래사례가 없습니다(사례 공시가격 매칭 실패).',
-                        'origin_gongsi': int(o_gongsi), 'comps': out_comps})
+                        'origin_gongsi': int(o_gongsi), 'comps': out_comps[:20]})
 
-    ratio_star = _weighted_percentile(pairs, 0.5)
+    # 유사도 상위 N건(3~5) 선정 → 그 공시배율을 유사도 가중평균
+    cand.sort(key=lambda t: t[1], reverse=True)
+    top = cand[:_CA_TOP_N]
+    for _, _, rec in top:
+        rec['used'] = True
+    pairs = [(r, s) for r, s, _ in top]
+    sw = sum(s for _, s in pairs)
+    sw2 = sum(s * s for _, s in pairs)
+    ratio_star = (sum(r * s for r, s in pairs) / sw) if sw > 0 else (sum(r for r, _ in pairs) / len(pairs))
     r_lo = _weighted_percentile(pairs, 0.25)
     r_hi = _weighted_percentile(pairs, 0.75)
-    sw = sum(w for _, w in pairs); sw2 = sum(w * w for _, w in pairs)
     neff = round((sw * sw / sw2), 1) if sw2 > 0 else 0.0
 
     est = int(round(o_gongsi * ratio_star / 10000.0))          # 만원
     est_lo = int(round(o_gongsi * r_lo / 10000.0))
     est_hi = int(round(o_gongsi * r_hi / 10000.0))
+    # 참고: 선정사례 ㎡당 실거래 단가(만원/㎡) 평균
+    ppa = [float(rec['price']) / float(rec['area']) for _, _, rec in top if rec.get('area')]
+    unit_ppa = int(round(sum(ppa) / len(ppa))) if ppa else None
+    out_comps.sort(key=lambda r: (r.get('sim') if r.get('sim') is not None else -1), reverse=True)
     return jsonify({
         'available': True,
         'origin_gongsi': int(o_gongsi),                 # 원
         'origin_gongsi_manwon': int(round(o_gongsi / 10000.0)),
         'origin_matched': o.get('matched'),
-        'ratio': ratio_star, 'ratio_lo': r_lo, 'ratio_hi': r_hi,
+        'ratio': round(ratio_star, 3), 'ratio_lo': r_lo, 'ratio_hi': r_hi,
         'estimate_manwon': est, 'estimate_lo_manwon': est_lo, 'estimate_hi_manwon': est_hi,
-        'n_used': len(pairs), 'n_total': len([c for c in comps if (c.get('type') or '매매') == '매매']),
-        'neff': neff,
-        'comps': out_comps,
-        'method': '거래사례 실거래/공시 배율 × 본건 공시가격 (개별성 보정)',
+        'n_used': len(top), 'n_total': n_sale, 'neff': neff,
+        'unit_ppa_manwon': unit_ppa,           # 선정사례 ㎡당 평균 실거래단가(참고)
+        'comps': out_comps[:20],
+        'method': '유사도 상위 %d건 공시배율 가중평균 × 본건 공시가격 (①동일건물 ②거래일 ③사용승인일 ④면적 ⑤지역)' % len(top),
     })
 
 

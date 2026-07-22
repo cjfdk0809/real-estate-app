@@ -7,7 +7,7 @@
  * - 정적 자원만 짧은 시간 캐싱
  */
 
-const CACHE_VERSION = 'v2.0.2-clean';
+const CACHE_VERSION = 'v2.0.3-clean';
 const CACHE_NAME = `real-estate-app-${CACHE_VERSION}`;
 
 // 정적 자원만 캐싱 (HTML 제외)
