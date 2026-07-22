@@ -222,6 +222,13 @@ def parse_kapt_response(response_text):
     return [], f'알 수 없는 응답 형식. 응답 앞부분: {text[:200]}'
 
 
+def _canceled_memo(raw, fallback=''):
+    """MOLIT 실거래 cdealType='O'(해제)를 프론트 필터가 인식하는 '해제' 문자열로 정규화한다.
+    (프론트 전역이 memo.includes('해제')로 취소거래를 거르는데, 원값 'O'는 걸러지지 않아
+     해제 거래가 시세·공시배율·낙찰가 추정에 섞이던 문제를 근본에서 차단.)"""
+    return '해제' if (raw.get('cdealType') or '').strip().upper() == 'O' else fallback
+
+
 def normalize_trade_item(raw):
     """매매 거래 항목 정규화."""
     # 거래금액에서 콤마 제거
@@ -254,7 +261,7 @@ def normalize_trade_item(raw):
         'floor': floor,
         'price': price,  # 만원 단위
         'type': '매매',
-        'memo': raw.get('cdealType', ''),  # 해제 등
+        'memo': _canceled_memo(raw),  # cdealType='O' → '해제'
         'jibun': raw.get('jibun', ''),
         'dong': raw.get('umdNm', ''),
         'build_year': (raw.get('buildYear') or '').strip(),
@@ -1620,7 +1627,7 @@ def normalize_rh_trade_item(raw):
         'floor': floor,
         'price': price,
         'type': '매매',
-        'memo': raw.get('cdealType', '') or raw.get('houseType', ''),
+        'memo': _canceled_memo(raw, raw.get('houseType', '') or ''),  # cdealType='O' → '해제'(우선), 아니면 유형
         'jibun': raw.get('jibun', ''),
         'dong': raw.get('umdNm', ''),
         'build_year': (raw.get('buildYear') or '').strip(),
@@ -1795,7 +1802,7 @@ def normalize_offi_trade_item(raw):
         'floor': floor,
         'price': price,
         'type': '매매',
-        'memo': raw.get('cdealType', ''),
+        'memo': _canceled_memo(raw),  # cdealType='O' → '해제'
         'jibun': raw.get('jibun', ''),
         'dong': raw.get('umdNm', ''),
         'build_year': (raw.get('buildYear') or '').strip(),
@@ -2229,7 +2236,9 @@ _PERIOD_LABEL = {1: '최근 1개월', 3: '최근 3개월', 6: '최근 6개월',
 
 # 유찰횟수 → 낙찰가율 기울기 추정용 파라미터
 _FAIL_MIN_PER_LEVEL = 5          # 유찰단계(0회/1회/…)별 최소 표본 수
-_FAIL_MIN_LEVELS = 2             # 기울기를 신뢰하기 위한 최소 유효 유찰단계 수
+_FAIL_MIN_LEVELS = 3             # 기울기를 신뢰하기 위한 최소 유효 유찰단계 수
+                                 # (2 → 3: 단일 차분 한 개로 ±25%p까지 요동치던 문제 억제.
+                                 #  단계가 3개 미만이면 유찰보정을 아예 미적용하고 실측 중앙값을 그대로 사용)
 _FAIL_SLOPE_CLAMP = (-30.0, 5.0)  # 유찰 1회당 %p 변화의 상식적 허용 범위
 _FAIL_SLOPE_MIN_MONTHS = 24      # 기울기 추정 최소 기간: 실측 중앙값 기간(짧을 수 있음)과
 #   분리해 항상 넓은 창에서 추정 → 소표본으로 기울기가 과격해지는 것을 완화.

@@ -94,7 +94,13 @@ def _lookup_bjd_code(sigungu, dong):
         for r in rows:
             if sigungu in (r.get('sigungu') or ''):
                 return r.get('bjd_code')
-    return rows[0].get('bjd_code')         # 동명이 유일하면 그대로
+    # 시군구로 특정하지 못한 경우: 후보 지역(bjd_code)이 유일하면 그대로 사용하고,
+    # 같은 동명이 여러 지역에 존재하면 임의 선택(rows[0])을 금지한다.
+    # (예: '삼성동'이 전국에 여러 곳 → 엉뚱한 도시 공시가로 기준시세가 오염되던 문제 차단)
+    distinct = {r.get('bjd_code') for r in rows if r.get('bjd_code')}
+    if len(distinct) == 1:
+        return rows[0].get('bjd_code')
+    return None                            # 동명 중복·시군구 미확정 → 모호로 처리(폴백)
 
 
 # ------------------------------------------------------------
