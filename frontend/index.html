@@ -874,7 +874,7 @@ table { border-collapse: collapse; width: 100%; }
 
     <div class="sidebar-footer">
       <button class="btn-add" onclick="openPropertyModal()">🔍 물건 검색</button>
-      <div id="buildStamp" style="margin-top:8px;text-align:center;font-size:10px;color:var(--ink-muted,#9aa3b2);letter-spacing:.02em;">build 2026-07-22 · 자동수집 v3</div>
+      <div id="buildStamp" style="margin-top:8px;text-align:center;font-size:10px;color:var(--ink-muted,#9aa3b2);letter-spacing:.02em;">build 2026-07-22 · 자동수집 v4</div>
     </div>
   </aside>
 
@@ -6017,7 +6017,17 @@ async function fetchTransactions() {
     }
 
     if (d.count === 0) {
-      resultBox.innerHTML = `<div style="padding: 12px; background: var(--bg-subtle); border-radius: 6px;">이 시군구에 최근 24개월 해당 유형(${useType}) 실거래가 없습니다. 법정동·건물유형을 확인하세요.</div>`;
+      const _errs = d.errors || [];
+      const _limitHit = _errs.some(e => /한도|LIMIT|EXCEED|TRAFFIC|초과/i.test(String(e)));
+      let _note;
+      if (_limitHit) {
+        _note = `⚠️ <strong>국토부 API 호출 한도 초과로 조회가 막혔습니다.</strong> 잠시 후(또는 내일) 다시 시도하거나 API 키 한도를 확인하세요. 데이터가 없는 게 아니라 <u>조회가 차단된 상태</u>입니다.<br><span class="text-small text-muted">오류 예: ${String(_errs[0]).slice(0, 120)}</span>`;
+      } else if (_errs.length) {
+        _note = `이 시군구에 최근 24개월 해당 유형(${useType}) 실거래가 없습니다 — 단, 조회 중 <strong>오류 ${_errs.length}건</strong>이 있었습니다.<br><span class="text-small text-muted">오류 예: ${String(_errs[0]).slice(0, 140)}</span>`;
+      } else {
+        _note = `이 시군구에 최근 24개월 해당 유형(${useType}) 실거래가 없습니다(오류 없음 = 실제 데이터 없음). 법정동·건물유형을 확인하세요.`;
+      }
+      resultBox.innerHTML = `<div style="padding: 12px; background: ${_limitHit ? 'var(--accent-soft)' : 'var(--bg-subtle)'}; border-radius: 6px; ${_limitHit ? 'color: var(--accent);' : ''}">${_note}</div>`;
       return;
     }
 
@@ -6294,7 +6304,12 @@ async function autoCollectComparables(p) {
     d = await r.json();
   } catch (e) { return { ok: false, reason: '백엔드 연결 실패' }; }
   if (d.error) return { ok: false, reason: d.error };
-  if (!d.items || !d.items.length) return { ok: false, reason: '실거래 0건' };
+  if (!d.items || !d.items.length) {
+    const _errs = d.errors || [];
+    if (_errs.some(e => /한도|LIMIT|EXCEED|TRAFFIC|초과/i.test(String(e)))) return { ok: false, reason: '국토부 API 호출한도 초과(잠시 후 재시도)' };
+    if (_errs.length) return { ok: false, reason: `실거래 0건(조회오류 ${_errs.length}건)` };
+    return { ok: false, reason: '실거래 0건(해당 지역·기간 데이터 없음)' };
+  }
   // 자동확대 필터(수동수집과 동일) 후 조용히 등록
   const { items } = _autoWidenComps(d.items, p);
   if (!items || !items.length) return { ok: false, reason: '조건 매칭 0건' };
