@@ -11,36 +11,14 @@
 (function () {
   'use strict';
 
-  /* ===== 지역별 낙찰가율 기준표 (월 1회 갱신 · 출처: 지지옥션 경매동향) ===== */
-  var REGION_RATES = {
-    _asof: '2026-05',
-    national: { rate: 87.3, asof: '2026-05' },
-    sido: {
-      '서울': { rate: 100.8, asof: '2026-05' },
-      '경기': { rate: 89.0,  asof: '2026-05' },
-      '인천': { rate: 79.8,  asof: '2026-05' },
-      '경남': { rate: 82.1, asof: '2026-02' }, '경북': { rate: 82.1, asof: '2026-02' },
-      '충북': { rate: 86.0, asof: '2026-02' }, '충남': { rate: 84.2, asof: '2026-02' },
-      '전남': { rate: 80.2, asof: '2026-02' }, '전북': { rate: 84.5, asof: '2026-02' },
-      '강원': { rate: 83.4, asof: '2026-02' }, '제주': { rate: 81.2, asof: '2026-02' },
-      '세종': { rate: 88.1, asof: '2026-02' }
-    },
-    // 서울 자치구 (지지옥션 자치구별 표) — 최신월 나오면 rate/asof 교체
-    sigungu: {
-      '도봉구': { rate: 92.7,  asof: '2025-12' },
-      '노원구': { rate: 90.8,  asof: '2025-12' },
-      '양천구': { rate: 122.0, asof: '2025-12' },
-      '성동구': { rate: 120.5, asof: '2025-12' },
-      '강동구': { rate: 117.3, asof: '2025-12' },
-      '동작구': { rate: 105.7, asof: '2025-12' },
-      '동대문구': { rate: 104.6, asof: '2025-12' },
-      '분당구': { rate: 115.8, asof: '2025-12' }   // 경기 성남
-    }
-  };
+  /* 낙찰가율 통계표는 auction_rates.js 의 window.AUCTION_RATES(한국부동산원)를 사용한다.
+     (과거 지지옥션 기준 REGION_RATES 하드코딩은 실제로 참조되지 않아 제거함 — 유지보수 혼선 방지) */
 
   var CFG = {
     minSameComplex: 3, minSigungu: 5, minDong: 5, simMinNeff: 3, spread: 5,
-    minRate: 30, maxRate: 130, def: { con: 85, mid: 90, agg: 95 }
+    minRate: 30, maxRate: 130,
+    statMin: 45, statMax: 115,   // 통계표(용도무관 종합) 셀의 신뢰 가능 범위 — 벗어나면 이상치로 보고 상위 통계로 폴백
+    def: { con: 85, mid: 90, agg: 95 }
   };
 
   /* 신뢰도 등급: 유효표본수(N_eff)로 상/중/하. 표본 얇으면 '수기 검토 권장' 경고. */
@@ -229,12 +207,15 @@
       });
     });
 
+    // 주거용 종합 낙찰가율로 비현실적인 통계 셀(소표본·특수매각 오염: 예 옹진군 304%, 상주 122%)은
+    // 신뢰 불가로 보고 null 반환 → 캐스케이드가 상위(전국) 통계로 자동 폴백한다.
+    function _plausible(v) { return typeof v === 'number' && v >= CFG.statMin && v <= CFG.statMax; }
     function _statSgg(sido, sgg) {
       var R = window.AUCTION_RATES;
       if (!R || !R.sigungu || !sido || !sgg) return null;
       var m = R.sigungu[sido]; if (!m) return null;
-      if (m[sgg] != null) return { rate: m[sgg], asof: R.asof };
-      for (var k in m) { if (k.length >= sgg.length && k.slice(-sgg.length) === sgg) return { rate: m[k], asof: R.asof }; }
+      if (m[sgg] != null) return _plausible(m[sgg]) ? { rate: m[sgg], asof: R.asof } : null;
+      for (var k in m) { if (k.length >= sgg.length && k.slice(-sgg.length) === sgg) return _plausible(m[k]) ? { rate: m[k], asof: R.asof } : null; }
       return null;
     }
     function _statSido(sido) {
@@ -300,8 +281,14 @@
                       delta: round1(center - round1(baseRate)) };
         }
       }
-    } else {
+    } else if (tier === 'default') {
+      // 지역 신호가 전혀 없을 때만 근사 용도계수 적용(아파트 기준 90% × 용도계수).
       center = round1(center * useFactor);
+    } else {
+      // 통계표(용도무관 종합)·관측 사례(동일단지·시군구)는 이미 용도가 섞여 있으므로
+      // 아파트 기준으로 만든 근사 용도계수를 다시 곱하면 이중 할인이 된다 → 미적용.
+      useFactor = 1;
+      center = round1(center);
     }
 
     var sc;

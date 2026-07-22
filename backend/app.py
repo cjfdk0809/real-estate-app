@@ -361,13 +361,8 @@ def manifest():
     return send_from_directory('../frontend', 'manifest.json', mimetype='application/manifest+json')
 
 
-@app.route('/sw.js')
-def service_worker():
-    response = send_from_directory('../frontend', 'sw.js', mimetype='application/javascript')
-    # Service Worker는 스코프 제한이 없도록 헤더 추가
-    response.headers['Service-Worker-Allowed'] = '/'
-    response.headers['Cache-Control'] = 'no-cache'  # SW 자체는 캐싱 안 함 (업데이트 즉시 반영)
-    return response
+# (sw.js 라우트 제거) 서비스워커는 프론트에서 매 로드마다 unregister 되어 실제로 등록되지 않았고,
+# /sw.js 파일도 로드되지 않는 죽은 자원이라 파일과 함께 정리함. PWA 설치(manifest)는 유지.
 
 
 @app.route('/icon.svg')
