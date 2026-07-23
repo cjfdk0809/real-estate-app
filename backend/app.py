@@ -3461,7 +3461,10 @@ def _detect_region_from_name(fname):
     # (예: '경기도 성남시 분당구' → '성남시'). 조회가 맞물리도록 동일 규칙으로 첫 토큰 채택.
     # {1,}?로 한 글자+구(중구·동구·서구·남구·북구)도 인식.
     toks = _re.findall(r'[가-힣]{1,}?[시군구]', rest)
-    sgg = toks[0] if toks else None
+    # '구'가 있으면 구까지 세분화(성남시 분당구 → 분당구), 없으면 시/군. 프론트 parseSigungu와 동일 규칙.
+    gu = [t for t in toks if t.endswith('구')]
+    si = [t for t in toks if t.endswith('시') or t.endswith('군')]
+    sgg = gu[-1] if gu else (si[-1] if si else None)
     return sido, sgg
 
 

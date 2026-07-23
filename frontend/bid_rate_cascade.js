@@ -89,6 +89,7 @@
   function _realStat(p) {
     var g = _useGroup(p.use || p.usage);
     var rg = _parseRegion(p.addrLot || p.addrRoad || '');
+    rg.sigungu = parseSigungu(p.addrLot || p.addrRoad || '') || rg.sigungu;   // 🆕 성남시 분당구 등 '구'까지 세분화(백엔드 저장키와 일치)
     var v = _realCache[_rsKey(g, rg.sido, rg.sigungu, rg.dong)];
     return v || null;
   }
@@ -98,6 +99,7 @@
     if (!p || typeof window.BACKEND_URL !== 'string') return;
     var g = _useGroup(p.use || p.usage);
     var rg = _parseRegion(p.addrLot || p.addrRoad || '');
+    rg.sigungu = parseSigungu(p.addrLot || p.addrRoad || '') || rg.sigungu;   // 🆕 성남시 분당구 등 '구'까지 세분화(백엔드 저장키와 일치)
     var key = _rsKey(g, rg.sido, rg.sigungu, rg.dong);
     if (key in _realCache) return;
     try {
