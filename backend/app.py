@@ -1813,6 +1813,65 @@ def diag_molit():
     })
 
 
+@app.route('/api/admin/diag-scan')
+def diag_scan():
+    """진단용: 한 시군구의 최근 N개월 × 유형별 totalCount를 한 번에 스캔.
+    apt엔 나오는데 rh만 0이면 → 이 지역 연립·다세대 물량이 실제로 적은 것(버그 아님).
+    모든 유형이 0이면 → 법정동코드(시군구) 자체를 의심.
+    예: /api/admin/diag-scan?lawd_cd=28260&months=12&types=apt,rh
+    """
+    if not API_KEY:
+        return jsonify({'error': 'API 키 미설정(MOLIT_API_KEY)'}), 500
+    lawd_cd = request.args.get('lawd_cd', '28260').strip()
+    months = request.args.get('months', default=12, type=int)
+    months = max(1, min(24, months))
+    types = [t.strip() for t in request.args.get('types', 'apt,rh').split(',') if t.strip()]
+    url_map = {'apt': URL_TRADE, 'rh': URL_RH_TRADE, 'offi': URL_OFFI_TRADE, 'sh': URL_SH_TRADE}
+
+    now = datetime.now(); yms = []; y, m = now.year, now.month
+    for _ in range(months):
+        yms.append(f'{y}{m:02d}'); m -= 1
+        if m == 0:
+            m = 12; y -= 1
+
+    per_month = []
+    for ym in yms:
+        row = {'ym': ym}
+        for t in types:
+            url = url_map.get(t)
+            if not url:
+                row[t] = '알수없는유형'; continue
+            try:
+                r = requests.get(url, params={'serviceKey': API_KEY, 'LAWD_CD': lawd_cd,
+                                              'DEAL_YMD': ym, 'numOfRows': '1', 'pageNo': '1'}, timeout=20)
+                _items, _err = parse_xml_items(r.text)
+                if _err:
+                    row[t] = _err[:60]
+                else:
+                    try:
+                        row[t] = ET.fromstring(r.text).findtext('.//totalCount', default='0')
+                    except Exception:
+                        row[t] = str(len(_items))
+            except Exception as e:
+                row[t] = f'요청실패:{e}'[:60]
+        per_month.append(row)
+
+    totals = {}
+    for t in types:
+        vals = [r.get(t, '') for r in per_month]
+        if all(str(v).isdigit() for v in vals):
+            totals[t] = f'{sum(int(v) for v in vals)}건(최근 {months}개월 합계)'
+        else:
+            totals[t] = '오류 포함(월별 확인)'
+
+    return jsonify({
+        'lawd_cd': lawd_cd, 'months': months, 'types': types,
+        'totals': totals, 'per_month': per_month,
+        'hint': 'apt는 나오는데 rh만 0이면 이 지역 연립·다세대 물량이 실제로 적은 것(버그 아님). '
+                '모든 유형이 0이면 법정동코드(시군구) 자체를 의심하세요.',
+    })
+
+
 # ============================================================
 # 오피스텔 실거래가 (구조: 연립다세대와 동일 — 전용면적·층·단지명 offiNm)
 # ============================================================
