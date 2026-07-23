@@ -124,13 +124,32 @@ app.register_blueprint(housing_bp)  # 🆕 공시가격 조회 Blueprint 등록
 # 유틸: XML 파싱
 # ============================================================
 def parse_xml_items(xml_text):
-    """국토부 API XML 응답을 파싱하여 dict 리스트로 반환."""
+    """국토부 API XML 응답을 파싱하여 (items, error_or_None) 반환."""
+    if not (xml_text or '').strip():
+        return [], '응답이 비어 있습니다(네트워크·타임아웃 가능).'
     try:
         root = ET.fromstring(xml_text)
     except ET.ParseError:
-        return [], 'XML 파싱 실패. API 키가 올바른지 확인하세요.'
+        snippet = re.sub(r'\s+', ' ', xml_text)[:160]
+        return [], f'응답 파싱 실패(비XML). 앞부분: {snippet}'
 
-    # 응답 코드 확인
+    # (A) 공공데이터포털 '게이트웨이' 레벨 오류: <cmmMsgHeader><returnReasonCode>… 형식.
+    #     이 형식은 <resultCode>가 없어, 아래 resultCode 검사만으로는 '0건·오류없음'으로 오인된다.
+    #     서비스키 미등록·활용기간 만료·일일 호출한도 초과가 모두 여기로 온다(0건 오인의 핵심 원인).
+    reason = (root.findtext('.//returnReasonCode') or '').strip()
+    auth_msg = (root.findtext('.//returnAuthMsg') or root.findtext('.//errMsg') or '').strip()
+    if reason and reason not in ('00', '000'):
+        u = auth_msg.upper()
+        hint = ''
+        if 'NOT_REGISTERED' in u or 'NOT REGISTERED' in u:
+            hint = ' — 이 실거래 유형 API 활용신청/승인 여부 확인(아파트와 별도 신청).'
+        elif 'LIMITED_NUMBER' in u or 'EXCEEDS' in u or 'TRAFFIC' in u or reason == '22':
+            hint = ' — 일일 호출한도 초과 가능(개발계정 1,000회/일). 잠시 후 재시도.'
+        elif 'DEADLINE' in u or 'EXPIRE' in u:
+            hint = ' — 서비스키 활용기간 만료 가능(데이터포털에서 연장).'
+        return [], f'공공데이터포털 오류 [{reason}] {auth_msg or "메시지 없음"}{hint}'
+
+    # (B) 서비스 레벨 결과코드
     result_code = root.findtext('.//resultCode', default='')
     result_msg = root.findtext('.//resultMsg', default='')
     if result_code and result_code not in ('00', '000'):
