@@ -124,13 +124,32 @@ app.register_blueprint(housing_bp)  # 🆕 공시가격 조회 Blueprint 등록
 # 유틸: XML 파싱
 # ============================================================
 def parse_xml_items(xml_text):
-    """국토부 API XML 응답을 파싱하여 dict 리스트로 반환."""
+    """국토부 API XML 응답을 파싱하여 (items, error_or_None) 반환."""
+    if not (xml_text or '').strip():
+        return [], '응답이 비어 있습니다(네트워크·타임아웃 가능).'
     try:
         root = ET.fromstring(xml_text)
     except ET.ParseError:
-        return [], 'XML 파싱 실패. API 키가 올바른지 확인하세요.'
+        snippet = re.sub(r'\s+', ' ', xml_text)[:160]
+        return [], f'응답 파싱 실패(비XML). 앞부분: {snippet}'
 
-    # 응답 코드 확인
+    # (A) 공공데이터포털 '게이트웨이' 레벨 오류: <cmmMsgHeader><returnReasonCode>… 형식.
+    #     이 형식은 <resultCode>가 없어, 아래 resultCode 검사만으로는 '0건·오류없음'으로 오인된다.
+    #     서비스키 미등록·활용기간 만료·일일 호출한도 초과가 모두 여기로 온다(0건 오인의 핵심 원인).
+    reason = (root.findtext('.//returnReasonCode') or '').strip()
+    auth_msg = (root.findtext('.//returnAuthMsg') or root.findtext('.//errMsg') or '').strip()
+    if reason and reason not in ('00', '000'):
+        u = auth_msg.upper()
+        hint = ''
+        if 'NOT_REGISTERED' in u or 'NOT REGISTERED' in u:
+            hint = ' — 이 실거래 유형 API 활용신청/승인 여부 확인(아파트와 별도 신청).'
+        elif 'LIMITED_NUMBER' in u or 'EXCEEDS' in u or 'TRAFFIC' in u or reason == '22':
+            hint = ' — 일일 호출한도 초과 가능(개발계정 1,000회/일). 잠시 후 재시도.'
+        elif 'DEADLINE' in u or 'EXPIRE' in u:
+            hint = ' — 서비스키 활용기간 만료 가능(데이터포털에서 연장).'
+        return [], f'공공데이터포털 오류 [{reason}] {auth_msg or "메시지 없음"}{hint}'
+
+    # (B) 서비스 레벨 결과코드
     result_code = root.findtext('.//resultCode', default='')
     result_msg = root.findtext('.//resultMsg', default='')
     if result_code and result_code not in ('00', '000'):
@@ -222,6 +241,13 @@ def parse_kapt_response(response_text):
     return [], f'알 수 없는 응답 형식. 응답 앞부분: {text[:200]}'
 
 
+def _canceled_memo(raw, fallback=''):
+    """MOLIT 실거래 cdealType='O'(해제)를 프론트 필터가 인식하는 '해제' 문자열로 정규화한다.
+    (프론트 전역이 memo.includes('해제')로 취소거래를 거르는데, 원값 'O'는 걸러지지 않아
+     해제 거래가 시세·공시배율·낙찰가 추정에 섞이던 문제를 근본에서 차단.)"""
+    return '해제' if (raw.get('cdealType') or '').strip().upper() == 'O' else fallback
+
+
 def normalize_trade_item(raw):
     """매매 거래 항목 정규화."""
     # 거래금액에서 콤마 제거
@@ -254,7 +280,7 @@ def normalize_trade_item(raw):
         'floor': floor,
         'price': price,  # 만원 단위
         'type': '매매',
-        'memo': raw.get('cdealType', ''),  # 해제 등
+        'memo': _canceled_memo(raw),  # cdealType='O' → '해제'
         'jibun': raw.get('jibun', ''),
         'dong': raw.get('umdNm', ''),
         'build_year': (raw.get('buildYear') or '').strip(),
@@ -361,13 +387,8 @@ def manifest():
     return send_from_directory('../frontend', 'manifest.json', mimetype='application/manifest+json')
 
 
-@app.route('/sw.js')
-def service_worker():
-    response = send_from_directory('../frontend', 'sw.js', mimetype='application/javascript')
-    # Service Worker는 스코프 제한이 없도록 헤더 추가
-    response.headers['Service-Worker-Allowed'] = '/'
-    response.headers['Cache-Control'] = 'no-cache'  # SW 자체는 캐싱 안 함 (업데이트 즉시 반영)
-    return response
+# (sw.js 라우트 제거) 서비스워커는 프론트에서 매 로드마다 unregister 되어 실제로 등록되지 않았고,
+# /sw.js 파일도 로드되지 않는 죽은 자원이라 파일과 함께 정리함. PWA 설치(manifest)는 유지.
 
 
 @app.route('/icon.svg')
@@ -1625,7 +1646,7 @@ def normalize_rh_trade_item(raw):
         'floor': floor,
         'price': price,
         'type': '매매',
-        'memo': raw.get('cdealType', '') or raw.get('houseType', ''),
+        'memo': _canceled_memo(raw, raw.get('houseType', '') or ''),  # cdealType='O' → '해제'(우선), 아니면 유형
         'jibun': raw.get('jibun', ''),
         'dong': raw.get('umdNm', ''),
         'build_year': (raw.get('buildYear') or '').strip(),
@@ -1800,7 +1821,7 @@ def normalize_offi_trade_item(raw):
         'floor': floor,
         'price': price,
         'type': '매매',
-        'memo': raw.get('cdealType', ''),
+        'memo': _canceled_memo(raw),  # cdealType='O' → '해제'
         'jibun': raw.get('jibun', ''),
         'dong': raw.get('umdNm', ''),
         'build_year': (raw.get('buildYear') or '').strip(),
@@ -2234,7 +2255,9 @@ _PERIOD_LABEL = {1: '최근 1개월', 3: '최근 3개월', 6: '최근 6개월',
 
 # 유찰횟수 → 낙찰가율 기울기 추정용 파라미터
 _FAIL_MIN_PER_LEVEL = 5          # 유찰단계(0회/1회/…)별 최소 표본 수
-_FAIL_MIN_LEVELS = 2             # 기울기를 신뢰하기 위한 최소 유효 유찰단계 수
+_FAIL_MIN_LEVELS = 3             # 기울기를 신뢰하기 위한 최소 유효 유찰단계 수
+                                 # (2 → 3: 단일 차분 한 개로 ±25%p까지 요동치던 문제 억제.
+                                 #  단계가 3개 미만이면 유찰보정을 아예 미적용하고 실측 중앙값을 그대로 사용)
 _FAIL_SLOPE_CLAMP = (-30.0, 5.0)  # 유찰 1회당 %p 변화의 상식적 허용 범위
 _FAIL_SLOPE_MIN_MONTHS = 24      # 기울기 추정 최소 기간: 실측 중앙값 기간(짧을 수 있음)과
 #   분리해 항상 넓은 창에서 추정 → 소표본으로 기울기가 과격해지는 것을 완화.

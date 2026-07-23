@@ -830,9 +830,9 @@ table { border-collapse: collapse; width: 100%; }
 .map-lbl-origin { color: #E6007E; border-color: #E6007E; }
 .map-lbl-same { color: #CC00CC; border-color: #CC00CC; }
 </style>
-<script src="/kfi_trade_collector.js?v=20260722"></script>
-<script src="/auction_rates.js?v=20260722"></script>
-<script src="/bid_rate_cascade.js?v=20260722"></script>
+<script src="/kfi_trade_collector.js?v=20260723"></script>
+<script src="/auction_rates.js?v=20260723"></script>
+<script src="/bid_rate_cascade.js?v=20260723"></script>
 </head>
 <body>
 
@@ -2096,7 +2096,7 @@ function renderComparables() {
     ${_acBanner}
     ${_caBanner}
 
-    <div class="grid grid-4 mb-24">
+    <div class="grid grid-4 mb-24" id="cmpStatGrid">
       <div class="stat-card">
         <div class="stat-label">동일면적 매매</div>
         <div class="stat-value">${sameAreaSales.length}<span class="stat-unit">건</span></div>
@@ -2125,7 +2125,7 @@ function renderComparables() {
 
     ${avgAllSales > 0 ? `
     <!-- ========== NPL 회수 가능 금액 추정 ========== -->
-    <div style="background: linear-gradient(135deg, var(--kiwoom-navy-soft) 0%, #d4dcf0 100%); border: 1px solid var(--kiwoom-navy-light); border-left: 4px solid var(--kiwoom-navy); border-radius: 8px; padding: 22px 26px; margin-bottom: 16px;">
+    <div id="nplRecoveryCard" style="background: linear-gradient(135deg, var(--kiwoom-navy-soft) 0%, #d4dcf0 100%); border: 1px solid var(--kiwoom-navy-light); border-left: 4px solid var(--kiwoom-navy); border-radius: 8px; padding: 22px 26px; margin-bottom: 16px;">
       <div style="font-size: 11px; letter-spacing: 0.18em; color: var(--kiwoom-navy); text-transform: uppercase; font-weight: 700; margin-bottom: 8px;">💰 NPL 회수 가능 금액 추정 · NPL Recovery Estimate <span style="font-family:var(--sans); letter-spacing:0; text-transform:none; font-weight:600; color:var(--kiwoom-navy-deep);">(${danjiTag})</span></div>
       <div style="font-family: var(--mono); font-size: 30px; font-weight: 800; color: var(--kiwoom-navy-deep); line-height: 1.2; letter-spacing: -0.02em;">${fmt.won(Math.round(nplMedian))}</div>
       <div style="font-size: 13px; color: var(--ink-soft); margin-top: 6px; font-family: var(--mono);">회수 범위: ${fmt.won(Math.round(nplLower))} ~ ${fmt.won(Math.round(nplUpper))}</div>
@@ -3983,7 +3983,7 @@ function renderReport() {
     </table>` : ''}
 
     <div class="section-h">5. 분석 요약</div>
-    <div style="line-height: 1.8; color: var(--ink-soft);">
+    <div id="reportSummaryProse" style="line-height: 1.8; color: var(--ink-soft);">
       본건 <strong>${p.name} ${p.building} ${p.unit}</strong>(전용 ${p.exclusiveArea}㎡, ${p.floor}층)의 동일 면적대 평균 거래가는 
       <strong class="text-accent">${fmt.won(avgPrice)}</strong>이며,
       등록된 권리는 ${rights.length}건(말소기준 ${ra.baseRight ? ra.baseRight.type + ' ' + fmt.date(ra.baseRight.date) : '미확정'}, 인수금액 ${fmt.won(ra.assumedTotal)})입니다.${(ap.value && ra.seniorClaim) ? ` 최종 채택(${_decLabel}) 예상 낙찰가 <strong>${fmt.won(_finalBid)}</strong> 기준 1순위 회수율은 약 <strong class="text-accent">${_finalRecovery != null ? _finalRecovery.toFixed(1) + '%' : '-'}</strong>로 추정됩니다.` : ''}
@@ -4524,8 +4524,11 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
 
   // 전용면적 ±5% 범위
   const area = Number(propertyData.exclusiveArea);
-  let minArea = Math.floor(area * 0.95 * 100) / 100;
-  let maxArea = Math.ceil(area * 1.05 * 100) / 100;
+  // 연립·다세대는 면적 분산이 커서 프론트 _sameAreaTol(±10%·최소2㎡)과 동일하게 넓게 수집한다.
+  // (기존 ±5%면 백엔드에서 미리 걸러져 프론트가 받아줄 빌라 사례를 애초에 못 받아오던 문제 해소)
+  const _areaTol = (kind === 'rh') ? Math.max(2, area * 0.10) : area * 0.05;
+  let minArea = Math.floor((area - _areaTol) * 100) / 100;
+  let maxArea = Math.ceil((area + _areaTol) * 100) / 100;
   const roadNm = _extractRoadName(propertyData.addrRoad || '');
 
   async function _fetchBulk(useRoad, skipDanji) {

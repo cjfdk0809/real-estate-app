@@ -11,36 +11,15 @@
 (function () {
   'use strict';
 
-  /* ===== 지역별 낙찰가율 기준표 (월 1회 갱신 · 출처: 지지옥션 경매동향) ===== */
-  var REGION_RATES = {
-    _asof: '2026-05',
-    national: { rate: 87.3, asof: '2026-05' },
-    sido: {
-      '서울': { rate: 100.8, asof: '2026-05' },
-      '경기': { rate: 89.0,  asof: '2026-05' },
-      '인천': { rate: 79.8,  asof: '2026-05' },
-      '경남': { rate: 82.1, asof: '2026-02' }, '경북': { rate: 82.1, asof: '2026-02' },
-      '충북': { rate: 86.0, asof: '2026-02' }, '충남': { rate: 84.2, asof: '2026-02' },
-      '전남': { rate: 80.2, asof: '2026-02' }, '전북': { rate: 84.5, asof: '2026-02' },
-      '강원': { rate: 83.4, asof: '2026-02' }, '제주': { rate: 81.2, asof: '2026-02' },
-      '세종': { rate: 88.1, asof: '2026-02' }
-    },
-    // 서울 자치구 (지지옥션 자치구별 표) — 최신월 나오면 rate/asof 교체
-    sigungu: {
-      '도봉구': { rate: 92.7,  asof: '2025-12' },
-      '노원구': { rate: 90.8,  asof: '2025-12' },
-      '양천구': { rate: 122.0, asof: '2025-12' },
-      '성동구': { rate: 120.5, asof: '2025-12' },
-      '강동구': { rate: 117.3, asof: '2025-12' },
-      '동작구': { rate: 105.7, asof: '2025-12' },
-      '동대문구': { rate: 104.6, asof: '2025-12' },
-      '분당구': { rate: 115.8, asof: '2025-12' }   // 경기 성남
-    }
-  };
+  /* 낙찰가율 통계표는 auction_rates.js 의 window.AUCTION_RATES(한국부동산원)를 사용한다.
+     (과거 지지옥션 기준 REGION_RATES 하드코딩은 실제로 참조되지 않아 제거함 — 유지보수 혼선 방지) */
 
   var CFG = {
     minSameComplex: 3, minSigungu: 5, minDong: 5, simMinNeff: 3, spread: 5,
-    minRate: 30, maxRate: 130, def: { con: 85, mid: 90, agg: 95 }
+    minRate: 30, maxRate: 130,
+    statMin: 45, statMax: 115,   // 통계표(용도무관 종합) 셀의 신뢰 가능 범위 — 벗어나면 이상치로 보고 상위 통계로 폴백
+    asofWarnMonths: 3,           // 적용 낙찰가율 기준월이 이 개월수 이상 지나면 신선도 경고 표시
+    def: { con: 85, mid: 90, agg: 95 }
   };
 
   /* 신뢰도 등급: 유효표본수(N_eff)로 상/중/하. 표본 얇으면 '수기 검토 권장' 경고. */
@@ -170,6 +149,13 @@
   function rateOf(x) { return (x && x.winningBid && x.appraisal) ? (x.winningBid / x.appraisal * 100) : null; }
   function ok(r) { return typeof r === 'number' && !isNaN(r) && r >= CFG.minRate && r <= CFG.maxRate; }
   function round1(v) { return Math.round(v * 10) / 10; }
+  // 기준월(YYYY-MM 또는 YYYY-MM-DD) → 현재로부터 경과 개월수. 파싱 실패 시 null.
+  function asofMonths(asof) {
+    var m = String(asof || '').match(/(\d{4})-(\d{2})/);
+    if (!m) return null;
+    var now = new Date();
+    return (now.getFullYear() - parseInt(m[1], 10)) * 12 + (now.getMonth() + 1 - parseInt(m[2], 10));
+  }
   function trimMean(a) {
     if (!a || !a.length) return 0;
     if (a.length >= 5) { var s = a.slice().sort(function (x, y) { return x - y; }); var m = s.slice(1, -1); return m.reduce(function (p, q) { return p + q; }, 0) / m.length; }
@@ -229,12 +215,15 @@
       });
     });
 
+    // 주거용 종합 낙찰가율로 비현실적인 통계 셀(소표본·특수매각 오염: 예 옹진군 304%, 상주 122%)은
+    // 신뢰 불가로 보고 null 반환 → 캐스케이드가 상위(전국) 통계로 자동 폴백한다.
+    function _plausible(v) { return typeof v === 'number' && v >= CFG.statMin && v <= CFG.statMax; }
     function _statSgg(sido, sgg) {
       var R = window.AUCTION_RATES;
       if (!R || !R.sigungu || !sido || !sgg) return null;
       var m = R.sigungu[sido]; if (!m) return null;
-      if (m[sgg] != null) return { rate: m[sgg], asof: R.asof };
-      for (var k in m) { if (k.length >= sgg.length && k.slice(-sgg.length) === sgg) return { rate: m[k], asof: R.asof }; }
+      if (m[sgg] != null) return _plausible(m[sgg]) ? { rate: m[sgg], asof: R.asof } : null;
+      for (var k in m) { if (k.length >= sgg.length && k.slice(-sgg.length) === sgg) return _plausible(m[k]) ? { rate: m[k], asof: R.asof } : null; }
       return null;
     }
     function _statSido(sido) {
@@ -300,8 +289,14 @@
                       delta: round1(center - round1(baseRate)) };
         }
       }
-    } else {
+    } else if (tier === 'default') {
+      // 지역 신호가 전혀 없을 때만 근사 용도계수 적용(아파트 기준 90% × 용도계수).
       center = round1(center * useFactor);
+    } else {
+      // 통계표(용도무관 종합)·관측 사례(동일단지·시군구)는 이미 용도가 섞여 있으므로
+      // 아파트 기준으로 만든 근사 용도계수를 다시 곱하면 이중 할인이 된다 → 미적용.
+      useFactor = 1;
+      center = round1(center);
     }
 
     var sc;
@@ -486,6 +481,15 @@
         + '<div class="text-muted" style="margin-top:4px;">추정 낙찰가율 범위 <strong>' + round1(cas.rangeLo) + '~' + round1(cas.rangeHi) + '%</strong> → 추정낙찰가 <strong>' + won(_loAmt) + ' ~ ' + won(_hiAmt) + '</strong> <span style="opacity:.8;">(25~75분위)</span></div>'
         + '</div>';
     }
+    // 낙찰가율 기준월 신선도 — 기준월이 오래되면 과거 통계 사용 가능성을 경고(수기 검토 유도)
+    if (cas.asof) {
+      var _am = asofMonths(cas.asof);
+      if (_am != null && _am >= CFG.asofWarnMonths) {
+        note += '<div class="text-small" style="margin-top:7px;color:var(--warn,#b45309);font-weight:600;">'
+          + '⚠️ 적용 낙찰가율 기준월 <strong>' + cas.asof + '</strong> · 약 ' + _am + '개월 경과. '
+          + '최신 경매통계로 갱신되었는지 확인하세요(수기 검토 권장).</div>';
+      }
+    }
 
     var row = function (label, val, desc, strong) {
       return '<tr>'
@@ -629,7 +633,7 @@
     });
     var info = windowedAvg(sameArea);
 
-    var grid = vc.querySelector('.grid.grid-4');
+    var grid = document.getElementById('cmpStatGrid') || vc.querySelector('.grid.grid-4');
     if (grid && grid.children.length >= 2 && !grid.getAttribute('data-boxes-patched')) {
       var b1 = grid.children[0], b2 = grid.children[1];
       var pyong = (typeof fmt !== 'undefined' && fmt.pyong) ? fmt.pyong(area) : '';
@@ -642,12 +646,15 @@
       grid.setAttribute('data-boxes-patched', '1');
     }
 
-    var nplCard = null;
-    Array.prototype.forEach.call(vc.querySelectorAll('div'), function (d) {
-      if (nplCard) return;
-      var st = d.getAttribute('style') || '';
-      if (/linear-gradient/.test(st) && /NPL 회수 가능 금액 추정/.test(d.textContent)) nplCard = d;
-    });
+    // 안정적 id 훅 우선 → 못 찾으면(구버전 캐시) 그라디언트+문구 폴백
+    var nplCard = document.getElementById('nplRecoveryCard');
+    if (!nplCard) {
+      Array.prototype.forEach.call(vc.querySelectorAll('div'), function (d) {
+        if (nplCard) return;
+        var st = d.getAttribute('style') || '';
+        if (/linear-gradient/.test(st) && /NPL 회수 가능 금액 추정/.test(d.textContent)) nplCard = d;
+      });
+    }
     if (nplCard) {
       var sub = info.total
         ? (info.windowLabel + ' 매매 ' + info.total + '건'
@@ -664,21 +671,6 @@
         + '<div style="font-size:13px;color:var(--ink-soft,#5b6473);margin-top:6px;font-family:var(--mono);">' + sub + '</div>';
       nplCard.replaceWith(card);
     }
-  }
-
-  /* ===== (3) 05 시세추정 최종 추정가 분홍 강조 ===== */
-  function patchValuation() {
-    var vc = document.getElementById('viewContainer'); if (!vc) return;
-    if (vc.getAttribute('data-val-pink')) return;
-    var best = null, bestSize = 0;
-    Array.prototype.forEach.call(vc.querySelectorAll('*'), function (e) {
-      if (e.children.length) return;
-      var t = (e.textContent || '').trim();
-      if (!/(억|만)/.test(t)) return;
-      var fs = parseFloat(getComputedStyle(e).fontSize) || 0;
-      if (fs > bestSize) { bestSize = fs; best = e; }
-    });
-    if (best && bestSize >= 30) { best.style.color = PINK; best.style.fontWeight = '800'; vc.setAttribute('data-val-pink', '1'); }
   }
 
   /* ===== 리포트 보정 ===== */
@@ -707,102 +699,28 @@
     var _con = sc.con != null ? sc.con : 92, _mid = sc.mid != null ? sc.mid : 97, _agg = sc.agg != null ? sc.agg : 100;
     var amt = function (r) { return Math.round(ap.value * r / 100); };
 
-    var sh = findByText(vc, '.section-h', /분석\s*요약/);
-    if (sh) {
-      var prose = sh.nextElementSibling;
-      if (prose && !prose.getAttribute('data-bid-summary')) {
-        var line = document.createElement('div');
-        line.style.cssText = 'margin-bottom:12px;padding:11px 15px;background:var(--kiwoom-pink-soft,#FFE6FF);border-left:3px solid ' + PINK + ';border-radius:0 6px 6px 0;font-weight:600;line-height:1.7;';
-        var be = (typeof resolveBidEstimate === 'function') ? resolveBidEstimate(pid) : null;
-        if (be) {
-          line.innerHTML = '본건 최종 낙찰예상가는 <strong style="color:' + PINK + ';">' + won(be.finalBid) + '</strong> (' + be.decisionLabel + ' 채택)입니다. '
-            + '<span style="font-weight:500;color:var(--ink-soft);">AI안 ' + won(be.aiBid) + ' · 담당자안 ' + won(be.mgrBid) + ' · 적용 낙찰가율 ' + center + '%(' + cas.scope + ').</span>';
-        } else {
-          line.innerHTML = '평균 낙찰가율(' + center + '%, ' + cas.scope + ')로 예상하는 본건 낙찰금액은 <strong style="color:' + PINK + ';">' + won(amt(center)) + '</strong>이며, '
-            + '적극적 ' + won(amt(_agg)) + ' · 중립적 ' + won(amt(_mid)) + ' · 보수적 ' + won(amt(_con)) + '으로 추정됩니다.';
-        }
-        prose.insertBefore(line, prose.firstChild);
-        prose.setAttribute('data-bid-summary', '1');
+    // 안정적 id 훅 우선 → 못 찾으면(구버전 캐시) '분석 요약' 헤더 다음 요소로 폴백
+    var prose = document.getElementById('reportSummaryProse');
+    if (!prose) { var _sh = findByText(vc, '.section-h', /분석\s*요약/); prose = _sh ? _sh.nextElementSibling : null; }
+    if (prose && !prose.getAttribute('data-bid-summary')) {
+      var line = document.createElement('div');
+      line.style.cssText = 'margin-bottom:12px;padding:11px 15px;background:var(--kiwoom-pink-soft,#FFE6FF);border-left:3px solid ' + PINK + ';border-radius:0 6px 6px 0;font-weight:600;line-height:1.7;';
+      var be = (typeof resolveBidEstimate === 'function') ? resolveBidEstimate(pid) : null;
+      if (be) {
+        line.innerHTML = '본건 최종 낙찰예상가는 <strong style="color:' + PINK + ';">' + won(be.finalBid) + '</strong> (' + be.decisionLabel + ' 채택)입니다. '
+          + '<span style="font-weight:500;color:var(--ink-soft);">AI안 ' + won(be.aiBid) + ' · 담당자안 ' + won(be.mgrBid) + ' · 적용 낙찰가율 ' + center + '%(' + cas.scope + ').</span>';
+      } else {
+        line.innerHTML = '평균 낙찰가율(' + center + '%, ' + cas.scope + ')로 예상하는 본건 낙찰금액은 <strong style="color:' + PINK + ';">' + won(amt(center)) + '</strong>이며, '
+          + '적극적 ' + won(amt(_agg)) + ' · 중립적 ' + won(amt(_mid)) + ' · 보수적 ' + won(amt(_con)) + '으로 추정됩니다.';
       }
+      prose.insertBefore(line, prose.firstChild);
+      prose.setAttribute('data-bid-summary', '1');
     }
   }
 
-  /* ===== (1) 좌측 메뉴 재정렬: 시세추정 → 3번째 ===== */
-  function reorderNav() {
-    try {
-      if (window.__navReordered) return;
-      var labels = ['본건 정보', '거래사례 비교', '매물현황', '경공매 사례', '시세 추정', '권리분석', '수익률', '리포트'];
-      function leafFor(lbl) {
-        var best = null;
-        Array.prototype.forEach.call(document.querySelectorAll('a,button,li,div,span'), function (e) {
-          var t = (e.textContent || '').replace(/\s+/g, ' ').trim();
-          if (t.indexOf(lbl) >= 0 && t.length <= lbl.length + 7 && e.querySelectorAll('a,button').length === 0) {
-            if (!best || e.textContent.length < best.textContent.length) best = e;
-          }
-        });
-        return best;
-      }
-      var leaves = labels.map(leafFor);
-      if (leaves.some(function (x) { return !x; })) return;
-      function ancestors(n) { var a = []; while (n) { a.push(n); n = n.parentNode; } return a; }
-      var common = ancestors(leaves[0]);
-      for (var i = 1; i < leaves.length; i++) {
-        var s = ancestors(leaves[i]);
-        common = common.filter(function (x) { return s.indexOf(x) >= 0; });
-      }
-      var box = common[0]; if (!box) return;
-      function rowOf(leaf) { var n = leaf; while (n && n.parentNode !== box) n = n.parentNode; return n; }
-      var rows = leaves.map(rowOf);
-      if (rows.some(function (x) { return !x; })) return;
-      box.insertBefore(rows[4], rows[2]);
-      var order = [rows[0], rows[1], rows[4], rows[2], rows[3], rows[5], rows[6], rows[7]];
-      order.forEach(function (row, idx) { setNum(row, ('0' + (idx + 1)).slice(-2)); });
-      window.__navReordered = true;
-    } catch (e) {}
-  }
-  function setNum(row, numStr) {
-    var leaf = null;
-    Array.prototype.forEach.call(row.querySelectorAll('*'), function (c) {
-      if (!leaf && c.children.length === 0 && /^\s*0?\d{1,2}\s*$/.test(c.textContent || '')) leaf = c;
-    });
-    if (leaf) { leaf.textContent = numStr; return; }
-    try {
-      var w = document.createTreeWalker(row, NodeFilter.SHOW_TEXT, null);
-      var tn;
-      while ((tn = w.nextNode())) {
-        if (/^\s*0?\d{1,2}(?=\D|$)/.test(tn.nodeValue)) {
-          tn.nodeValue = tn.nodeValue.replace(/^(\s*)0?\d{1,2}/, '$1' + numStr); return;
-        }
-      }
-    } catch (e) {}
-  }
-
-  /* ===== (1) 좌측 '분석 도구' 헤더 + 'NPL 자산 분석' 메뉴 제거 ===== */
-  function removeNplMenu() {
-    try {
-      if (window.__nplRemoved) return;
-      // NPL 자산 분석 항목
-      var leaf = null;
-      Array.prototype.forEach.call(document.querySelectorAll('a,button,li,div,span'), function (e) {
-        if (leaf) return;
-        var t = (e.textContent || '').replace(/\s+/g, ' ').trim();
-        if (/NPL\s*자산\s*분석/.test(t) && t.length <= 16 && e.querySelectorAll('a,button').length === 0) leaf = e;
-      });
-      if (leaf) {
-        var row = (leaf.closest && leaf.closest('a,[onclick],[data-view],li')) || leaf.parentElement || leaf;
-        row.remove();
-      }
-      // '분석 도구' 헤더(빈 섹션) 제거
-      var hdr = null;
-      Array.prototype.forEach.call(document.querySelectorAll('div,span,p,h1,h2,h3,h4,h5,li'), function (e) {
-        if (hdr) return;
-        var t = (e.textContent || '').replace(/\s+/g, ' ').trim();
-        if (t === '분석 도구' && e.children.length === 0) hdr = e;
-      });
-      if (hdr) hdr.remove();
-      window.__nplRemoved = true;
-    } catch (e) {}
-  }
+  /* 좌측 메뉴 재정렬(reorderNav)·NPL 메뉴 제거(removeNplMenu)는 제거함.
+     index.html의 nav가 이미 data-view 속성과 번호(01~09)로 정리돼 있고 'NPL 자산 분석' 메뉴도
+     없어, 두 함수는 라벨 문자열이 안 맞아 항상 no-op이던 죽은 코드였다. (텍스트 스크래핑 취약성 제거) */
 
   /* ===== 디스패처 ===== */
   function inject() {
@@ -813,7 +731,6 @@
       var v = state.currentView;
       if (v === 'bidest') injectBidEst();
       else if (v === 'comparables') patchComparables();
-      else if (v === 'valuation') patchValuation();
       else if (v === 'report') patchReport();
     } catch (e) { console.warn('[보정] 건너뜀:', e); }
   }
@@ -824,10 +741,8 @@
     window.__cascadeHooked = true;
     var orig = window.renderView;
     window.renderView = function () { var r = orig.apply(this, arguments); inject(); return r; };
-    reorderNav();
-    removeNplMenu();
     inject();
-    console.log('[낙찰가율 캐스케이드] v6 · 한국부동산원 시군구 종합 ' + (window.AUCTION_RATES ? window.AUCTION_RATES.asof : '미로드'));
+    console.log('[낙찰가율 캐스케이드] v7 · id 훅 기반 · 한국부동산원 시군구 종합 ' + (window.AUCTION_RATES ? window.AUCTION_RATES.asof : '미로드'));
   }
 
   if (document.readyState !== 'loading') setTimeout(hook, 300);
