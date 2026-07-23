@@ -1872,6 +1872,42 @@ def diag_scan():
     })
 
 
+@app.route('/api/admin/diag-dong')
+def diag_dong():
+    """진단용: legal_dong 테이블에서 동/구 이름으로 '현재' 법정동코드를 조회한다.
+    2026-07 인천 행정개편(서구→서해구+검단구 분구)으로 옛 28260이 폐지되며 자동수집이
+    0건이 된 상황에서, 마전동(검단) 등의 새 시군구 코드를 찾기 위한 엔드포인트.
+    예: /api/admin/diag-dong?q=마전동  ·  ?sigungu=검단구  ·  ?sigungu=서해구
+    """
+    if not supabase:
+        return jsonify({'error': 'supabase 미연결(자동완성 비활성)'}), 500
+    q = request.args.get('q', '').strip()
+    sigungu = request.args.get('sigungu', '').strip()
+    try:
+        query = supabase.table('legal_dong').select('bjd_code, sido, sigungu, dong, is_active')
+        if sigungu:
+            query = query.ilike('sigungu', f'%{sigungu}%')
+        if q:
+            query = query.ilike('dong', f'%{q}%')
+        rows = query.limit(100).execute().data or []
+    except Exception as e:
+        return jsonify({'error': f'legal_dong 조회 실패: {e}'}), 500
+
+    # 시군구별 코드(앞 5자리) 요약 — 새 구/코드를 한눈에
+    summary = {}
+    for r in rows:
+        code5 = (r.get('bjd_code') or '')[:5]
+        key = f"{r.get('sido', '')} {r.get('sigungu', '')} [{code5}]"
+        summary[key] = summary.get(key, 0) + 1
+
+    return jsonify({
+        'q': q, 'sigungu': sigungu, 'count': len(rows),
+        'sigungu_codes(요약)': summary,
+        'rows': rows[:60],
+        'hint': '마전동이 어느 시군구·어떤 5자리 코드로 나오는지 보세요. 그 5자리를 diag-scan의 lawd_cd로 넣어 데이터가 나오면 그게 새 코드입니다.',
+    })
+
+
 # ============================================================
 # 오피스텔 실거래가 (구조: 연립다세대와 동일 — 전용면적·층·단지명 offiNm)
 # ============================================================
