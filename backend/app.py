@@ -1908,6 +1908,52 @@ def diag_dong():
     })
 
 
+@app.route('/api/admin/diag-codescan')
+def diag_codescan():
+    """진단용: 한 시도(28=인천)의 시군구 코드 범위를 훑어 '실거래 데이터가 있는' 코드를 찾는다.
+    2026-07 개편으로 신설된 검단구·서해구 등의 새 코드를 자동 발견하기 위함(웹 조회 없이).
+    예: /api/admin/diag-codescan?sido=28&lo=100&hi=280
+    """
+    if not API_KEY:
+        return jsonify({'error': 'API 키 미설정'}), 500
+    sido = request.args.get('sido', '28').strip()
+    lo = request.args.get('lo', default=100, type=int)
+    hi = request.args.get('hi', default=280, type=int)
+    hi = min(hi, lo + 200)  # 안전 상한(호출량 제한)
+    ym = request.args.get('ym', '').strip()
+    if not ym:
+        _n = datetime.now(); _y, _m = _n.year, _n.month - 1
+        if _m == 0:
+            _m = 12; _y -= 1
+        ym = f'{_y}{_m:02d}'
+    codes = [f'{sido}{n:03d}' for n in range(lo, hi + 1)]
+
+    def _probe(code):
+        try:
+            r = requests.get(URL_TRADE, params={'serviceKey': API_KEY, 'LAWD_CD': code,
+                                                'DEAL_YMD': ym, 'numOfRows': '1', 'pageNo': '1'}, timeout=15)
+            items, err = parse_xml_items(r.text)
+            if err:
+                return (code, -1)
+            tc = ET.fromstring(r.text).findtext('.//totalCount', default='0')
+            return (code, int(tc) if tc.isdigit() else 0)
+        except Exception:
+            return (code, -2)
+
+    hits = []
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        for code, tc in ex.map(_probe, codes):
+            if tc and tc > 0:
+                hits.append({'lawd_cd': code, 'apt_count': tc})
+    hits.sort(key=lambda x: x['lawd_cd'])
+    return jsonify({
+        'sido': sido, 'ym': ym, 'scanned': len(codes),
+        'active_codes(아파트 데이터 있는 코드)': hits,
+        'hint': '여기 나온 코드 중 기존 목록(중구110·동구140·미추홀177·연수185·남동200·부평237·계양245·서구260·강화710·옹진720)에 '
+                '없는 새 코드가 검단구/서해구/제물포구/영종구입니다. 그 코드를 diag-scan으로 확인해 주세요.',
+    })
+
+
 # ============================================================
 # 오피스텔 실거래가 (구조: 연립다세대와 동일 — 전용면적·층·단지명 offiNm)
 # ============================================================
