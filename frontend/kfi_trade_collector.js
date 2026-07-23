@@ -63,9 +63,26 @@
     { sido: '', name: '함양군', code: '48310' }
   ];
 
+  /* 2026-07-01 인천 행정개편: (옛)서구 → 서해구(남부) + 검단구(북부). 옛 시군구코드 28260 폐지.
+   * 주소로 새 코드를 판별한다: 검단 법정동이면 검단구(28290), 그 외 옛 서구 지역이면 서해구(28275). */
+  var GEOMDAN_DONGS = ['마전동', '당하동', '원당동', '불로동', '오류동', '왕길동', '대곡동', '금곡동'];
+  function incheonSeoguNewCode(address) {
+    var a = String(address || '').replace(/\s+/g, '');
+    if (a.indexOf('인천') === -1) return null;
+    if (a.indexOf('검단구') !== -1) return '28290';
+    if (a.indexOf('서해구') !== -1) return '28275';
+    for (var i = 0; i < GEOMDAN_DONGS.length; i++) {
+      if (a.indexOf(GEOMDAN_DONGS[i]) !== -1) return '28290';   // 검단 법정동 → 검단구
+    }
+    if (a.indexOf('서구') !== -1) return '28275';                // 옛 서구의 검단 외 지역 → 서해구
+    return null;
+  }
+
   /* 주소 문자열 → 시군구 코드(LAWD_CD, 5자리). 실패 시 null */
   function addressToLawdCd(address, externalLookup) {
     if (!address) return null;
+    var _incheonFix = incheonSeoguNewCode(address);   // 🆕 인천 서구 분구(검단구/서해구) 우선 보정
+    if (_incheonFix) return _incheonFix;
     var a = String(address).replace(/\s+/g, '');
     for (var i = 0; i < LAWD_TABLE.length; i++) {
       var r = LAWD_TABLE[i];
@@ -419,6 +436,7 @@
   var API = {
     LAWD_TABLE: LAWD_TABLE,
     addressToLawdCd: addressToLawdCd,
+    incheonSeoguNewCode: incheonSeoguNewCode,
     parseAddress: parseAddress,
     parseJibun: parseJibun,
     normalizeAptName: normalizeAptName,

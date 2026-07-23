@@ -830,9 +830,9 @@ table { border-collapse: collapse; width: 100%; }
 .map-lbl-origin { color: #E6007E; border-color: #E6007E; }
 .map-lbl-same { color: #CC00CC; border-color: #CC00CC; }
 </style>
-<script src="/kfi_trade_collector.js?v=20260723"></script>
-<script src="/auction_rates.js?v=20260723"></script>
-<script src="/bid_rate_cascade.js?v=20260723"></script>
+<script src="/kfi_trade_collector.js?v=20260723b"></script>
+<script src="/auction_rates.js?v=20260723b"></script>
+<script src="/bid_rate_cascade.js?v=20260723b"></script>
 </head>
 <body>
 
@@ -4475,6 +4475,16 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
   let lawdCd = (ctx && ctx.lawdCd) || _currentLawdCd;
   let bun = (ctx && ctx.bun) || _currentBun || _pdfBunHint;
 
+  // 🆕 2026-07 인천 서구 분구 자동인식: 주소가 검단/서해면 옛 28260(폐지) 대신 새 코드로 교정.
+  //    건축물대장이 옛 코드를 주거나 못 잡아도, 검단(마전동 등)·서해 주소면 여기서 바로잡아 자동수집이 성공한다.
+  if (window.KFITradeCollector && typeof KFITradeCollector.incheonSeoguNewCode === 'function') {
+    const _seoguFix = KFITradeCollector.incheonSeoguNewCode(propertyData.addrLot || propertyData.addrRoad || '');
+    if (_seoguFix && lawdCd !== _seoguFix) {
+      console.log('[인천개편] 검단/서해 주소 자동인식 → 시군구코드', lawdCd || '(없음)', '→', _seoguFix);
+      lawdCd = _seoguFix;
+    }
+  }
+
   // 시군구 코드가 없으면 주소에서 보충 (등기부 PDF로 등록한 K-apt 미식별 물건)
   if (!lawdCd && window.KFITradeCollector) {
     const addr = propertyData.addrLot || propertyData.addrRoad || '';
@@ -5933,7 +5943,11 @@ async function openApiImport() {
     if (_sel) { _sel.value = _kind; if (typeof _onApiUseTypeChange === 'function') _onApiUseTypeChange(); }
     // 법정동코드 자동확정 — 본건 시도로 서울/부산 강서구 등 동명 시군구를 구분해 자동 선택
     const rg = (typeof _simRegion === 'function') ? _simRegion(p.addrLot || p.addrRoad || '') : {};
-    if (rg.sigungu) { await _autoSelectLawd(rg.sido, rg.sigungu); }
+    // 🆕 2026-07 인천 서구 분구 자동인식: 검단/서해 주소면 새 코드(검단구28290/서해구28275)로 바로 채움
+    const _incheonNew = (window.KFITradeCollector && typeof KFITradeCollector.incheonSeoguNewCode === 'function')
+      ? KFITradeCollector.incheonSeoguNewCode(p.addrLot || p.addrRoad || '') : null;
+    if (_incheonNew) { selectLawd(_incheonNew === '28290' ? '인천 검단구' : '인천 서해구', _incheonNew); }
+    else if (rg.sigungu) { await _autoSelectLawd(rg.sido, rg.sigungu); }
     else if (p.addrRoad || p.addrLot) {
       const guess = (p.addrRoad || p.addrLot).match(/([가-힣]+(시|구|군))\s*([가-힣]+(시|구|군))?/);
       if (guess) { const t = guess[3] || guess[1]; document.getElementById('apiLawdSearch').value = t; searchLawdCode(t); }
