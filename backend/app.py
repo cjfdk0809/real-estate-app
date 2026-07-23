@@ -1760,6 +1760,59 @@ def get_rh_transactions_bulk():
     })
 
 
+@app.route('/api/admin/diag-molit')
+def diag_molit():
+    """진단용: 특정 시군구·월·유형의 국토부 실거래 '원응답'을 확인한다.
+    자동수집이 0건일 때 그게 (a)API 인증/한도 오류인지 (b)정말 데이터 없음인지
+    (c)파싱 문제인지 브라우저에서 바로 판별하기 위한 엔드포인트. 서비스키는 응답에 노출하지 않는다.
+    예: /api/admin/diag-molit?lawd_cd=28260&ym=202606&type=rh  (type=apt|rh|offi|sh)
+    """
+    if not API_KEY:
+        return jsonify({'error': 'API 키 미설정(MOLIT_API_KEY)'}), 500
+    lawd_cd = request.args.get('lawd_cd', '28260').strip()
+    typ = request.args.get('type', 'rh').strip()
+    ym = request.args.get('ym', '').strip()
+    if not ym:
+        _n = datetime.now(); ym = f'{_n.year}{_n.month:02d}'
+    url_map = {'apt': URL_TRADE, 'rh': URL_RH_TRADE, 'offi': URL_OFFI_TRADE, 'sh': URL_SH_TRADE}
+    url = url_map.get(typ, URL_RH_TRADE)
+    try:
+        r = requests.get(url, params={'serviceKey': API_KEY, 'LAWD_CD': lawd_cd,
+                                      'DEAL_YMD': ym, 'numOfRows': '30', 'pageNo': '1'}, timeout=30)
+        raw, http_status = r.text, r.status_code
+    except Exception as e:
+        return jsonify({'error': f'국토부 요청 실패: {e}', 'type': typ, 'lawd_cd': lawd_cd, 'ym': ym}), 502
+
+    items, err = parse_xml_items(raw)
+
+    def _tag(name):
+        try:
+            return ET.fromstring(raw).findtext(f'.//{name}', default='')
+        except Exception:
+            return ''
+
+    # 판정 요약(사람이 바로 읽도록)
+    reason = _tag('returnReasonCode')
+    auth = _tag('returnAuthMsg') or _tag('errMsg')
+    rcode = _tag('resultCode')
+    total = _tag('totalCount')
+    if err:
+        verdict = f'API 오류 감지 → {err}'
+    elif len(items) > 0:
+        verdict = f'정상: 이 유형 API 동작함(이 달만 {len(items)}건). 0건 문제라면 다른 달/필터 이슈.'
+    else:
+        verdict = '정상 응답인데 이 달 데이터 0건(resultCode=%s, totalCount=%s). 실제 무데이터 또는 해당 월 없음.' % (rcode or '?', total or '?')
+
+    return jsonify({
+        'verdict': verdict,
+        'type': typ, 'lawd_cd': lawd_cd, 'ym': ym, 'http_status': http_status,
+        'parsed_count': len(items), 'parse_error': err,
+        'resultCode': rcode, 'resultMsg': _tag('resultMsg'),
+        'returnReasonCode': reason, 'returnAuthMsg': auth, 'totalCount': total,
+        'raw_head': re.sub(r'\s+', ' ', raw)[:600],
+    })
+
+
 # ============================================================
 # 오피스텔 실거래가 (구조: 연립다세대와 동일 — 전용면적·층·단지명 offiNm)
 # ============================================================
