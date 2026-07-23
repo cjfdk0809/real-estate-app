@@ -859,7 +859,7 @@ table { border-collapse: collapse; width: 100%; }
       <div class="nav-item active" data-view="overview"><span class="nav-item-num">01</span> 본건 정보</div>
       <div class="nav-item" data-view="comparables"><span class="nav-item-num">02</span> 거래사례 비교</div>
       <div class="nav-item" data-view="listings"><span class="nav-item-num">03</span> 매물현황</div>
-      <div class="nav-item" data-view="auction"><span class="nav-item-num">04</span> 경공매 사례</div>
+      <div class="nav-item" data-view="auction"><span class="nav-item-num">04</span> 경매사례</div>
       <div class="nav-item" data-view="bidest"><span class="nav-item-num">05</span> 추정낙찰가</div>
       <div class="nav-item" data-view="rights"><span class="nav-item-num">06</span> 권리분석</div>
       <div class="nav-item" data-view="returns"><span class="nav-item-num">07</span> 수익률·세금</div>
@@ -1780,7 +1780,7 @@ function renderOpinion() {
     </div>` : `
     <div class="card">
       <div class="card-title">◆ 낙찰가 산정 결과</div>
-      <div class="text-muted">감정가 또는 거래사례가 없어 아직 산정할 수 없습니다. 02 거래사례 / 04 경공매 탭에서 데이터를 채워주세요.</div>
+      <div class="text-muted">감정가 또는 거래사례가 없어 아직 산정할 수 없습니다. 02 거래사례 / 04 경매 탭에서 데이터를 채워주세요.</div>
     </div>`;
 
   c.innerHTML = `
@@ -1819,7 +1819,7 @@ function renderOverview() {
       <div class="page-head">
         <div class="page-eyebrow">시작하기</div>
         <h1 class="page-title">부동산 자산관리 시스템</h1>
-        <div class="page-sub">본건 정보 · 거래사례 · 경공매 · 권리분석 · 수익률을 한 곳에서.</div>
+        <div class="page-sub">본건 정보 · 거래사례 · 경매 · 권리분석 · 수익률을 한 곳에서.</div>
       </div>
       <div class="empty">
         <div class="empty-title">물건을 등록하여 시작하세요</div>
@@ -2933,13 +2933,13 @@ function renderScenarioAndNPL(p, auctions, rights) {
   const scenarioCard = `
   <div class="card mb-24">
     <div class="card-title">예상 낙찰가 시나리오 <span class="text-muted text-small" style="font-weight:400;">· ${ap.source || '감정가 미입력'}${cas ? ' · 적용낙찰가율 ' + (cas.scope || '') + ' ' + mid + '%' : ''}</span></div>
-    ${!ap.value ? `<div class="empty"><div class="empty-text">감정가가 없습니다. 아래 경공매 사건에 감정가를 입력하거나 여기에 직접 입력하세요.<br>
+    ${!ap.value ? `<div class="empty"><div class="empty-text">감정가가 없습니다. 여기에 감정가를 직접 입력하세요.<br>
       <input type="number" placeholder="감정가 (만원)" onchange="updateScenario('appraisal', this.value)" style="margin-top:10px;padding:8px;width:220px;"></div></div>` : `
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:16px;font-size:13px;">
       <span class="text-muted">감정가</span> <strong class="mono">${fmt.won(ap.value)}</strong>
       <span class="text-muted" style="margin-left:12px;">낙찰가율</span>
       보수 <strong class="mono">${con}%</strong> · 중립 <strong class="mono text-accent">${mid}%</strong> · 적극 <strong class="mono">${agg}%</strong>
-      <span class="text-small text-muted">(04 경공매 적용 낙찰가율 연계 · 조정은 경공매 ‘낙찰가율 직접입력’)</span>
+      <span class="text-small text-muted">(04 경매 적용 낙찰가율 연계 · 조정은 경매 ‘낙찰가율 직접입력’)</span>
       <span class="text-muted" style="margin-left:12px;">유찰저감</span>
       <input type="number" value="${discount}" onchange="updateScenario('discount', this.value)" style="width:52px;padding:5px;">%
     </div>
@@ -2952,7 +2952,7 @@ function renderScenarioAndNPL(p, auctions, rights) {
         <tr><td class="text-muted">1회 유찰 시 최저가</td><td class="num">${100 - discount}%</td><td class="price text-muted">${fmt.won(nextFloor)}</td></tr>
       </tbody>
     </table>
-    <div class="text-small text-muted" style="margin-top:8px;">※ 낙찰가율은 04 경공매 <strong>적용 낙찰가율</strong>(한국부동산원 시군구 종합 또는 본건 직접입력)과 자동 연계됩니다. 보수 −5%p · 적극 +5%p.</div>
+    <div class="text-small text-muted" style="margin-top:8px;">※ 낙찰가율은 04 경매 <strong>적용 낙찰가율</strong>(한국부동산원 시군구 종합 또는 본건 직접입력)과 자동 연계됩니다. 보수 −5%p · 적극 +5%p.</div>
     `}
   </div>`;
 
@@ -3070,9 +3070,9 @@ function renderAuction() {
 
   c.innerHTML = `
     <div class="page-head">
-      <div class="page-eyebrow">경공매 사례 · Auction Cases</div>
+      <div class="page-eyebrow">경매사례 · Auction Cases</div>
       <h1 class="page-title">${p.name}</h1>
-      <div class="page-sub">유사 경·공매 낙찰 사례를 모아 본건 예상 낙찰가율의 근거로 활용합니다.</div>
+      <div class="page-sub">유사 경매 낙찰 사례를 참고해 본건 예상 낙찰가율의 근거로 활용합니다.</div>
     </div>
 
     <div class="grid grid-4 mb-24">
@@ -3088,44 +3088,10 @@ function renderAuction() {
     </div>
 
     <div class="card">
-      <div class="card-title">경공매 낙찰사례 검색 · 옥션원</div>
-      <div class="text-small text-muted" style="margin-bottom:16px;">옥션원(구 굿옥션)에서 유사 물건의 낙찰가·낙찰가율·매각통계를 조회해 아래 표에 입력하세요. 전국 법원경매·공매·NPL 낙찰 사례를 제공합니다.</div>
+      <div class="card-title">경매 낙찰사례 검색 · 옥션원</div>
+      <div class="text-small text-muted" style="margin-bottom:16px;">위 <strong>유사 낙찰사례(자동조회)</strong> 외에 더 찾아보려면 옥션원(구 굿옥션)에서 유사 물건의 낙찰가·낙찰가율·매각통계를 조회해 참고하세요. 전국 법원경매·공매·NPL 낙찰 사례를 제공합니다.</div>
       <a href="https://www.auction1.co.kr/" target="_blank" rel="noopener" class="btn btn-primary no-print" style="text-decoration:none;display:inline-flex;align-items:center;gap:8px;">🔗 옥션원 바로가기 <span style="font-weight:400;opacity:.85;">(새 창)</span></a>
       <div class="text-small text-muted" style="margin-top:14px;line-height:1.7;">※ 유료 회원 로그인이 필요한 사이트입니다. <strong>Edge에서 옥션원에 한 번 로그인해두면</strong> 위 버튼을 누를 때 같은 브라우저 세션으로 로그인된 화면이 바로 열립니다. (보안상 앱에는 계정정보를 저장하지 않습니다.)</div>
-    </div>
-
-    <div class="card">
-      <div class="card-title">경공매 낙찰 사례 <button class="btn btn-primary no-print" onclick="openAuctionModal()">＋ 추가</button></div>
-      ${auctions.length === 0 ? '<div class="empty"><div class="empty-text">등록된 경공매 사례가 없습니다. 유사 물건의 낙찰 사례를 추가하면 평균 낙찰가율·예상 낙찰가가 자동 계산됩니다.</div></div>' : `
-      <table class="tbl">
-        <thead><tr>
-          <th>구분</th><th>용도</th><th>소재지 · 사건번호</th><th class="text-right">면적</th>
-          <th class="text-right">감정가</th><th class="text-right">낙찰가</th><th class="text-right">낙찰가율</th>
-          <th class="text-right">유찰</th><th class="text-right">응찰</th><th class="text-right">매각일</th><th class="no-print"></th>
-        </tr></thead>
-        <tbody>
-          ${auctions.map(x => {
-            const rate = (x.winningBid && x.appraisal) ? (x.winningBid / x.appraisal * 100).toFixed(1) : null;
-            return `<tr>
-              <td><span class="badge badge-${x.type}">${x.type}</span></td>
-              <td class="text-small">${x.use || '-'}</td>
-              <td class="text-small">${x.address}<br><span class="text-muted text-mono">${x.caseNo || ''}</span></td>
-              <td class="num text-small">${x.area ? x.area+'㎡' : '-'}</td>
-              <td class="price">${fmt.won(x.appraisal)}</td>
-              <td class="price ${x.winningBid ? 'text-accent' : ''}">${fmt.won(x.winningBid)}</td>
-              <td class="num">${rate ? rate + '%' : '-'}</td>
-              <td class="num">${x.failedCount || 0}</td>
-              <td class="num">${x.bidders || '-'}</td>
-              <td class="num text-small">${fmt.date(x.hearingDate)}</td>
-              <td class="no-print"><span class="tbl-action" onclick="editAuction('${x.id}')">편집</span><span class="tbl-action" onclick="deleteAuction('${x.id}')">삭제</span></td>
-            </tr>`;
-          }).join('')}
-        </tbody>
-      </table>`}
-      <div class="notice" style="margin-top: 16px;">
-        <div class="notice-title">사건 조회 안내</div>
-        대법원 법원경매정보 (courtauction.go.kr) → 물건상세검색 / 온비드 (onbid.co.kr) → 부동산 공매에서 유사 물건의 감정가·낙찰가를 조회해 입력하세요. 무료 낙찰 API가 없어 수기 입력입니다.
-      </div>
     </div>
 
     ${declineCard}
@@ -3427,7 +3393,7 @@ async function _renderAuctionMap(p, items, targetDong) {
   if (pts.length > 1) _auctionMap.fitBounds(L.latLngBounds(pts).pad(0.15));
   setTimeout(() => _auctionMap && _auctionMap.invalidateSize(), 100);
   window._bigMapData = window._bigMapData || {};
-  window._bigMapData.auction = { title: '경공매 낙찰사례 지도 · ' + (p.name || '본건'), center, zoom: 13, markers: bigMarkers };
+  window._bigMapData.auction = { title: '경매 낙찰사례 지도 · ' + (p.name || '본건'), center, zoom: 13, markers: bigMarkers };
   const btn = document.getElementById('auctionBigBtn'); if (btn) btn.style.display = '';
 }
 
@@ -3916,7 +3882,7 @@ function renderReport() {
     </table>
 
     ${auctions.length > 0 ? `
-    <div class="section-h">3. 경공매 사례</div>
+    <div class="section-h">3. 경매 사례</div>
     <table class="tbl mb-24">
       <thead><tr><th>사건번호</th><th>매각기일</th><th class="text-right">감정가</th><th class="text-right">최저가</th><th class="text-right">낙찰가</th><th class="text-right">유찰</th></tr></thead>
       <tbody>
