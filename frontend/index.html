@@ -1565,7 +1565,18 @@ function loadSampleData() {
 // ============================================================
 // UTILS
 // ============================================================
+// XSS 방지: 사용자 입력(물건명·주소·메모 등)을 innerHTML에 넣기 전 HTML 이스케이프.
+// 상태가 Supabase로 동기화되고 ?user= 로 공유되므로 저장형·교차사용자 XSS를 막는다.
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+window.escapeHtml = escapeHtml;
+
 const fmt = {
+  esc: escapeHtml,
   // 만원 -> 한국식 표현 (12억 5,000만)
   won: (manwon) => {
     if (manwon == null || isNaN(manwon)) return '-';
@@ -1630,10 +1641,10 @@ function renderPropertyList() {
   list.innerHTML = props.map(p => `
     <div class="property-item ${p.id === state.currentPropertyId ? 'active' : ''}" style="position: relative;">
       <div onclick="selectProperty('${p.id}')" style="cursor: pointer; padding-right: 24px;">
-        <div class="property-item-name">${p.name}</div>
-        <div class="property-item-addr">${p.building || ''} ${p.unit || ''} · ${p.addrLot || p.addrRoad || ''}</div>
+        <div class="property-item-name">${escapeHtml(p.name)}</div>
+        <div class="property-item-addr">${escapeHtml(p.building || '')} ${escapeHtml(p.unit || '')} · ${escapeHtml(p.addrLot || p.addrRoad || '')}</div>
       </div>
-      <button onclick="deletePropertyFromList(event, '${p.id}', '${(p.name || '').replace(/'/g, "\\'")}')"
+      <button onclick="deletePropertyFromList(event, '${p.id}')"
         title="이 물건 삭제"
         style="position: absolute; top: 8px; right: 8px; width: 22px; height: 22px; border-radius: 4px; background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.65); border: none; cursor: pointer; font-size: 14px; line-height: 1; padding: 0; transition: all 0.15s;"
         onmouseover="this.style.background='rgba(255,80,80,0.85)'; this.style.color='white';"
@@ -1642,8 +1653,10 @@ function renderPropertyList() {
   `).join('');
 }
 
-async function deletePropertyFromList(event, id, name) {
+async function deletePropertyFromList(event, id) {
   event.stopPropagation();  // 클릭 이벤트가 selectProperty로 전달되지 않게
+  // 이름은 onclick 인자로 넘기지 않고 state에서 읽는다(XSS·인자 이스케이프 문제 회피).
+  const name = (state.properties[id] || {}).name || '';
   if (!confirm(`"${name}" 물건을 삭제하시겠습니까?\n\n⚠️ 이 물건의 거래사례·경매·권리 데이터가 모두 함께 삭제됩니다.`)) return;
   delete state.properties[id];
   delete state.comparables[id];
@@ -1775,15 +1788,15 @@ function renderOpinion() {
   c.innerHTML = `
     <div class="page-head">
       <div class="page-eyebrow">담당자 의견 · MANAGER OPINION</div>
-      <h1 class="page-title">${p.name || '본건'}</h1>
+      <h1 class="page-title">${escapeHtml(p.name || '본건')}</h1>
       <div class="page-sub">AI·담당자 산정가와 채택가를 확인하고, 채택 사유를 기록합니다.</div>
     </div>
 
     <div class="card">
       <div class="card-title">◆ 본건 기본정보</div>
-      <div class="info-row"><div class="info-label">단지명</div><div class="info-value">${p.name || '-'}</div></div>
-      <div class="info-row"><div class="info-label">소재지</div><div class="info-value">${p.addrRoad || p.addrLot || '-'}</div></div>
-      <div class="info-row"><div class="info-label">동·호</div><div class="info-value">${(p.building || '-')} ${(p.unit || '')}</div></div>
+      <div class="info-row"><div class="info-label">단지명</div><div class="info-value">${escapeHtml(p.name || '-')}</div></div>
+      <div class="info-row"><div class="info-label">소재지</div><div class="info-value">${escapeHtml(p.addrRoad || p.addrLot || '-')}</div></div>
+      <div class="info-row"><div class="info-label">동·호</div><div class="info-value">${escapeHtml(p.building || '-')} ${escapeHtml(p.unit || '')}</div></div>
       <div class="info-row"><div class="info-label">전용면적</div><div class="info-value">${p.exclusiveArea ? p.exclusiveArea + '㎡ (' + (p.exclusiveArea / 3.3058).toFixed(1) + '평)' : '-'}</div></div>
       <div class="info-row"><div class="info-label">공시가격</div><div class="info-value mono">${p.publicPrice ? fmt.wonShort(p.publicPrice) : '-'}</div></div>
     </div>
@@ -1830,8 +1843,8 @@ function renderOverview() {
     <div class="page-head" style="display: flex; justify-content: space-between; align-items: flex-end; gap: 16px;">
       <div>
         <div class="page-eyebrow">물건 정보 · Property Master</div>
-        <h1 class="page-title">${p.name}</h1>
-        <div class="page-sub">${p.building || ''} ${p.unit || ''} · ${p.addrRoad || p.addrLot || ''}</div>
+        <h1 class="page-title">${escapeHtml(p.name)}</h1>
+        <div class="page-sub">${escapeHtml(p.building || '')} ${escapeHtml(p.unit || '')} · ${escapeHtml(p.addrRoad || p.addrLot || '')}</div>
       </div>
       <div class="btn-row no-print">
         <button class="btn btn-primary" onclick="openPropertyModal('${p.id}')">✎ 본건 정보 편집</button>
@@ -1864,10 +1877,10 @@ function renderOverview() {
     <div class="grid grid-2">
       <div class="card editable-card" onclick="openPropertyModal('${p.id}')">
         <div class="card-title">기본 정보 <span class="edit-hint no-print">클릭하여 편집 ✎</span></div>
-        <div class="info-row"><div class="info-label">단지명</div><div class="info-value">${p.name}</div></div>
-        <div class="info-row"><div class="info-label">도로명</div><div class="info-value">${p.addrRoad || '-'}</div></div>
-        <div class="info-row"><div class="info-label">지번</div><div class="info-value">${p.addrLot || '-'}</div></div>
-        <div class="info-row"><div class="info-label">동·호</div><div class="info-value">${p.building || '-'} ${p.unit || ''}</div></div>
+        <div class="info-row"><div class="info-label">단지명</div><div class="info-value">${escapeHtml(p.name)}</div></div>
+        <div class="info-row"><div class="info-label">도로명</div><div class="info-value">${escapeHtml(p.addrRoad || '-')}</div></div>
+        <div class="info-row"><div class="info-label">지번</div><div class="info-value">${escapeHtml(p.addrLot || '-')}</div></div>
+        <div class="info-row"><div class="info-label">동·호</div><div class="info-value">${escapeHtml(p.building || '-')} ${escapeHtml(p.unit || '')}</div></div>
         <div class="info-row"><div class="info-label">층 정보</div><div class="info-value mono">${p.floor || '-'} / ${p.totalFloors || '-'} 층</div></div>
         <div class="info-row"><div class="info-label">용도지역</div><div class="info-value">${p.zoning || '-'}</div></div>
         <div class="info-row"><div class="info-label">주용도</div><div class="info-value">${p.usage || '-'}</div></div>
@@ -1894,7 +1907,7 @@ function renderOverview() {
 
       <div class="card editable-card" onclick="openPropertyModal('${p.id}')">
         <div class="card-title">메모 <span class="edit-hint no-print">클릭하여 편집 ✎</span></div>
-        <div class="text-small" style="color: var(--ink-soft); line-height: 1.7; white-space: pre-wrap;">${p.notes || '메모가 없습니다. (클릭하여 추가)'}</div>
+        <div class="text-small" style="color: var(--ink-soft); line-height: 1.7; white-space: pre-wrap;">${escapeHtml(p.notes || '메모가 없습니다. (클릭하여 추가)')}</div>
       </div>
     </div>
   `;
@@ -2039,7 +2052,7 @@ function renderComparables() {
   c.innerHTML = `
     <div class="page-head">
       <div class="page-eyebrow">거래사례 비교 · Comparable Sales</div>
-      <h1 class="page-title">${p.name}</h1>
+      <h1 class="page-title">${escapeHtml(p.name)}</h1>
       <div class="page-sub">동일 단지·동일 면적대 거래를 자동 필터링하여 본건 시세를 추정합니다. <strong style="color:var(--kiwoom-navy);">(현재 분석 대상: ${danjiTag})</strong></div>
     </div>
 
@@ -2144,13 +2157,13 @@ function renderComparables() {
             return `<tr>
               <td class="num" style="text-align:center;">${fmt.date(x.date)}</td>
               <td style="text-align:center;"><span class="badge badge-${x.type}">${x.type}</span></td>
-              <td style="text-align:center;">${x.name}</td>
+              <td style="text-align:center;">${escapeHtml(x.name)}</td>
               <td class="text-small" style="text-align:center;">${x.building || ''} ${x.unit || ''}</td>
               <td class="num" style="text-align:center;">${x.area || '-'}㎡</td>
               <td class="num" style="text-align:center;">${x.floor || '-'}</td>
               <td class="price" style="text-align:center;">${priceCell}</td>
               <td class="num text-small" style="text-align:center;">${pyongPrice ? pyongPrice.toLocaleString() + '만/평' : '-'}</td>
-              <td class="text-small text-muted" style="text-align:center;">${x.memo || ''}</td>
+              <td class="text-small text-muted" style="text-align:center;">${escapeHtml(x.memo || '')}</td>
               <td class="no-print" style="text-align:center;"><span class="tbl-action" onclick="editComparable('${x.id}')">편집</span><span class="tbl-action" onclick="deleteComparable('${x.id}')">삭제</span></td>
             </tr>`;
           }).join('')}
@@ -2183,7 +2196,7 @@ function renderListings() {
   c.innerHTML = `
     <div class="page-head">
       <div class="page-eyebrow">매물현황 · CURRENT LISTINGS</div>
-      <h1 class="page-title">${p.name}</h1>
+      <h1 class="page-title">${escapeHtml(p.name)}</h1>
       <div class="page-sub">네이버 부동산을 통해 현재 시장에 나와 있는 매물 호가를 확인하세요. 실거래가는 02 거래사례 비교 모듈에서 확인됩니다.</div>
     </div>
 
@@ -2877,7 +2890,7 @@ function renderAuction() {
   c.innerHTML = `
     <div class="page-head">
       <div class="page-eyebrow">경공매 사례 · Auction Cases</div>
-      <h1 class="page-title">${p.name}</h1>
+      <h1 class="page-title">${escapeHtml(p.name)}</h1>
       <div class="page-sub">유사 경·공매 낙찰 사례를 모아 본건 예상 낙찰가율의 근거로 활용합니다.</div>
     </div>
 
@@ -3055,7 +3068,7 @@ function renderBidEst() {
   c.innerHTML = `
     <div class="page-head">
       <div class="page-eyebrow">추정 낙찰가 · Bid Estimate</div>
-      <h1 class="page-title">${p.name || '본건'}</h1>
+      <h1 class="page-title">${escapeHtml(p.name || '본건')}</h1>
       <div class="page-sub">거래사례비교법으로 AI안·담당자안을 산출하고, 둘 중 하나를 최종 낙찰예상가로 채택합니다.</div>
     </div>
     <div id="bidEstHost"><div class="card"><div class="text-muted">불러오는 중…</div></div></div>
@@ -3095,14 +3108,14 @@ function renderValuation() {
   c.innerHTML = `
     <div class="page-head">
       <div class="page-eyebrow">시세 추정 · Valuation</div>
-      <h1 class="page-title">${p.name}</h1>
+      <h1 class="page-title">${escapeHtml(p.name)}</h1>
       <div class="page-sub">동일 면적대 거래사례를 기반으로 본건 시세를 추정합니다.</div>
     </div>
 
     <div class="card mb-16">
       <div class="card-title">최종 추정가</div>
       <div style="text-align: center; padding: 20px;">
-        <div class="stat-label" style="margin-bottom: 12px;">${p.building} ${p.unit} · 전용 ${target}㎡ · ${p.floor}층</div>
+        <div class="stat-label" style="margin-bottom: 12px;">${escapeHtml(p.building)} ${escapeHtml(p.unit)} · 전용 ${target}㎡ · ${escapeHtml(p.floor)}층</div>
         <div style="font-family: var(--serif); font-size: 48px; font-weight: 600; color: var(--ink); margin-bottom: 8px;">
           ${fmt.won(Math.round(adjEst))}
         </div>
@@ -3175,7 +3188,7 @@ function renderRights() {
   c.innerHTML = `
     <div class="page-head">
       <div class="page-eyebrow">권리분석 · Rights Analysis</div>
-      <h1 class="page-title">${p.name}</h1>
+      <h1 class="page-title">${escapeHtml(p.name)}</h1>
       <div class="page-sub">등기부등본의 갑구·을구를 입력하여 인수금액과 말소기준권리를 분석합니다.</div>
     </div>
 
@@ -3217,7 +3230,7 @@ function renderRights() {
               <td class="num">${r.monthly ? r.monthly + '만' : '-'}</td>
               <td class="num text-small">${fmt.date(r.confirmedDate)}</td>
               <td><span class="badge" style="background: ${isAssumed ? 'var(--accent)' : '#e5e3dc'}; color: ${isAssumed ? 'white' : 'var(--ink-soft)'};">${r.status}</span></td>
-              <td class="text-small text-muted">${r.reason || r.memo || ''}</td>
+              <td class="text-small text-muted">${escapeHtml(r.reason || r.memo || '')}</td>
               <td class="no-print"><span class="tbl-action" onclick="editRight('${r.id}')">편집</span><span class="tbl-action" onclick="deleteRight('${r.id}')">삭제</span></td>
             </tr>`;
           }).join('')}
@@ -3260,7 +3273,7 @@ function renderReturns() {
   c.innerHTML = `
     <div class="page-head">
       <div class="page-eyebrow">수익률·세금 · Returns &amp; Taxes</div>
-      <h1 class="page-title">${p.name}</h1>
+      <h1 class="page-title">${escapeHtml(p.name)}</h1>
       <div class="page-sub">매수가·대출조건·임대료를 입력하여 수익률과 세금을 시뮬레이션합니다.</div>
     </div>
 
@@ -3488,8 +3501,8 @@ function renderReport() {
     <div class="page-head" style="display: flex; justify-content: space-between; align-items: flex-end; gap: 16px;">
       <div>
         <div class="page-eyebrow">자산 분석 리포트 · Asset Report</div>
-        <h1 class="page-title">${p.name}</h1>
-        <div class="page-sub">${p.building} ${p.unit} · ${p.addrRoad} · 작성일 ${today}</div>
+        <h1 class="page-title">${escapeHtml(p.name)}</h1>
+        <div class="page-sub">${escapeHtml(p.building)} ${escapeHtml(p.unit)} · ${escapeHtml(p.addrRoad)} · 작성일 ${today}</div>
       </div>
       <div class="btn-row no-print">
         <button class="btn btn-primary" onclick="downloadReportPdf()">📑 PDF 저장 (매 페이지 CI)</button>
@@ -3499,9 +3512,9 @@ function renderReport() {
     <div class="section-h">1. 본건 개요</div>
     <div class="grid grid-2 mb-24">
       <div>
-        <div class="info-row"><div class="info-label">단지명</div><div class="info-value">${p.name}</div></div>
-        <div class="info-row"><div class="info-label">소재지</div><div class="info-value">${p.addrRoad || p.addrLot}</div></div>
-        <div class="info-row"><div class="info-label">동·호</div><div class="info-value">${p.building} ${p.unit}</div></div>
+        <div class="info-row"><div class="info-label">단지명</div><div class="info-value">${escapeHtml(p.name)}</div></div>
+        <div class="info-row"><div class="info-label">소재지</div><div class="info-value">${escapeHtml(p.addrRoad || p.addrLot)}</div></div>
+        <div class="info-row"><div class="info-label">동·호</div><div class="info-value">${escapeHtml(p.building)} ${escapeHtml(p.unit)}</div></div>
         <div class="info-row"><div class="info-label">전용면적</div><div class="info-value mono">${p.exclusiveArea}㎡ (${fmt.pyong(p.exclusiveArea)})</div></div>
         <div class="info-row"><div class="info-label">공급면적</div><div class="info-value mono">${p.supplyArea}㎡ (${fmt.pyong(p.supplyArea)})</div></div>
       </div>
@@ -3587,17 +3600,17 @@ function renderReport() {
           <td>${r.holder}</td>
           <td class="price">${fmt.won(r.amount)}</td>
           <td>${r.status}</td>
-          <td class="text-small text-muted">${r.reason || ''}</td>
+          <td class="text-small text-muted">${escapeHtml(r.reason || '')}</td>
         </tr>`).join('')}
       </tbody>
     </table>` : ''}
 
     <div class="section-h">5. 분석 요약</div>
     <div style="line-height: 1.8; color: var(--ink-soft);">
-      본건 <strong>${p.name} ${p.building} ${p.unit}</strong>(전용 ${p.exclusiveArea}㎡, ${p.floor}층)의 동일 면적대 평균 거래가는 
+      본건 <strong>${escapeHtml(p.name)} ${escapeHtml(p.building)} ${escapeHtml(p.unit)}</strong>(전용 ${p.exclusiveArea}㎡, ${escapeHtml(p.floor)}층)의 동일 면적대 평균 거래가는
       <strong class="text-accent">${fmt.won(avgPrice)}</strong>이며,
       등록된 권리는 ${rights.length}건(말소기준 ${ra.baseRight ? ra.baseRight.type + ' ' + fmt.date(ra.baseRight.date) : '미확정'}, 인수금액 ${fmt.won(ra.assumedTotal)})입니다.${(ap.value && ra.seniorClaim) ? ` 최종 채택(${_decLabel}) 예상 낙찰가 <strong>${fmt.won(_finalBid)}</strong> 기준 1순위 회수율은 약 <strong class="text-accent">${_finalRecovery != null ? _finalRecovery.toFixed(1) + '%' : '-'}</strong>로 추정됩니다.` : ''}
-      ${p.notes ? '<br><br><strong>실사 메모:</strong> ' + p.notes : ''}
+      ${p.notes ? '<br><br><strong>실사 메모:</strong> ' + escapeHtml(p.notes) : ''}
     </div>
 
     ${_opSection}
@@ -5679,7 +5692,7 @@ async function fetchTransactions() {
             ${items.slice(0, 50).map(x => `
               <tr>
                 <td class="num">${x.date}</td>
-                <td>${x.name}${x.house_type && !((x.name || '').includes(x.house_type)) ? ' <span class="text-muted text-small">(' + x.house_type + ')</span>' : ''}</td>
+                <td>${escapeHtml(x.name)}${x.house_type && !((x.name || '').includes(x.house_type)) ? ' <span class="text-muted text-small">(' + escapeHtml(x.house_type) + ')</span>' : ''}</td>
                 <td class="num">${x.area}㎡</td>
                 <td class="num">${x.floor || '-'}</td>
                 <td class="num">${x.build_year || '-'}</td>
@@ -5735,7 +5748,7 @@ function _renderCompsMap(origin, items, radius, originName) {
       fillColor: isSale ? '#1A2540' : '#9AA3B2', fillOpacity: 0.95,
     }).addTo(_compsMap);
     const dist = x._dist == null ? '-' : (x._dist < 1000 ? Math.round(x._dist) + 'm' : (x._dist / 1000).toFixed(1) + 'km');
-    m.bindPopup(`<b>${x.name || '-'}</b><br>${x.date} · ${x.type}<br>${fmt.won(x.price)}${x.monthly ? ' / 월' + x.monthly : ''}<br>${x.area}㎡ · ${x.floor || '-'}층${x.build_year ? ' · ' + x.build_year + '년' : ''}<br>본건거리 ${dist}`);
+    m.bindPopup(`<b>${escapeHtml(x.name || '-')}</b><br>${escapeHtml(x.date)} · ${escapeHtml(x.type)}<br>${fmt.won(x.price)}${x.monthly ? ' / 월' + x.monthly : ''}<br>${x.area}㎡ · ${escapeHtml(x.floor || '-')}층${x.build_year ? ' · ' + escapeHtml(x.build_year) + '년' : ''}<br>본건거리 ${dist}`);
     pts.push([x._lat, x._lng]);
   });
 

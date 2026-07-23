@@ -13,6 +13,7 @@
 """
 import os
 import re
+import hmac
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from functools import lru_cache
@@ -113,7 +114,16 @@ URL_BR_EXPOSE = 'https://apis.data.go.kr/1613000/BldRgstHubService/getBrExposPub
 URL_BR_PRICE = 'https://apis.data.go.kr/1613000/BldRgstHubService/getBrHsprcInfo'  # 주택가격(공시)
 
 app = Flask(__name__, static_folder='../frontend', static_url_path='')
-CORS(app)
+# CORS: 프론트는 동일 출처(Flask)로 서빙되므로 기본은 교차출처 미허용.
+# 외부 연동이 필요하면 ALLOWED_ORIGINS 환경변수(콤마구분)로 명시. '*'는 전체 허용(비권장).
+_ALLOWED_ORIGINS = os.environ.get('ALLOWED_ORIGINS', '').strip()
+if _ALLOWED_ORIGINS == '*':
+    CORS(app)
+    print('[WARN] CORS 전체 허용(ALLOWED_ORIGINS=*) - 프로덕션 비권장')
+elif _ALLOWED_ORIGINS:
+    CORS(app, origins=[o.strip() for o in _ALLOWED_ORIGINS.split(',') if o.strip()])
+else:
+    print('[INFO] CORS 교차출처 미허용(기본). 필요 시 ALLOWED_ORIGINS 설정.')
 app.register_blueprint(registry_bp)  # 🆕 등기부 분석 Blueprint 등록
 app.register_blueprint(housing_bp)  # 🆕 공시가격 조회 Blueprint 등록
 
@@ -400,7 +410,6 @@ def health():
     return jsonify({
         'status': 'ok',
         'has_api_key': bool(API_KEY),
-        'api_key_prefix': API_KEY[:8] + '...' if API_KEY else None,
         'lawd_codes_loaded': len(LAWD_CODES),
         'features': {
             'apt_trade': True,
@@ -492,7 +501,7 @@ def get_transactions():
     except requests.exceptions.Timeout:
         return jsonify({'error': '국토부 API 응답 시간 초과 (30초)'}), 504
     except Exception as e:
-        return jsonify({'error': f'서버 오류: {e}'}), 500
+        return jsonify({'error': safe_error('서버 오류', e)}), 500
 
 
 @app.route('/api/transactions/rent')
@@ -530,7 +539,7 @@ def get_rents():
 
         return jsonify({'count': len(items), 'items': items})
     except Exception as e:
-        return jsonify({'error': f'서버 오류: {e}'}), 500
+        return jsonify({'error': safe_error('서버 오류', e)}), 500
 
 
 @app.route('/api/transactions/bulk')
@@ -747,7 +756,7 @@ def search_danji_by_dong():
             })
         return jsonify({'count': len(items), 'items': items})
     except Exception as e:
-        return jsonify({'error': f'서버 오류: {e}'}), 500
+        return jsonify({'error': safe_error('서버 오류', e)}), 500
 
 
 @app.route('/api/danji/search-by-name')
@@ -2162,7 +2171,7 @@ def auction_rates():
         rows = (supabase.table('auction_rate_stats')
                 .select('*').eq('use_group', use_group).execute().data) or []
     except Exception as e:
-        return jsonify({'available': False, 'reason': str(e)})
+        return jsonify({'available': False, 'reason': safe_error('조회 오류', e)})
 
     # (sido, sigungu, period) → row 색인
     idx = {(r.get('sido'), r.get('sigungu'), r.get('period_months')): r for r in rows}
@@ -2363,7 +2372,7 @@ def auction_comparables():
             if len(cur) >= THRESH[level]:
                 break
     except Exception as e:
-        return jsonify({'available': False, 'reason': str(e), 'items': []})
+        return jsonify({'available': False, 'reason': safe_error('조회 오류', e), 'items': []})
 
     # 참고 지표: 조회된 사례의 중앙값 낙찰가율 (추정 반영은 안 함)
     rates = sorted(x['bid_rate'] for x in picked if x.get('bid_rate') is not None)
@@ -2402,7 +2411,7 @@ def report_pdf():
         resp.headers['Content-Length'] = str(len(pdf_bytes))
         return resp
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': safe_error('리포트 생성 오류', e)}), 500
 
 
 # ============================================================
@@ -2441,7 +2450,7 @@ def search_dong():
         )
         return jsonify({'count': len(resp.data), 'items': resp.data})
     except Exception as e:
-        return jsonify({'error': f'Supabase 조회 오류: {e}'}), 500
+        return jsonify({'error': safe_error('Supabase 조회 오류', e)}), 500
 
 
 @app.route('/api/search/apt')
@@ -2487,7 +2496,7 @@ def search_apt():
                     break
         return jsonify({'count': len(items), 'items': items})
     except Exception as e:
-        return jsonify({'error': f'Supabase 조회 오류: {e}'}), 500
+        return jsonify({'error': safe_error('Supabase 조회 오류', e)}), 500
 
 
 @app.route('/api/search/address')
@@ -2566,7 +2575,7 @@ def search_address():
             'apt_candidates': apt_candidates,
         })
     except Exception as e:
-        return jsonify({'error': f'Supabase 조회 오류: {e}'}), 500
+        return jsonify({'error': safe_error('Supabase 조회 오류', e)}), 500
 
 
 # ============================================================
@@ -2603,11 +2612,16 @@ def _load_legal_dong_file():
 
 
 def _check_admin(req):
-    """관리자 인증 체크."""
+    """관리자 인증 체크.
+
+    키는 헤더(X-Admin-Key)로 받는 것을 권장한다(쿼리스트링은 접근로그·Referer·브라우저
+    히스토리에 남음). 하위호환을 위해 ?key= 도 계속 허용한다.
+    비교는 타이밍 공격 방지를 위해 상수시간(hmac.compare_digest)으로 수행.
+    """
     if not ADMIN_SECRET:
         return False, 'ADMIN_SECRET 환경변수가 설정되지 않았습니다.'
-    key = req.args.get('key', '')
-    if key != ADMIN_SECRET:
+    key = req.headers.get('X-Admin-Key') or req.args.get('key', '')
+    if not hmac.compare_digest(str(key), ADMIN_SECRET):
         return False, '잘못된 관리자 키.'
     return True, None
 
@@ -2823,7 +2837,7 @@ def admin_load_legal_dong():
         # upsert (이미 있는 bjd_code는 업데이트)
         supabase.table('legal_dong').upsert(chunk, on_conflict='bjd_code').execute()
     except Exception as e:
-        return jsonify({'error': f'Supabase upsert 오류: {e}'}), 500
+        return jsonify({'error': safe_error('Supabase upsert 오류', e)}), 500
 
     inserted_so_far = offset + len(chunk)
     return jsonify({
@@ -2942,7 +2956,7 @@ def admin_load_apt_master():
             supabase.table('apt_master').upsert(apts_list, on_conflict='kapt_code').execute()
             inserted_count = len(apts_list)
         except Exception as e:
-            return jsonify({'error': f'apt_master upsert 오류: {e}'}), 500
+            return jsonify({'error': safe_error('apt_master upsert 오류', e)}), 500
 
     # 단지 총 개수 조회 (이미 적재된 것 포함)
     try:
@@ -4114,7 +4128,7 @@ def admin_diag_kapt():
             'response_length': len(r.text),
         })
     except Exception as e:
-        return jsonify({'error': str(e), 'request_url': url}), 500
+        return jsonify({'error': safe_error('진단 호출 오류', e), 'request_url': mask_sensitive_info(url)}), 500
 
 
 # ============================================================

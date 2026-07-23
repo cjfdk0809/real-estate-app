@@ -313,9 +313,11 @@
   var TIER = {
     manual: ['#7c3aed', '✏️ 직접입력'],
     same_complex: ['#0f6e5c', '1단계 · 동일단지'], sigungu: ['#1e2a44', '2단계 · 시군구 사례'],
+    stat_real: ['#0b6b57', '실측 낙찰가율(용도·지역)'],
     stat_sigungu: ['#1e3a5f', '3단계 · 시군구 통계'],
     stat_national: ['#5a6b8c', '4단계 · 전국 통계'], default: ['#a8884a', '디폴트']
   };
+  var TIER_FALLBACK = ['#5a6b8c', '기준값'];
 
   /* ===== 시나리오 자동정렬: 중립=평균, 보수=평균-5, 적극=평균+5 ===== */
   window.__alignedPids = window.__alignedPids || {};
@@ -343,9 +345,15 @@
     var be = resolveBidEstimate(pid); if (!be) return '';
     var cas = be.cas, ap = be.ap, area = be.area;
     var unitPrice = be.unitPrice, baseValue = be.baseAi, bidRate = be.rate;
-    var badge = TIER[cas.tier];
+    var badge = TIER[cas.tier] || TIER_FALLBACK;   // 미정의 티어라도 크래시 방지
     var dec = be.decision;
     var factorProd = be.factorProd;
+
+    // 기준시세 출처: 감정가(사건/직접입력) vs 거래사례 평균(감정가 대용) — 라벨을 실제 출처에 맞춘다.
+    var baseIsAppraisal = /감정가/.test(ap.source || '') && !/대용/.test(ap.source || '');
+    var unitLabel = baseIsAppraisal ? '감정가 단가' : '거래사례 평균단가';
+    var unitDesc  = baseIsAppraisal ? '감정가 ÷ 전용면적' : '거래사례 평균매매가 ÷ 전용면적';
+    var baseLabel = baseIsAppraisal ? '= 감정가(기준시세)' : '= 기준시세(거래사례 대용)';
 
     var note;
     if (cas.isStat) {
@@ -354,6 +362,10 @@
       note = '<div class="text-small" style="color:var(--warn);">⚠️ 소재지에서 지역을 못 읽어 기본값(90%)을 적용했습니다. 주소를 확인하세요.</div>';
     } else {
       note = '<div class="text-small text-muted">📍 본건 <strong>' + cas.scope + '</strong> ' + cas.sampleN + '건의 중앙값입니다.</div>';
+    }
+    // 낙찰가율은 '매각가/감정가' 기준. 감정가가 없어 거래사례를 대용으로 쓰면 단위가 근사이므로 경고.
+    if (!baseIsAppraisal) {
+      note += '<div class="text-small" style="color:var(--warn);margin-top:4px;">⚠️ 감정가가 없어 <strong>거래사례 평균</strong>을 감정가 대용으로 사용했습니다. 낙찰가율(매각가/감정가)을 시세에 곱한 근사치이므로, 감정가 입력 시 정확도가 올라갑니다.</div>';
     }
 
     var row = function (label, val, desc, strong) {
@@ -403,9 +415,9 @@
       + '<span class="badge" style="background:' + badge[0] + ';color:#fff;">' + badge[1] + '</span></div>'
       + '<div class="text-small text-muted" style="margin:-4px 0 14px;">거래사례비교법 — 기준시세 × 가치형성요인 × 낙찰가율. <strong>AI안</strong>(요인 1.00·낙찰가율 캐스케이드)과 <strong>담당자안</strong>(요인·낙찰가율 직접보정)을 산출해 둘 중 하나를 최종 채택합니다.</div>'
       + '<table style="width:100%;border-collapse:collapse;font-size:14px;">'
-      + row('거래사례 평균단가', won(unitPrice) + '/㎡', '거래사례 평균매매가 ÷ 전용면적')
+      + row(unitLabel, won(unitPrice) + '/㎡', unitDesc)
       + row('× 전용면적', (area ? area.toFixed(2) : '-') + '㎡', ap.source || '')
-      + row('= 기준시세', won(baseValue), '요인·낙찰가율 적용 전', true)
+      + row(baseLabel, won(baseValue), '요인·낙찰가율 적용 전', true)
       + '</table>'
       + '<div style="margin-top:16px;font-weight:700;color:var(--ink);font-size:13px;">보정 요인 <span class="text-muted" style="font-weight:400;font-size:11px;">· 담당자안: 요인 0.50~1.50, 낙찰가율 ' + CFG.minRate + '~' + CFG.maxRate + '% 직접 입력</span></div>'
       + '<table style="width:100%;border-collapse:collapse;margin-top:6px;">'
@@ -435,14 +447,20 @@
     var vc = document.getElementById('viewContainer'); if (!vc) return;
     var pid = state.currentPropertyId; if (!pid) return;
     var host = document.getElementById('bidEstHost');
-    var html = cardHTML(pid);
     var empty = '<div class="card"><div class="text-muted">감정가 또는 거래사례가 없어 추정할 수 없습니다. 02 거래사례 / 04 경공매 사례 탭에서 데이터를 채워주세요.</div></div>';
+    // 어떤 티어/입력에서도 카드 산출이 예외를 던지면 앱이 아니라 카드만 폴백 표시.
+    var html;
+    try { html = cardHTML(pid); }
+    catch (e) {
+      console.warn('[낙찰가 카드] 산출 실패, 폴백 표시:', e);
+      html = '<div class="card"><div class="text-muted">추정 낙찰가액 카드를 표시할 수 없습니다(일시 오류). 데이터를 확인하거나 다시 시도하세요.</div></div>';
+    }
     if (host) { host.innerHTML = html || empty; return; }
     // host가 아직 없으면(렌더 타이밍) viewContainer 끝에 주입
     Array.prototype.forEach.call(vc.querySelectorAll('[data-cascade="1"]'), function (n) { n.remove(); });
     if (!html) return;
     var tmp = document.createElement('div'); tmp.innerHTML = html;
-    vc.appendChild(tmp.firstElementChild);
+    if (tmp.firstElementChild) vc.appendChild(tmp.firstElementChild);
   }
   window.injectBidEst = injectBidEst;
 
