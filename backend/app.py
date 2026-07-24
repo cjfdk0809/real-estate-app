@@ -2421,7 +2421,7 @@ def auction_estimate():
 
     # 용도·지역·기간으로 서버측 선필터(볼륨 축소). 시도 범위를 한 번에 당겨
     # 시도/시군구/동 층을 모두 이 집합에서 버킷팅한다.
-    try:
+    def _fetch(scope_field, scope_val):
         q = (supabase.table('auction_sales')
              .select('use_group,sido,sigungu,address,bid_rate,fail_count,sale_date')
              .eq('use_group', use_group)
@@ -2429,12 +2429,25 @@ def auction_estimate():
              .not_.is_('bid_rate', 'null')
              .gte('sale_date', cutoff)
              .order('sale_date', desc=True)
-             .limit(4000))
+             .limit(4000)
+             .eq(scope_field, scope_val))
+        return (q.execute().data) or []
+
+    eff_sido = sido or None
+    try:
         if sido:
-            q = q.eq('sido', sido)
+            raw = _fetch('sido', sido)
+            # sido 포맷 불일치(예: 프론트 '경기' vs DB '경기도') 폴백: 시군구로 재조회.
+            # 단, 동일 시군구명이 여러 시도에 있으면(예: '중구') 시도 판별이 불가하므로
+            # 오염 방지를 위해 추정을 제공하지 않는다(그래프풀 폴백: 기존 캐스케이드).
+            if not raw and sigungu:
+                cand = _fetch('sigungu', sigungu)
+                distinct_sido = {(r.get('sido') or '') for r in cand}
+                if cand and len(distinct_sido) <= 1:
+                    raw = cand
+                    eff_sido = next(iter(distinct_sido)) or None   # DB 실제 sido 표기로 교체
         else:
-            q = q.eq('sigungu', sigungu)   # 시도 미상 시 시군구로만 스코프
-        raw = (q.execute().data) or []
+            raw = _fetch('sigungu', sigungu)   # 시도 미상 시 시군구로만 스코프
     except Exception as e:
         return jsonify({'available': False, 'reason': safe_error('조회 오류', e)})
 
@@ -2452,7 +2465,7 @@ def auction_estimate():
     for r in raw:
         r['dong'] = _dong_of(r)
 
-    target = {'sido': sido or None, 'sigungu': sigungu or None,
+    target = {'sido': eff_sido, 'sigungu': sigungu or None,
               'dong': dong or None, 'use_group': use_group,
               'fail_count': fail_count, 'asof': today}
     result = estimate_bid_rate(raw, target)

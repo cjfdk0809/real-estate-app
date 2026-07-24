@@ -1500,19 +1500,29 @@ async function saveState() {
     console.error('[Sync] localStorage 저장 실패:', e);
   }
 
-  // 2. Supabase 비동기 저장 (백그라운드, 사용자 대기 없이)
-  fetch('/api/state', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ user_id: userId, state }),
-  }).then(r => r.json()).then(d => {
-    if (d.ok) {
-      console.log(`[Sync] Supabase 저장 완료 (user=${userId})`);
-    } else {
-      console.warn('[Sync] Supabase 저장 실패:', d.error);
-    }
-  }).catch(e => console.warn('[Sync] Supabase 네트워크 오류:', e));
+  // 2. Supabase 저장은 디바운스 (연속 편집마다 POST 폭주·공유모드 덮어쓰기 경합 완화).
+  //    localStorage는 위에서 이미 즉시 저장했으므로 새로고침해도 데이터 유실 없음.
+  _scheduleStateSync(userId);
 }
+
+// --- 상태 서버동기화: 디바운스(1.2s) + 페이지 이탈 시 flush(sendBeacon) ---
+let _stateSyncTimer = null;
+function _postState(userId, useBeacon) {
+  const body = JSON.stringify({ user_id: userId, state });
+  if (useBeacon && navigator.sendBeacon) {
+    try { navigator.sendBeacon('/api/state', new Blob([body], { type: 'application/json' })); return; } catch (e) {}
+  }
+  fetch('/api/state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body })
+    .then(r => r.json()).then(d => { if (!d.ok) console.warn('[Sync] Supabase 저장 실패:', d.error); })
+    .catch(e => console.warn('[Sync] Supabase 네트워크 오류:', e));
+}
+function _scheduleStateSync(userId) {
+  if (_stateSyncTimer) clearTimeout(_stateSyncTimer);
+  _stateSyncTimer = setTimeout(() => { _stateSyncTimer = null; _postState(userId, false); }, 1200);
+}
+window.addEventListener('beforeunload', () => {
+  if (_stateSyncTimer) { clearTimeout(_stateSyncTimer); _stateSyncTimer = null; _postState(getUserId(), true); }
+});
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).substr(2, 5); }
 
@@ -1574,6 +1584,12 @@ function escapeHtml(s) {
   });
 }
 window.escapeHtml = escapeHtml;
+
+// onclick 등 HTML 속성 안의 JS 문자열 인자용: JS 이스케이프(백슬래시·따옴표·개행) 후 HTML 이스케이프.
+function jsStr(s) {
+  return escapeHtml(String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r?\n/g, ' '));
+}
+window.jsStr = jsStr;
 
 const fmt = {
   esc: escapeHtml,
@@ -4830,11 +4846,11 @@ async function searchSigungu(query) {
     }
     box.innerHTML = '<div style="font-size: 10px; color: var(--ink-muted); padding: 4px 6px; letter-spacing: 0.05em;">시군구 선택</div>' +
       d.items.slice(0, 10).map(([name, code]) => `
-        <div onclick="selectSigungu('${name.replace(/'/g, "\\'")}', '${code}')"
+        <div onclick="selectSigungu('${jsStr(name)}', '${jsStr(code)}')"
           style="padding: 7px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; margin-top: 2px; display: flex; justify-content: space-between; background: white; border: 1px solid var(--line);"
           onmouseover="this.style.background='var(--bg-subtle)'; this.style.borderColor='var(--kiwoom-navy)'"
           onmouseout="this.style.background='white'; this.style.borderColor='var(--line)'">
-          <span>${name}</span><span class="text-mono text-muted">${code}</span>
+          <span>${escapeHtml(name)}</span><span class="text-mono text-muted">${escapeHtml(code)}</span>
         </div>
       `).join('');
   } catch (e) {
@@ -5510,11 +5526,11 @@ async function searchLawdCode(query) {
       return;
     }
     box.innerHTML = d.items.slice(0, 8).map(([name, code]) => `
-      <div onclick="selectLawd('${name}', '${code}')"
+      <div onclick="selectLawd('${jsStr(name)}', '${jsStr(code)}')"
         style="padding: 6px 10px; background: var(--bg-subtle); border-radius: 4px; cursor: pointer; font-size: 12px; margin-top: 3px; display: flex; justify-content: space-between;"
         onmouseover="this.style.background='var(--accent-soft)'"
         onmouseout="this.style.background='var(--bg-subtle)'">
-        <span>${name}</span><span class="text-mono text-muted">${code}</span>
+        <span>${escapeHtml(name)}</span><span class="text-mono text-muted">${escapeHtml(code)}</span>
       </div>
     `).join('');
   } catch (e) {
