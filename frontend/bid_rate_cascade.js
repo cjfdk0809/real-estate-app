@@ -371,7 +371,10 @@
     var mInt = clampFactor(sc.mgrFactorInt != null ? sc.mgrFactorInt : 1.00);
     var mHo  = clampFactor(sc.mgrFactorHo  != null ? sc.mgrFactorHo  : 1.00);
     var mEtc = clampFactor(sc.mgrFactorEtc != null ? sc.mgrFactorEtc : 1.00);
-    var factorProd = +(mExt * mInt * mHo * mEtc).toFixed(4);  // 낙찰가율 제외 요인 곱
+    var factorProdRaw = +(mExt * mInt * mHo * mEtc).toFixed(4);  // 낙찰가율 제외 요인 곱(원값)
+    // 종합 요인 상·하한(±50%): 4개 요인(각 0.5~1.5)의 곱은 0.06~5.06배까지 튈 수 있어
+    // 기준시세가 비현실적으로 왜곡되는 것을 막기 위해 곱 자체를 0.5~1.5로 제한한다.
+    var factorProd = Math.max(0.5, Math.min(1.5, factorProdRaw));
     // 낙찰가율(%) — AI는 캐스케이드값, 담당자는 직접 조정
     var aiRatePct = cas.center;
     var mRatePct = clampRate(sc.mgrBidRate); if (mRatePct == null) mRatePct = aiRatePct;
@@ -386,6 +389,7 @@
       ap: ap, area: area, cas: cas, rate: aiRate,
       unitPrice: area ? Math.round(ap.value / area) : 0,
       mExt: mExt, mInt: mInt, mHo: mHo, mEtc: mEtc, factorProd: factorProd,
+      factorProdRaw: factorProdRaw, factorClamped: (factorProd !== factorProdRaw),
       aiRatePct: aiRatePct, mRatePct: mRatePct,
       baseAi: baseAi, baseMgr: baseMgr,
       aiBid: aiBid, mgrBid: mgrBid,
@@ -520,7 +524,7 @@
       + facRow('호별요인', '층·향·위치별 효용', be.mHo, 'ho')
       + rateRow('낙찰가율', cas.scope + (cas.asof ? ' · 한국부동산원 ' + cas.asof : ''), be.aiRatePct, be.mRatePct)
       + facRow('기타요인', '명도난이도·시장상황·급매 등 개별조정', be.mEtc, 'etc')
-      + '<tr style="border-top:1px solid var(--line,#dfe4ee);"><td style="padding:6px 0;font-weight:700;font-size:13px;color:var(--ink-soft);">요인 곱 <span style="font-weight:400;color:var(--ink-muted);font-size:11px;">(낙찰가율 제외)</span></td><td style="padding:6px 8px;text-align:right;font-weight:700;font-size:13px;">1.00</td><td style="padding:6px 0;text-align:right;font-weight:700;font-size:13px;color:' + PINK + ';">' + factorProd.toFixed(2) + '</td></tr>'
+      + '<tr style="border-top:1px solid var(--line,#dfe4ee);"><td style="padding:6px 0;font-weight:700;font-size:13px;color:var(--ink-soft);">요인 곱 <span style="font-weight:400;color:var(--ink-muted);font-size:11px;">(낙찰가율 제외' + (be.factorClamped ? ' · 상·하한 0.5~1.5 적용, 원값 ' + be.factorProdRaw.toFixed(2) : '') + ')</span></td><td style="padding:6px 8px;text-align:right;font-weight:700;font-size:13px;">1.00</td><td style="padding:6px 0;text-align:right;font-weight:700;font-size:13px;color:' + PINK + ';">' + factorProd.toFixed(2) + '</td></tr>'
       + '</tbody></table>'
       + '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;">'
       + priceBox('ai', 'AI안 채택', be.aiBid, '요인 1.00 · 낙찰가율 ' + be.aiRatePct + '%', dec === 'ai')
@@ -610,9 +614,12 @@
     if (curDanji !== '전체' && danjiList.indexOf(curDanji) < 0) curDanji = '전체';
     var comps = (curDanji === '전체') ? allComps : allComps.filter(function (x) { return x.name === curDanji; });
 
-    // 동일면적(전용 ±1㎡) 매매, 해제 제외 → 3→6→12→24개월 윈도 평균
+    // 동일면적 매매, 해제 제외 → 3→6→12→24개월 윈도 평균. 허용폭은 index.html의 _sameAreaTol과
+    // 동일하게 용도별로(아파트·오피스텔 ±1㎡, 빌라·다세대·연립 ±10%·최소 2㎡) 맞춰 빌라 표본 과소를 해소.
+    var _u = ((p.use) || '').replace(/\s/g, '');
+    var areaTol = /다세대|연립|빌라/.test(_u) ? Math.max(2, area * 0.10) : 1;
     var sameArea = comps.filter(function (x) {
-      return x.type === '매매' && Math.abs((x.area || 0) - area) < 1 && (!x.memo || x.memo.indexOf('해제') < 0);
+      return x.type === '매매' && Math.abs((x.area || 0) - area) < areaTol && (!x.memo || x.memo.indexOf('해제') < 0);
     });
     var info = windowedAvg(sameArea);
 
