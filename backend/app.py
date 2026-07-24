@@ -28,6 +28,7 @@ from lawd_codes import LAWD_CODES, find_lawd_code
 from registry_analyzer import registry_bp  # 🆕 등기부 분석 모듈
 from housing_price_api import housing_bp  # 🆕 공시가격 조회 모듈
 from complex_identifier import identify_complex, identify_dong  # 🆕 Day 8: 단지 교차검증
+from auction_estimate import estimate_bid_rate  # 🆕 P1: 낙찰가율 추정 엔진(최근성·수축·유찰보정)
 
 # Supabase 클라이언트 (선택적 - 미설치/미설정 시에도 기존 기능은 정상 작동)
 try:
@@ -2392,6 +2393,81 @@ def auction_comparables():
         'median_bid_rate': med,
         'items': picked,
     })
+
+
+# ============================================================
+# 예상 낙찰가율 추정 (P1) — auction_sales 원시데이터 기반
+# 최근성 가중 + 계층적 수축(동→구→시도→전국) + 유찰횟수 보정 + 분위수(P25/P75).
+# 통계 로직은 auction_estimate.estimate_bid_rate (순수함수)에 위임.
+# ============================================================
+@app.route('/api/auction/estimate')
+def auction_estimate():
+    if not supabase:
+        return jsonify({'available': False, 'reason': 'Supabase 미설정'})
+    use_group = (request.args.get('use_group') or '').strip()
+    sido = (request.args.get('sido') or '').strip()
+    sigungu = (request.args.get('sigungu') or '').strip()
+    dong = (request.args.get('dong') or '').strip()
+    fail_count = request.args.get('fail_count', type=int)   # 본건 예상 유찰차수(선택)
+    months = request.args.get('months', default=36, type=int)
+    if not use_group:
+        return jsonify({'available': False, 'reason': 'use_group 필수'}), 400
+    if not sido and not sigungu:
+        return jsonify({'available': False, 'reason': '본건 지역(시도 또는 시군구) 필요'})
+
+    import datetime as _dt
+    today = _dt.date.today()
+    cutoff = (today - _dt.timedelta(days=months * 31)).isoformat()
+
+    # 용도·지역·기간으로 서버측 선필터(볼륨 축소). 시도 범위를 한 번에 당겨
+    # 시도/시군구/동 층을 모두 이 집합에서 버킷팅한다.
+    try:
+        q = (supabase.table('auction_sales')
+             .select('use_group,sido,sigungu,address,bid_rate,fail_count,sale_date')
+             .eq('use_group', use_group)
+             .not_.is_('sale_price', 'null')
+             .not_.is_('bid_rate', 'null')
+             .gte('sale_date', cutoff)
+             .order('sale_date', desc=True)
+             .limit(4000))
+        if sido:
+            q = q.eq('sido', sido)
+        else:
+            q = q.eq('sigungu', sigungu)   # 시도 미상 시 시군구로만 스코프
+        raw = (q.execute().data) or []
+    except Exception as e:
+        return jsonify({'available': False, 'reason': safe_error('조회 오류', e)})
+
+    if not raw:
+        return jsonify({'available': False, 'reason': '표본 없음',
+                        'truncated': False, 'fetched': 0})
+
+    def _dong_of(r):
+        a = (r.get('address') or '')
+        for t in (r.get('sido') or '', r.get('sigungu') or ''):
+            a = a.replace(t, '')
+        a = a.strip()
+        return a.split()[0] if a else ''
+
+    for r in raw:
+        r['dong'] = _dong_of(r)
+
+    target = {'sido': sido or None, 'sigungu': sigungu or None,
+              'dong': dong or None, 'use_group': use_group,
+              'fail_count': fail_count, 'asof': today}
+    result = estimate_bid_rate(raw, target)
+    result['fetched'] = len(raw)
+    result['truncated'] = (len(raw) >= 4000)   # 표본 절단 시 상위 표기 가능
+    result['window_months'] = months
+    if result.get('available'):
+        cl = {'dong': dong or '동', 'sigungu': sigungu or '시군구',
+              'sido': sido or '시도', 'national': '전국'}.get(result['chosen_level'], '')
+        fa = result.get('fail_adjustment') or {}
+        result['derivation'] = (
+            f'{cl} · 최근성가중({months}개월, 반감기{int(result.get("halflife_months",12))}개월) · '
+            f'표본 {result.get("sample_n",0)}건(유효 {result.get("sample_n_eff",0)}) · 계층수축'
+            + (f' · 유찰보정({fa.get("delta"):+.1f}%p)' if fa.get('applied') else ''))
+    return jsonify(result)
 
 
 # ============================================================
