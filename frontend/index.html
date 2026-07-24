@@ -848,6 +848,7 @@ table { border-collapse: collapse; width: 100%; }
 
     <div class="nav-section">
       <div class="nav-label">분석 모듈</div>
+      <div class="nav-item" data-view="guide"><span class="nav-item-num">00</span> 사용 안내</div>
       <div class="nav-item active" data-view="overview"><span class="nav-item-num">01</span> 본건 정보</div>
       <div class="nav-item" data-view="comparables"><span class="nav-item-num">02</span> 거래사례 비교</div>
       <div class="nav-item" data-view="listings"><span class="nav-item-num">03</span> 매물현황</div>
@@ -1760,15 +1761,79 @@ function closeSidebar() {
 // ============================================================
 // VIEW ROUTER
 // ============================================================
+// ============================================================
+// VIEW: GUIDE (00 사용 안내 — 처음 사용자용)
+// ============================================================
+function renderGuide() {
+  const c = document.getElementById('viewContainer');
+  const hasProp = Object.keys(state.properties || {}).length > 0;
+  const step = (n, title, body) => `
+    <div style="display:flex;gap:14px;align-items:flex-start;margin-bottom:16px;">
+      <div style="flex:0 0 auto;width:30px;height:30px;border-radius:50%;background:var(--kiwoom-navy,#1e2a44);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center;font-size:14px;">${n}</div>
+      <div style="flex:1;"><div style="font-weight:700;color:var(--ink);margin-bottom:2px;">${title}</div>
+        <div class="text-small text-muted" style="line-height:1.7;">${body}</div></div>
+    </div>`;
+  const tab = (num, name, desc) => `
+    <tr>
+      <td style="padding:8px 10px;white-space:nowrap;"><span class="badge" style="background:var(--kiwoom-navy,#1e2a44);color:#fff;">${num}</span> <strong>${name}</strong></td>
+      <td style="padding:8px 10px;color:var(--ink-soft);font-size:13px;line-height:1.6;">${desc}</td>
+    </tr>`;
+
+  c.innerHTML = `
+    <div class="page-head">
+      <div class="page-eyebrow">사용 안내 · Getting Started</div>
+      <h1 class="page-title">처음 오셨나요? 3단계로 시작하기</h1>
+      <div class="page-sub">이 앱은 <strong>NPL 경공매 물건의 예상 낙찰가와 담보 회수액</strong>을 분석합니다. 감정가·거래사례·등기부 권리를 입력하면 예상 낙찰가·배당·회수율이 자동으로 계산됩니다.</div>
+    </div>
+
+    <div class="card mb-24">
+      <div class="card-title">빠른 시작</div>
+      ${step(1, '물건 등록', '왼쪽 하단 <strong>[🔍 물건 검색]</strong> 버튼으로 단지를 찾아 등록하거나, <strong>01 본건 정보</strong>에서 주소·전용면적을 직접 입력합니다.')}
+      ${step(2, '데이터 입력', '<strong>02 거래사례</strong>에 실거래가, <strong>04 경공매 사례</strong>에 사건번호·<strong>감정가</strong>, <strong>06 권리분석</strong>에 등기부 권리(근저당·임차인 등)를 입력합니다. 감정가와 거래사례만 있어도 추정이 시작됩니다.')}
+      ${step(3, '분석 확인', '<strong>05 추정낙찰가</strong>에서 예상 낙찰가를, <strong>06 권리분석</strong>에서 배당 시뮬레이션과 당사 회수액을 확인합니다. 입력은 <strong>자동 저장</strong>됩니다.')}
+      <div class="text-small" style="margin-top:6px;color:var(--kiwoom-navy,#1e2a44);font-weight:600;">👉 ${hasProp ? '왼쪽에서 물건을 선택하고 <strong>01 본건 정보</strong>부터 확인하세요.' : '준비되면 왼쪽 하단 [🔍 물건 검색]으로 첫 물건을 등록하세요.'}</div>
+    </div>
+
+    <div class="card mb-24">
+      <div class="card-title">메뉴 한눈에 보기</div>
+      <table class="tbl" style="width:100%;">
+        <tbody>
+          ${tab('01', '본건 정보', '단지명·주소·전용면적·공시가격 등 기본정보. 동일 면적대 평균 매매가가 요약됩니다.')}
+          ${tab('02', '거래사례 비교', '동일 단지·면적의 실거래(매매·전월세)를 입력·수집해 시세 기준을 만듭니다. 해제(취소) 거래는 자동 제외.')}
+          ${tab('03', '매물현황', '현재 시장에 나온 매물(호가)을 참고로 관리합니다.')}
+          ${tab('04', '경공매 사례', '사건번호·법원·<strong>감정가</strong>·유찰횟수를 입력합니다. 감정가는 낙찰가 추정의 기준값입니다.')}
+          ${tab('05', '추정낙찰가', '감정가 × 낙찰가율로 예상 낙찰가를 산출합니다. 낙찰가율은 경공매 실적을 <strong>지역·용도·최근성·유찰차수</strong>로 추정하며, <strong>AI안</strong>과 담당자가 요인을 조정한 <strong>담당자안</strong> 중 선택합니다.')}
+          ${tab('06', '권리분석', '등기부 권리(근저당·가압류·임차권·전세권)를 입력하면 <strong>말소기준·인수금액·임차인 배당(대항력·최우선변제·확정일자)·전체 배당 시뮬레이션·당사 회수율</strong>이 자동 계산됩니다. 당사 보유 근저당은 <strong>당사근저당</strong>에 체크하세요.')}
+          ${tab('07', '수익률·세금', '매수가·대출·임대료를 넣어 임대수익률과 취득세·양도세·재산세를 시뮬레이션합니다.')}
+          ${tab('08', '담당자 의견', 'NPL 매수 검토 의견을 기록합니다. 05의 최종 낙찰예상가가 자동 반영됩니다.')}
+          ${tab('09', '리포트', '입력·분석 결과를 PDF 리포트로 출력합니다.')}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <div class="card-title">알아두면 좋은 점</div>
+      <ul style="margin:0;padding-left:20px;color:var(--ink-soft);font-size:13px;line-height:1.9;">
+        <li><strong>자동 저장</strong> — 입력하면 자동으로 저장됩니다(따로 저장 버튼 없음).</li>
+        <li><strong>추정 근거 표시</strong> — 낙찰가율 카드에 사용된 지역·표본수·보정(유찰 등)이 함께 표시됩니다. 표본이 적으면 상위 지역 값으로 자동 보정됩니다.</li>
+        <li><strong>임차인 자동배당</strong> — 06 권리분석에 임차인의 <strong>전입일·확정일자·보증금·배당요구</strong>를 넣으면 대항력·최우선변제·배당·인수액이 자동 계산됩니다. 소액임차인 지역구분은 확인 후 조정하세요.</li>
+        <li><strong>감정가가 핵심</strong> — 04에 감정가가 있으면 정확도가 올라갑니다. 없으면 거래사례 평균을 대용으로 사용합니다.</li>
+      </ul>
+    </div>
+  `;
+}
+
 function renderView() {
   const c = document.getElementById('viewContainer');
   const p = state.properties[state.currentPropertyId];
+  if (state.currentView === 'guide') { renderGuide(); return; }   // 안내는 물건 없어도 표시
   if (!p && state.currentView !== 'overview') {
-    c.innerHTML = `<div class="empty"><div class="empty-title">등록된 물건이 없습니다</div><div class="empty-text">왼쪽 하단의 [🔍 물건 검색] 버튼으로 시작하세요.</div></div>`;
+    c.innerHTML = `<div class="empty"><div class="empty-title">등록된 물건이 없습니다</div><div class="empty-text">왼쪽 하단의 [🔍 물건 검색] 버튼으로 시작하세요. 처음이라면 좌측 <strong>00 사용 안내</strong>를 먼저 보세요.</div></div>`;
     return;
   }
 
   switch(state.currentView) {
+    case 'guide': renderGuide(); break;
     case 'overview': renderOverview(); break;
     case 'comparables': renderComparables(); break;
     case 'listings': renderListings(); break;
@@ -5662,6 +5727,11 @@ document.getElementById('rightForm').addEventListener('submit', async (e) => {
 // ============================================================
 (async function init() {
   await loadState();
+  // 처음 사용자(등록 물건 없음)는 '00 사용 안내'를 먼저 보여준다.
+  if (!Object.keys(state.properties || {}).length && (!state.currentView || state.currentView === 'overview')) {
+    state.currentView = 'guide';
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.view === 'guide'));
+  }
   renderPropertyList();
   renderView();
 })();
