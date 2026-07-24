@@ -2727,13 +2727,15 @@ function analyzeTenants(classified, opts) {
       const fixed = r.confirmedDate || '';        // 확정일자
       const demanded = (r.demandDist === true || r.demandDist === 'true' || r.demandDist === 'Y' || r.demandDist === 'on');
       const opposing = !!(baseDate && moveIn && moveIn < baseDate);   // 대항력: 전입 < 말소기준(같은 날은 익일 0시라 제외)
+      const isLease = /임차권/.test(r.type || '');   // 주택임차권(소액 최우선변제 대상). 전세권은 제외.
       const isSmall = deposit <= tbl.cap;
-      // 최우선변제·확정일자 우선변제 모두 배당요구종기 내 배당요구가 있어야 배당받는다.
-      const minPriority = (demanded && isSmall) ? Math.min(tbl.amt, deposit) : 0;   // 소액임차인 최우선변제금
-      const fixedRankDate = (demanded && fixed) ? fixed : null;       // 확정일자 우선변제 기준일(배당요구+확정일자)
-      const ordinaryClaim = Math.max(0, deposit - minPriority);       // 최우선변제 제외 나머지(확정일자 우선변제 대상)
+      // 최우선변제·우선변제 모두 배당요구종기 내 배당요구가 있어야 배당받는다.
+      const minPriority = (demanded && isLease && isSmall) ? Math.min(tbl.amt, deposit) : 0;   // 소액임차인 최우선변제금
+      // 우선변제 기준일: 임차권=확정일자, 전세권=설정일(등기일). 배당요구 없으면 배당 대상 아님.
+      const rankDate = demanded ? (isLease ? (fixed || null) : (moveIn || null)) : null;
+      const ordinaryClaim = Math.max(0, deposit - minPriority);       // 최우선변제 제외 나머지(우선변제 대상)
       return { id: r.id, holder: r.holder || '', type: r.type, deposit, moveIn, fixed,
-        demanded, opposing, isSmall, minPriority, fixedRankDate, ordinaryClaim };
+        demanded, opposing, isSmall, isLease, minPriority, rankDate, fixedRankDate: rankDate, ordinaryClaim };
     });
   // 최우선변제 총액은 배당재원의 1/2 한도(초과 시 안분). distributable 미제공 시 한도 미적용(청구가능액).
   const rawMinTotal = tenants.reduce((s, t) => s + t.minPriority, 0);
@@ -2743,6 +2745,89 @@ function analyzeTenants(classified, opts) {
     minCapped = true;
   }
   return { region, table: tbl, tenants, minPriorityTotal, minCapped, rawMinTotal };
+}
+
+// ============================================================
+// 배당 워터폴 시뮬레이션: 매각대금을 배당순위대로 순차 배당
+// 순위군 0 집행비용 → 1 최우선변제(안분·1/2한도) → 2 당해세 → 3 우선변제(날짜순: 담보권·확정일자임차·전세권)
+//        → 4 일반채권(가압류 등, 안분)
+// ============================================================
+// ra: analyzeRights(), ta: analyzeTenants(), opts: {saleAmount, auctionCost, taxLien}
+function buildDistributionClaims(ra, ta, opts) {
+  opts = opts || {};
+  const claims = [];
+  if (opts.auctionCost > 0) claims.push({ id: '_cost', label: '집행비용', group: 0, amount: opts.auctionCost, kind: '비용' });
+  // 1: 소액임차인 최우선변제 (임차인별)
+  (ta.tenants || []).forEach(t => {
+    if (t.minPriority > 0) claims.push({ id: 'mp_' + t.id, label: '최우선변제 · ' + (t.holder || '임차'), group: 1, amount: t.minPriority, kind: '최우선', tenantId: t.id });
+  });
+  // 2: 당해세
+  if (opts.taxLien > 0) claims.push({ id: '_tax', label: '당해세', group: 2, amount: opts.taxLien, kind: '당해세' });
+  // 3: 우선변제(날짜순) — 담보권(근저당·담보가등기, 소멸) + 확정일자임차·전세권(배당요구)
+  (ra.classified || []).forEach(r => {
+    const t = r.type || '';
+    if (/근저당|담보가등기/.test(t) && r.status !== '인수') {
+      claims.push({ id: r.id, label: t + ' · ' + (r.holder || ''), group: 3, date: r.date || '', amount: r.amount || 0, isOurs: !!r.isOurs, kind: '담보' });
+    }
+  });
+  (ta.tenants || []).forEach(t => {
+    if (t.rankDate && t.ordinaryClaim > 0) {
+      claims.push({ id: 'lt_' + t.id, label: (t.isLease ? '확정일자임차 · ' : '전세권 · ') + (t.holder || ''), group: 3, date: t.rankDate, amount: t.ordinaryClaim, kind: '임차', tenantId: t.id, opposing: t.opposing, deposit: t.deposit, minPriority: t.minPriority });
+    }
+  });
+  // 4: 일반채권 — 가압류(소멸)
+  (ra.classified || []).forEach(r => {
+    if ((r.type || '').includes('가압류') && r.status !== '인수') {
+      claims.push({ id: r.id, label: '가압류 · ' + (r.holder || ''), group: 4, date: r.date || '', amount: r.amount || 0, kind: '일반' });
+    }
+  });
+  return claims;
+}
+
+function simulateDistribution(claims, saleAmount) {
+  const alloc = {};
+  (claims || []).forEach(c => { alloc[c.id] = 0; });
+  let remaining = saleAmount || 0;
+
+  // 0: 집행비용
+  claims.filter(c => c.group === 0).forEach(c => { const pay = Math.min(c.amount, remaining); alloc[c.id] += pay; remaining -= pay; });
+
+  // 1: 최우선변제 — 매각대금의 1/2 한도 내에서 안분
+  const g1 = claims.filter(c => c.group === 1);
+  const g1total = g1.reduce((s, c) => s + c.amount, 0);
+  if (g1total > 0) {
+    const pool = Math.min(g1total, Math.floor((saleAmount || 0) / 2), remaining);
+    g1.forEach(c => { const pay = Math.round(pool * c.amount / g1total); alloc[c.id] += pay; });
+    remaining -= pool;
+  }
+
+  // 2: 당해세
+  claims.filter(c => c.group === 2).forEach(c => { const pay = Math.min(c.amount, remaining); alloc[c.id] += pay; remaining -= pay; });
+
+  // 3: 우선변제 — 날짜(확정일자/설정일) 오름차순
+  claims.filter(c => c.group === 3).slice()
+    .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
+    .forEach(c => { const pay = Math.min(c.amount, Math.max(0, remaining)); alloc[c.id] += pay; remaining -= pay; });
+
+  // 4: 일반채권 — 잔여 안분
+  const g4 = claims.filter(c => c.group === 4);
+  const g4total = g4.reduce((s, c) => s + c.amount, 0);
+  if (g4total > 0 && remaining > 0) {
+    const pool = Math.min(g4total, remaining);
+    g4.forEach(c => { const pay = Math.round(pool * c.amount / g4total); alloc[c.id] += pay; });
+    remaining -= pool;
+  }
+
+  const rows = (claims || []).map(c => ({
+    id: c.id, label: c.label, group: c.group, kind: c.kind, date: c.date || '', amount: c.amount,
+    allocated: alloc[c.id], unpaid: Math.max(0, c.amount - alloc[c.id]),
+    isOurs: !!c.isOurs, opposing: !!c.opposing, tenantId: c.tenantId, deposit: c.deposit
+  }));
+  const oursRow = rows.find(r => r.isOurs) || null;
+  // 대항력 임차인의 미배당 보증금 = 낙찰자 인수 (배당요구분은 배당 후 잔액, 미배당요구는 전액)
+  const tenantAssume = {};
+  (claims || []).forEach(c => { if (c.tenantId && c.opposing) tenantAssume[c.tenantId] = (tenantAssume[c.tenantId] || 0) + Math.max(0, c.amount - alloc[c.id]); });
+  return { rows, surplus: Math.max(0, remaining), alloc, oursRow, tenantAssume };
 }
 
 // 권리관계 목록: 당사 근저당권 지정(단일 선택)
@@ -2831,6 +2916,12 @@ function renderScenarioAndNPL(p, auctions, rights) {
   const recoveryRate = (distributable != null && ra.seniorClaim) ? Math.min(100, distributable / ra.seniorClaim * 100) : null;
   const surplus = (distributable != null && ra.seniorClaim) ? (distributable - ra.seniorClaim) : null;
   const oursRec = computeOursRecovery(ra.classified, distributable, ta.tenants);
+  // 전체 배당 워터폴 시뮬레이션 (집행비용·최우선변제·당해세·우선변제 날짜순·일반채권)
+  const distClaims = buildDistributionClaims(ra, ta, { saleAmount: midBid || 0, auctionCost: auctionCost || 0, taxLien: priorClaims || 0 });
+  const sim = (midBid != null) ? simulateDistribution(distClaims, midBid) : null;
+  const oursSimRecovered = sim && sim.oursRow ? sim.oursRow.allocated : (oursRec ? oursRec.recovered : null);
+  const oursSimRate = (oursSimRecovered != null && oursRec && oursRec.oursClaim) ? Math.min(100, oursSimRecovered / oursRec.oursClaim * 100) : null;
+  const tenantAssumeTotal = sim ? Object.keys(sim.tenantAssume).reduce((s, k) => s + sim.tenantAssume[k], 0) : 0;
 
   const scenarioCard = `
   <div class="card mb-24">
@@ -2897,8 +2988,8 @@ function renderScenarioAndNPL(p, auctions, rights) {
       <div>
         <div class="info-row"><div class="info-label">배당가능재원</div><div class="info-value mono">${fmt.won(distributable)}</div></div>
         <div class="info-row"><div class="info-label">당사 배당가능액</div><div class="info-value mono">${fmt.won(oursRec.availForOurs)}</div></div>
-        <div class="info-row"><div class="info-label">당사 예상 회수액</div><div class="info-value mono text-accent" style="font-weight:800;">${fmt.won(oursRec.recovered)}</div></div>
-        <div class="info-row"><div class="info-label">당사 회수율</div><div class="info-value mono ${oursRec.recoveryRate >= 100 ? '' : 'text-accent'}">${oursRec.recoveryRate != null ? oursRec.recoveryRate.toFixed(1) + '%' : '-'}</div></div>
+        <div class="info-row"><div class="info-label">당사 예상 회수액 <span class="text-muted text-small">배당시뮬</span></div><div class="info-value mono text-accent" style="font-weight:800;">${fmt.won(oursSimRecovered)}</div></div>
+        <div class="info-row"><div class="info-label">당사 회수율</div><div class="info-value mono ${oursSimRate >= 100 ? '' : 'text-accent'}">${oursSimRate != null ? oursSimRate.toFixed(1) + '%' : '-'}</div></div>
       </div>
     </div>
     <div class="notice" style="margin-top:12px;">
@@ -2911,7 +3002,31 @@ function renderScenarioAndNPL(p, auctions, rights) {
     </div>
   </div>` : '';
 
-  return scenarioCard + nplCard + oursCard;
+  const distCard = (sim && midBid != null && distClaims.length) ? `
+  <div class="card mb-24">
+    <div class="card-title">배당 시뮬레이션 <span class="text-muted text-small" style="font-weight:400;">· 중립 시나리오 낙찰가 ${fmt.won(midBid)} 기준 순차배당</span></div>
+    <table class="tbl">
+      <thead><tr><th>순위</th><th>배당 항목</th><th>일자</th><th class="text-right">채권액</th><th class="text-right">배당액</th><th class="text-right">미배당</th></tr></thead>
+      <tbody>
+        ${sim.rows.map(r => `<tr ${r.isOurs ? 'style="background:var(--kiwoom-pink-soft,#FFE6FF);"' : ''}>
+          <td class="num">${r.group}</td>
+          <td>${escapeHtml(r.label)}${r.isOurs ? ' <span class="text-accent text-small">(당사)</span>' : ''}${r.opposing ? ' <span class="text-muted text-small">대항력</span>' : ''}</td>
+          <td class="num text-small">${r.date ? fmt.date(r.date) : '-'}</td>
+          <td class="price">${fmt.won(r.amount)}</td>
+          <td class="price ${r.allocated > 0 ? 'text-accent' : 'text-muted'}">${fmt.won(r.allocated)}</td>
+          <td class="price ${r.unpaid > 0 ? '' : 'text-muted'}">${r.unpaid > 0 ? fmt.won(r.unpaid) : '-'}</td>
+        </tr>`).join('')}
+        <tr style="border-top:2px solid var(--line-strong,#c2cad9);font-weight:700;"><td colspan="4">배당 후 잉여 <span class="text-muted text-small" style="font-weight:400;">채무자·후순위</span></td><td class="price">${fmt.won(sim.surplus)}</td><td></td></tr>
+      </tbody>
+    </table>
+    <div class="text-small text-muted" style="margin-top:10px;line-height:1.7;">
+      순위: 0 집행비용 · 1 최우선변제(안분·매각대금 1/2한도) · 2 당해세 · 3 우선변제(담보권·확정일자임차·전세권 <strong>날짜순</strong>) · 4 일반채권(가압류 안분).
+      ${tenantAssumeTotal > 0 ? `<br><strong style="color:var(--accent);">대항력 임차인 미배당 ${fmt.won(tenantAssumeTotal)}은 낙찰자가 별도 인수</strong>합니다.` : ''}
+      <br>※ 실제 배당은 조세 법정기일·확정일자 세부순위·안분 방식에 따라 달라질 수 있어 참고용입니다.
+    </div>
+  </div>` : '';
+
+  return scenarioCard + nplCard + oursCard + distCard;
 }
 
 // ============================================================
