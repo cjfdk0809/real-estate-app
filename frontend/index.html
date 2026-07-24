@@ -3145,14 +3145,15 @@ function renderValuation() {
   const target = p.exclusiveArea;
   const sameArea = comps.filter(x => Math.abs((x.area||0) - target) < _sameAreaTol(p));
 
-  // 면적당 단가 평균
-  const ppmsArr = sameArea.map(x => x.price / x.area);
-  const avgPpm = ppmsArr.length ? trimmedMean(ppmsArr) : 0;
+  // 기준가는 다른 화면(본건정보 평균매매가·NPL 카드·리포트·감정가 대용)과 동일하게
+  // windowedSameAreaAvg(최근 3→6→12→24개월 확장 + 최고·최저 트림)로 산출해 값을 통일한다.
+  const win = windowedSameAreaAvg(sameArea);
+  const baseEst = win.avg;                                   // 동일면적 평균매매가(윈도·트림) = 기본 추정
+  const avgPpm = (target && baseEst) ? baseEst / target : 0; // 표시용 단가(㎡)
 
   // 층 보정 (저층 1-5: -3%, 중층 6-15: 0%, 고층 16+: +5%)
   const floor = p.floor || 0;
   const floorAdj = floor <= 5 ? -0.03 : floor >= 16 ? 0.05 : 0;
-  const baseEst = avgPpm * target;
   const adjEst = baseEst * (1 + floorAdj);
 
   // 최근 추세 (최근 3개월 vs 직전 3개월)
@@ -3186,7 +3187,7 @@ function renderValuation() {
         <div class="card-title">계산 근거</div>
         <div class="info-row"><div class="info-label">평균 단가</div><div class="info-value mono">${fmt.num(avgPpm,0)} 만/㎡</div></div>
         <div class="info-row"><div class="info-label">전용면적</div><div class="info-value mono">${target} ㎡</div></div>
-        <div class="info-row"><div class="info-label">기본 추정</div><div class="info-value mono">${fmt.won(Math.round(baseEst))}</div></div>
+        <div class="info-row"><div class="info-label">기본 추정 <span class="text-muted text-small">${win.windowLabel}${win.trimmed ? '·트림' : ''}</span></div><div class="info-value mono">${fmt.won(Math.round(baseEst))}</div></div>
         <div class="info-row"><div class="info-label">층 보정</div><div class="info-value mono ${floorAdj >= 0 ? 'text-accent' : ''}">${floorAdj >= 0 ? '+' : ''}${(floorAdj*100).toFixed(0)}%</div></div>
         <div class="info-row"><div class="info-label">최종 추정가</div><div class="info-value mono text-accent">${fmt.won(Math.round(adjEst))}</div></div>
       </div>
@@ -3204,12 +3205,12 @@ function renderValuation() {
         <div class="info-row"><div class="info-label">공시가격</div><div class="info-value mono">${p.publicPrice ? fmt.wonShort(p.publicPrice) : '-'}</div></div>
         <div class="info-row"><div class="info-label">시세 / 공시가</div><div class="info-value mono">${p.publicPrice ? ((adjEst*10000) / p.publicPrice).toFixed(2) + 'x' : '-'}</div></div>
         <div class="info-row"><div class="info-label">평당 추정가</div><div class="info-value mono">${target ? Math.round(adjEst/(target/3.305785)).toLocaleString() : '-'} 만/평</div></div>
-        <div class="info-row"><div class="info-label">샘플 수</div><div class="info-value mono">${sameArea.length} 건</div></div>
+        <div class="info-row"><div class="info-label">추정 표본</div><div class="info-value mono">${win.total} 건 <span class="text-muted text-small">/ 동일면적 ${sameArea.length}건 · ${win.windowLabel}</span></div></div>
       </div>
     </div>
 
     <div class="card">
-      <div class="card-title">반영된 거래사례 (전용 ${target}㎡ ±1㎡)</div>
+      <div class="card-title">반영된 거래사례 <span class="text-muted text-small" style="font-weight:400;">전용 ${target}㎡ ±${Math.round(_sameAreaTol(p)*10)/10}㎡ · 추정은 ${win.windowLabel} ${win.total}건 기준</span></div>
       ${sameArea.length === 0 ? '<div class="empty"><div class="empty-text">동일 면적대 거래사례가 없습니다. 거래사례를 추가하세요.</div></div>' : `
       <table class="tbl">
         <thead><tr><th>거래일</th><th class="text-right">전용면적</th><th class="text-right">층</th><th class="text-right">거래가</th><th class="text-right">㎡당 단가</th></tr></thead>
