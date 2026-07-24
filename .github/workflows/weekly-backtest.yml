@@ -1,0 +1,34 @@
+name: Weekly Backtest Snapshot
+
+# 매주 추정 정확도 백테스트를 실행해 backtest_history에 스냅샷을 저장한다.
+# 대시보드(/accuracy)의 '주간 정확도 추이'가 이 스냅샷을 읽어 표시된다.
+#
+# 사전 준비 — 저장소 Settings > Secrets and variables > Actions 에 등록:
+#   ADMIN_SECRET : 백엔드 ADMIN_SECRET 환경변수와 동일한 값
+#   APP_BASE_URL : 배포된 앱 주소 (예: https://real-estate-asset-manager.onrender.com)
+# (키는 URL이 아니라 X-Admin-Key 헤더로 전송되어 접근로그에 남지 않는다.)
+
+on:
+  schedule:
+    - cron: '0 0 * * 1'      # 매주 월요일 00:00 UTC (한국시간 월 09:00)
+  workflow_dispatch: {}       # 수동 실행도 가능
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger weekly backtest snapshot
+        env:
+          ADMIN_SECRET: ${{ secrets.ADMIN_SECRET }}
+          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+        run: |
+          if [ -z "$APP_BASE_URL" ] || [ -z "$ADMIN_SECRET" ]; then
+            echo "APP_BASE_URL / ADMIN_SECRET 시크릿이 설정되지 않았습니다." >&2
+            exit 1
+          fi
+          echo "백테스트 스냅샷 실행: $APP_BASE_URL"
+          RESP=$(curl -fsS -X POST \
+            -H "X-Admin-Key: $ADMIN_SECRET" \
+            "$APP_BASE_URL/api/auction/backtest/snapshot?holdout_months=3&train_months=18&max_test=500")
+          echo "$RESP"
+          echo "$RESP" | grep -q '"stored": *true' && echo "✅ 스냅샷 저장 완료" || echo "⚠️ 저장되지 않음(데이터 부족 가능)"

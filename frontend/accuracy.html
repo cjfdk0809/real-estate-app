@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>추정 정확도 대시보드 · 키움에프앤아이</title>
+<style>
+  :root{--navy:#1e2a44;--navy-soft:#eef1f7;--pink:#CC00CC;--pink-soft:#FFE6FF;
+    --ink:#1a1f2b;--ink-soft:#5b6473;--ink-muted:#8a93a3;--line:#e2e6ee;--bg:#f6f8fc;
+    --good:#0f6e5c;--warn:#c0392b;--mono:'SF Mono',Consolas,monospace;}
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif;background:var(--bg);color:var(--ink);line-height:1.5;padding:24px;}
+  .wrap{max-width:1080px;margin:0 auto;}
+  .head{display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:12px;margin-bottom:20px;}
+  .eyebrow{font-size:11px;letter-spacing:.18em;color:var(--navy);text-transform:uppercase;font-weight:700;}
+  h1{font-size:24px;font-weight:800;color:var(--ink);}
+  .sub{font-size:13px;color:var(--ink-soft);margin-top:4px;}
+  .controls{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:20px;}
+  .fld{display:flex;flex-direction:column;gap:4px;}
+  .fld label{font-size:11px;color:var(--ink-muted);font-weight:600;}
+  .fld input,.fld select{padding:7px 10px;border:1px solid var(--line);border-radius:7px;font-size:13px;}
+  .btn{padding:8px 18px;border:none;border-radius:7px;background:var(--navy);color:#fff;font-weight:700;cursor:pointer;font-size:13px;}
+  .btn:hover{background:#2a3a5c;}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin-bottom:20px;}
+  .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:18px 20px;}
+  .stat-label{font-size:12px;color:var(--ink-muted);font-weight:600;}
+  .stat-value{font-size:30px;font-weight:800;font-family:var(--mono);margin-top:6px;line-height:1.1;}
+  .stat-hint{font-size:11px;color:var(--ink-muted);margin-top:6px;line-height:1.5;}
+  .accent{color:var(--pink);} .navy{color:var(--navy);} .good{color:var(--good);} .warn{color:var(--warn);}
+  .panel{background:#fff;border:1px solid var(--line);border-radius:12px;padding:20px;margin-bottom:20px;}
+  .panel h2{font-size:15px;font-weight:800;margin-bottom:14px;color:var(--ink);}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th,td{padding:9px 10px;text-align:right;border-bottom:1px solid var(--line);}
+  th:first-child,td:first-child{text-align:left;}
+  th{font-size:11px;color:var(--ink-muted);font-weight:700;text-transform:uppercase;letter-spacing:.05em;}
+  td.mono{font-family:var(--mono);}
+  .bars{display:flex;align-items:flex-end;gap:6px;height:120px;padding-top:10px;overflow-x:auto;}
+  .bar{flex:0 0 auto;width:26px;display:flex;flex-direction:column;align-items:center;gap:4px;}
+  .bar .col{width:100%;background:var(--navy);border-radius:3px 3px 0 0;min-height:2px;}
+  .bar .lbl{font-size:9px;color:var(--ink-muted);white-space:nowrap;transform:rotate(-45deg);transform-origin:top left;height:24px;}
+  .bar .val{font-size:9px;color:var(--ink-soft);font-family:var(--mono);}
+  .muted{color:var(--ink-muted);font-size:13px;}
+  .note{font-size:12px;color:var(--ink-muted);line-height:1.7;margin-top:12px;background:var(--navy-soft);padding:12px 14px;border-radius:8px;}
+  .pill{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:700;}
+  .pill.g{background:#e6f4f0;color:var(--good);} .pill.w{background:#fdecea;color:var(--warn);}
+  @media (max-width:640px){.stat-value{font-size:24px;}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <div>
+      <div class="eyebrow">Estimate Accuracy · 키움에프앤아이</div>
+      <h1>추정 낙찰가율 정확도 대시보드</h1>
+      <div class="sub">최근 매각 완료 건을 홀드아웃해 <b>예측 vs 실제 낙찰가율</b>을 비교합니다. (시점 분리 — 데이터 누수 없음)</div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <div class="fld"><label>홀드아웃(개월)</label><input type="number" id="holdout" value="3" min="1" max="12" style="width:90px;"></div>
+    <div class="fld"><label>학습기간(개월)</label><input type="number" id="train" value="18" min="3" max="60" style="width:90px;"></div>
+    <div class="fld"><label>용도</label>
+      <select id="use"><option value="">전체</option><option value="apt">아파트</option><option value="rh">연립·다세대</option><option value="offi">오피스텔</option><option value="sh">단독·다가구</option></select>
+    </div>
+    <button class="btn" onclick="loadAll()">새로고침</button>
+    <div id="status" class="muted" style="align-self:center;"></div>
+  </div>
+
+  <div id="cards" class="grid"></div>
+  <div id="byuse" class="panel" style="display:none;"></div>
+  <div id="trend" class="panel" style="display:none;"></div>
+
+  <div class="note">
+    <b>지표 해석</b> · <b>MAPE</b> 평균 절대 오차율(낮을수록 정확) · <b>편향</b> 양수=과대추정·음수=과소추정 ·
+    <b>구간 커버리지</b> 실제가 예측 P25~P75 안에 든 비율(신뢰구간 검증, 이상적 ~50%) · <b>RMSE</b> 큰 오차에 민감한 오차척도.
+    <br>주간 추이는 <span class="mono">POST /api/auction/backtest/snapshot</span>(관리자)이 매주 실행되어 <span class="mono">backtest_history</span>에 쌓입니다.
+  </div>
+</div>
+
+<script>
+var BASE = (location.protocol === 'http:' || location.protocol === 'https:') ? '' : 'http://localhost:5000';
+function fmtNum(v, unit){ return (v == null) ? '-' : (v + (unit || '')); }
+function pill(txt, good){ return '<span class="pill ' + (good ? 'g' : 'w') + '">' + txt + '</span>'; }
+function useLabel(k){ return {apt:'아파트', rh:'연립·다세대', offi:'오피스텔', sh:'단독·다가구'}[k] || k; }
+
+function renderCards(d){
+  var el = document.getElementById('cards');
+  if (!d || !d.available){
+    el.innerHTML = '<div class="card" style="grid-column:1/-1;"><div class="muted">' +
+      '표시할 백테스트 결과가 없습니다. ' + ((d && d.reason) ? '(' + d.reason + ') ' : '') +
+      '라이브 auction_sales 데이터가 연결되면 정확도가 산출됩니다.</div></div>';
+    document.getElementById('byuse').style.display = 'none';
+    return;
+  }
+  var o = d.overall || {};
+  var covGood = (o.coverage != null && o.coverage >= 40 && o.coverage <= 70);
+  var mapeGood = (o.mape != null && o.mape <= 10);
+  el.innerHTML =
+    card('MAPE (평균 오차율)', fmtNum(o.mape, '%'), (mapeGood ? 'good' : 'accent'),
+         (o.mape != null ? (mapeGood ? '양호 — 평균 ' + o.mape + '% 오차' : '개선 여지 — 평균 ' + o.mape + '% 오차') : '')) +
+    card('편향 (Bias)', (o.bias > 0 ? '+' : '') + fmtNum(o.bias, '%p'), (Math.abs(o.bias||0) <= 2 ? 'good' : 'accent'),
+         (o.bias == null ? '' : (o.bias > 0 ? '과대추정 경향' : o.bias < 0 ? '과소추정 경향' : '편향 없음'))) +
+    card('구간 커버리지', fmtNum(o.coverage, '%'), (covGood ? 'good' : 'navy'),
+         'P25~P75 안에 든 비율 (이상적 ~50%)') +
+    card('검증 표본', fmtNum(o.n, '건'), 'navy',
+         '학습 ' + fmtNum(d.train_n, '건') + ' · 검증기간 ' + (d.holdout_months||'-') + '개월' +
+         (d.test_truncated ? ' · 표본 절단' : ''));
+}
+function card(label, value, cls, hint){
+  return '<div class="card"><div class="stat-label">' + label + '</div>' +
+    '<div class="stat-value ' + cls + '">' + value + '</div>' +
+    '<div class="stat-hint">' + (hint || '') + '</div></div>';
+}
+
+function renderByUse(d){
+  var el = document.getElementById('byuse');
+  var bu = (d && d.by_use_group) || {};
+  var keys = Object.keys(bu);
+  if (!keys.length){ el.style.display = 'none'; return; }
+  el.style.display = '';
+  var rows = keys.map(function(k){
+    var m = bu[k];
+    return '<tr><td>' + useLabel(k) + '</td>' +
+      '<td class="mono">' + fmtNum(m.n) + '</td>' +
+      '<td class="mono">' + fmtNum(m.mape, '%') + '</td>' +
+      '<td class="mono">' + (m.bias > 0 ? '+' : '') + fmtNum(m.bias, '') + '</td>' +
+      '<td class="mono">' + fmtNum(m.rmse) + '</td>' +
+      '<td class="mono">' + fmtNum(m.coverage, '%') + '</td></tr>';
+  }).join('');
+  el.innerHTML = '<h2>용도별 정확도</h2><table><thead><tr>' +
+    '<th>용도</th><th>표본</th><th>MAPE</th><th>편향</th><th>RMSE</th><th>커버리지</th>' +
+    '</tr></thead><tbody>' + rows + '</tbody></table>';
+}
+
+function renderTrend(items){
+  var el = document.getElementById('trend');
+  if (!items || !items.length){
+    el.style.display = '';
+    el.innerHTML = '<h2>주간 정확도 추이</h2><div class="muted">아직 저장된 주간 스냅샷이 없습니다. ' +
+      '<span class="mono">/api/auction/backtest/snapshot</span> 를 주기 실행하면 추이가 쌓입니다.</div>';
+    return;
+  }
+  el.style.display = '';
+  var arr = items.slice().reverse();  // 오래된→최근
+  var maxMape = Math.max.apply(null, arr.map(function(x){ return x.mape || 0; }).concat([1]));
+  var bars = arr.map(function(x){
+    var h = Math.round((x.mape || 0) / maxMape * 100);
+    return '<div class="bar" title="' + x.run_date + ' · MAPE ' + fmtNum(x.mape,'%') + ' · 커버리지 ' + fmtNum(x.coverage,'%') + '">' +
+      '<div class="val">' + fmtNum(x.mape) + '</div>' +
+      '<div class="col" style="height:' + h + '%;"></div>' +
+      '<div class="lbl">' + (x.run_date || '').slice(5) + '</div></div>';
+  }).join('');
+  el.innerHTML = '<h2>주간 MAPE 추이 <span class="muted" style="font-weight:400;">(낮을수록 정확)</span></h2>' +
+    '<div class="bars">' + bars + '</div>';
+}
+
+function loadAll(){
+  var st = document.getElementById('status');
+  st.textContent = '조회 중…';
+  var qs = 'holdout_months=' + (document.getElementById('holdout').value || 3) +
+    '&train_months=' + (document.getElementById('train').value || 18) +
+    '&use_group=' + encodeURIComponent(document.getElementById('use').value || '');
+  fetch(BASE + '/api/auction/backtest?' + qs)
+    .then(function(r){ return r.json(); })
+    .then(function(d){ renderCards(d); renderByUse(d); st.textContent = d.available ? ('완료 · ' + (d.asof || '')) : (d.reason || '데이터 없음'); })
+    .catch(function(e){ st.textContent = '오류: ' + e.message; renderCards(null); });
+  fetch(BASE + '/api/auction/backtest/history?limit=52')
+    .then(function(r){ return r.json(); })
+    .then(function(d){ renderTrend((d && d.items) || []); })
+    .catch(function(){ renderTrend([]); });
+}
+loadAll();
+</script>
+</body>
+</html>

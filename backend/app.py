@@ -2487,20 +2487,13 @@ def auction_estimate():
 # 추정 정확도 백테스트 — 최근 매각건을 홀드아웃해 예측 vs 실제 비교
 # 시점 분리(학습셋은 검증셋 이전)로 데이터 누수 없이 MAPE·편향·구간커버리지 산출.
 # ============================================================
-@app.route('/api/auction/backtest')
-def auction_backtest():
+def _compute_backtest(use_group, sido, holdout_months, train_months, max_test):
+    """auction_sales 조회 + 백테스트 실행. 라이브 조회/스냅샷이 공유하는 헬퍼."""
     if not supabase:
-        return jsonify({'available': False, 'reason': 'Supabase 미설정'})
-    use_group = (request.args.get('use_group') or '').strip()
-    sido = (request.args.get('sido') or '').strip()
-    holdout_months = request.args.get('holdout_months', default=3, type=int)
-    train_months = request.args.get('train_months', default=18, type=int)
-    max_test = request.args.get('max_test', default=500, type=int)
-
+        return {'available': False, 'reason': 'Supabase 미설정'}
     import datetime as _dt
     today = _dt.date.today()
     window_start = (today - _dt.timedelta(days=train_months * 31)).isoformat()
-
     try:
         q = (supabase.table('auction_sales')
              .select('use_group,sido,sigungu,address,bid_rate,fail_count,sale_date')
@@ -2515,10 +2508,9 @@ def auction_backtest():
             q = q.eq('sido', sido)
         rows = (q.execute().data) or []
     except Exception as e:
-        return jsonify({'available': False, 'reason': safe_error('조회 오류', e)})
-
+        return {'available': False, 'reason': safe_error('조회 오류', e)}
     if not rows:
-        return jsonify({'available': False, 'reason': '표본 없음', 'fetched': 0})
+        return {'available': False, 'reason': '표본 없음', 'fetched': 0}
 
     def _dong_of(r):
         a = (r.get('address') or '')
@@ -2529,14 +2521,78 @@ def auction_backtest():
 
     for r in rows:
         r['dong'] = _dong_of(r)
-
     result = backtest_estimates(rows, {
         'asof': today, 'holdout_months': holdout_months,
         'train_months': train_months, 'max_test': max_test,
     })
     result['fetched'] = len(rows)
     result['fetch_truncated'] = (len(rows) >= 8000)
-    return jsonify(result)
+    return result
+
+
+@app.route('/api/auction/backtest')
+def auction_backtest():
+    return jsonify(_compute_backtest(
+        (request.args.get('use_group') or '').strip(),
+        (request.args.get('sido') or '').strip(),
+        request.args.get('holdout_months', default=3, type=int),
+        request.args.get('train_months', default=18, type=int),
+        request.args.get('max_test', default=500, type=int)))
+
+
+@app.route('/api/auction/backtest/snapshot', methods=['POST'])
+def auction_backtest_snapshot():
+    """주간 자동 리포트용: 백테스트를 실행해 backtest_history에 스냅샷 저장(관리자 전용)."""
+    ok, err = _check_admin(request)
+    if not ok:
+        return jsonify({'error': err}), 403
+    result = _compute_backtest(
+        (request.args.get('use_group') or '').strip(),
+        (request.args.get('sido') or '').strip(),
+        request.args.get('holdout_months', default=3, type=int),
+        request.args.get('train_months', default=18, type=int),
+        request.args.get('max_test', default=500, type=int))
+    if not result.get('available'):
+        return jsonify(result)
+    import datetime as _dt
+    ov = result.get('overall') or {}
+    snap = {
+        'run_date': _dt.date.today().isoformat(),
+        'holdout_start': result.get('holdout_start'),
+        'holdout_months': result.get('holdout_months'),
+        'train_months': result.get('train_months'),
+        'tested_n': result.get('tested_n'),
+        'mape': ov.get('mape'), 'bias': ov.get('bias'),
+        'rmse': ov.get('rmse'), 'coverage': ov.get('coverage'),
+        'by_use_group': result.get('by_use_group'),
+    }
+    try:
+        supabase.table('backtest_history').upsert(snap, on_conflict='run_date').execute()
+    except Exception as e:
+        return jsonify({'available': True, 'stored': False,
+                        'reason': safe_error('스냅샷 저장 오류', e), 'snapshot': snap})
+    return jsonify({'available': True, 'stored': True, 'snapshot': snap})
+
+
+@app.route('/api/auction/backtest/history')
+def auction_backtest_history():
+    """저장된 주간 스냅샷 이력(추이 표시용)."""
+    if not supabase:
+        return jsonify({'available': False, 'items': []})
+    limit = request.args.get('limit', default=52, type=int)
+    try:
+        rows = (supabase.table('backtest_history')
+                .select('*').order('run_date', desc=True).limit(limit).execute().data) or []
+    except Exception as e:
+        return jsonify({'available': False, 'reason': safe_error('조회 오류', e), 'items': []})
+    return jsonify({'available': True, 'items': rows})
+
+
+@app.route('/accuracy')
+def accuracy_page():
+    resp = send_from_directory('../frontend', 'accuracy.html')
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    return resp
 
 
 # ============================================================
