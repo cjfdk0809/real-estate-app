@@ -1094,8 +1094,11 @@ table { border-collapse: collapse; width: 100%; }
         <div class="field field-full"><label>채권자·권리자</label><input name="holder" required></div>
         <div class="field"><label>채권최고액·보증금 (만원)</label><input name="amount" type="number" required></div>
         <div class="field"><label>월세 (만원, 임차권)</label><input name="monthly" type="number"></div>
-        <div class="field"><label>확정일자</label><input name="confirmedDate" type="date"></div>
-        <div class="field"><label>인수 여부</label>
+        <div class="field"><label>확정일자 <span class="text-muted text-small">임차·전세</span></label><input name="confirmedDate" type="date"></div>
+        <div class="field"><label>배당요구 <span class="text-muted text-small">임차·전세</span></label>
+          <select name="demandDist"><option value="false">배당요구 안함</option><option value="true">배당요구</option></select>
+        </div>
+        <div class="field"><label>인수 여부 <span class="text-muted text-small">담보권 수동</span></label>
           <select name="assumed"><option value="false">소멸</option><option value="true">인수</option></select>
         </div>
         <div class="field field-full"><label>비고</label><input name="memo"></div>
@@ -2682,6 +2685,61 @@ function computeOursRecovery(classified, distributable) {
   return { ours, oursClaim, priority, seniorSum, availForOurs, recovered, recoveryRate, shortfall };
 }
 
+// ============================================================
+// 임차인 배당 분석 엔진: 대항력 · 소액임차인 최우선변제 · 확정일자 우선변제 · 인수액
+// 주택임대차보호법 시행령 소액임차인 기준(현행 2023.02.21~). 지역구분은 근사이므로 수동조정 가능.
+// ============================================================
+const SMALL_LEASE_TABLE = {   // { cap: 보증금 상한(만원), amt: 최우선변제금(만원) }
+  '서울': { cap: 16500, amt: 5500, label: '서울특별시' },
+  '과밀': { cap: 14500, amt: 4800, label: '과밀억제권역·세종·용인·화성·김포' },
+  '광역': { cap: 8500,  amt: 2800, label: '광역시·안산·광주(경기)·파주·이천·평택' },
+  '기타': { cap: 7500,  amt: 2500, label: '그 밖의 지역' },
+  _asof: '2023-02-21',
+};
+// 본건 주소 → 소액임차인 지역구분 근사(부정확 가능 — 화면에서 수동조정). 과밀억제권역은 정확 매핑 아님.
+function guessLeaseRegion(addr) {
+  const a = String(addr || '');
+  if (/서울/.test(a)) return '서울';
+  if (/세종/.test(a)) return '과밀';
+  if (/(용인|화성|김포)/.test(a)) return '과밀';
+  if (/(안산|파주|이천|평택)/.test(a)) return '광역';
+  if (/(부산|대구|인천|대전|울산)|광주광역|광주\s*광역/.test(a)) return '광역';
+  if (/(경기|인천)/.test(a)) return '과밀';   // 수도권 근사(정확한 과밀억제권역은 확인 필요)
+  return '기타';
+}
+
+// classified: analyzeRights().classified, opts: {baseDate, region, distributable}
+function analyzeTenants(classified, opts) {
+  opts = opts || {};
+  const baseDate = opts.baseDate || null;
+  const region = SMALL_LEASE_TABLE[opts.region] ? opts.region : '기타';
+  const tbl = SMALL_LEASE_TABLE[region];
+  const tenants = (classified || [])
+    .filter(r => /임차권|전세권/.test(r.type || '') && (r.amount || 0) > 0)
+    .map(r => {
+      const deposit = r.amount || 0;
+      const moveIn = r.date || '';               // 전입신고일
+      const fixed = r.confirmedDate || '';        // 확정일자
+      const demanded = (r.demandDist === true || r.demandDist === 'true' || r.demandDist === 'Y' || r.demandDist === 'on');
+      const opposing = !!(baseDate && moveIn && moveIn < baseDate);   // 대항력: 전입 < 말소기준(같은 날은 익일 0시라 제외)
+      const isSmall = deposit <= tbl.cap;
+      // 최우선변제·확정일자 우선변제 모두 배당요구종기 내 배당요구가 있어야 배당받는다.
+      const minPriority = (demanded && isSmall) ? Math.min(tbl.amt, deposit) : 0;   // 소액임차인 최우선변제금
+      const fixedRankDate = (demanded && fixed) ? fixed : null;       // 확정일자 우선변제 기준일(배당요구+확정일자)
+      const ordinaryClaim = Math.max(0, deposit - minPriority);       // 최우선변제 제외 나머지(확정일자 우선변제 대상)
+      return { id: r.id, holder: r.holder || '', type: r.type, deposit, moveIn, fixed,
+        demanded, opposing, isSmall, minPriority, fixedRankDate, ordinaryClaim };
+    });
+  // 최우선변제 총액은 배당재원의 1/2 한도(초과 시 안분). distributable 미제공 시 한도 미적용(청구가능액).
+  const rawMinTotal = tenants.reduce((s, t) => s + t.minPriority, 0);
+  let minPriorityTotal = rawMinTotal, minCapped = false;
+  if (opts.distributable != null && rawMinTotal > opts.distributable / 2) {
+    minPriorityTotal = Math.round(opts.distributable / 2);
+    minCapped = true;
+  }
+  return { region, table: tbl, tenants, minPriorityTotal, minCapped, rawMinTotal };
+}
+
 // 권리관계 목록: 당사 근저당권 지정(단일 선택)
 function updateRightOurs(id, checked) {
   const pid = state.currentPropertyId; if (!pid) return;
@@ -3204,6 +3262,41 @@ function renderRights() {
   // 말소기준권리 (자동판정 엔진)
   const baseRight = ra.baseRight;
 
+  // 임차인 배당 분석 (대항력·소액 최우선변제·확정일자 우선변제)
+  const _scR = (state.scenarios && state.scenarios[p.id]) || {};
+  const leaseRegion = SMALL_LEASE_TABLE[_scR.leaseRegion] ? _scR.leaseRegion : guessLeaseRegion(p.addrLot || p.addrRoad || '');
+  const ta = analyzeTenants(ra.classified, { baseDate: ra.baseDate, region: leaseRegion });
+  const tenantCard = ta.tenants.length ? `
+    <div class="card mb-24">
+      <div class="card-title">임차인 배당 분석 <span class="text-muted text-small" style="font-weight:400;">· 대항력 · 소액 최우선변제 · 확정일자 우선변제</span></div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;font-size:13px;flex-wrap:wrap;">
+        <span class="text-muted">소액임차인 지역구분</span>
+        <select onchange="updateLeaseRegion(this.value)" style="padding:5px 8px;border:1px solid var(--line,#dfe4ee);border-radius:6px;font-size:12px;">
+          ${['서울','과밀','광역','기타'].map(k => `<option value="${k}" ${k === leaseRegion ? 'selected' : ''}>${k} — ${SMALL_LEASE_TABLE[k].label}</option>`).join('')}
+        </select>
+        <span class="text-muted text-small">보증금 ${fmt.won(ta.table.cap)} 이하 → 최우선변제 ${fmt.won(ta.table.amt)} (기준 ${SMALL_LEASE_TABLE._asof})</span>
+      </div>
+      <table class="tbl">
+        <thead><tr><th>임차인</th><th class="text-right">보증금</th><th>전입일</th><th>확정일자</th><th>배당요구</th><th>대항력</th><th class="text-right">최우선변제</th><th>확정일자 우선변제</th></tr></thead>
+        <tbody>
+          ${ta.tenants.map(t => `<tr>
+            <td>${escapeHtml(t.holder || '-')} <span class="text-muted text-small">${escapeHtml(t.type)}</span></td>
+            <td class="price">${fmt.won(t.deposit)}</td>
+            <td class="num text-small">${fmt.date(t.moveIn)}</td>
+            <td class="num text-small">${fmt.date(t.fixed)}</td>
+            <td>${t.demanded ? '<span class="badge" style="background:#2d5a3d;color:#fff;">O</span>' : '<span class="badge" style="background:#e5e3dc;color:var(--ink-soft);">X</span>'}</td>
+            <td>${t.opposing ? '<span class="text-accent" style="font-weight:700;">있음(인수)</span>' : '<span class="text-muted">없음(소멸)</span>'}</td>
+            <td class="price">${t.minPriority ? fmt.won(t.minPriority) : (t.isSmall && !t.demanded ? '<span class="text-muted text-small">배당요구 필요</span>' : '-')}</td>
+            <td class="num text-small">${t.fixedRankDate ? ('확정 ' + fmt.date(t.fixedRankDate)) : (t.demanded ? '확정일자 없음' : '배당요구 없음')}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+      <div class="text-small text-muted" style="margin-top:10px;line-height:1.7;">
+        최우선변제 합계 <strong>${fmt.won(ta.minPriorityTotal)}</strong>${ta.minCapped ? ' <span class="text-accent">(배당재원 1/2 한도 적용)</span>' : ''} — 집행비용 다음 순위로 최우선 배당됩니다. 대항력 있는 임차인의 미배당 보증금은 낙찰자가 인수합니다.
+        <br>※ 소액임차인 기준은 지역·<strong>최선순위 담보물권 설정일</strong>에 따라 달라집니다(설정일이 오래된 건은 당시 시행령 확인). 확정일자 우선변제는 확정일자 순위로 담보권과 날짜순 배당됩니다.
+      </div>
+    </div>` : '';
+
   c.innerHTML = `
     <div class="page-head">
       <div class="page-eyebrow">권리분석 · Rights Analysis</div>
@@ -3258,8 +3351,19 @@ function renderRights() {
       <div class="text-small text-muted no-print" style="margin-top:10px;">※ 당사가 보유(매입)한 NPL 근저당권을 <strong>당사근저당</strong>에 체크하면, 아래 <strong>NPL 담보여력 분석</strong>에서 해당 채권의 순위와 회수 가능 여부(1순위면 전액 회수 가능 등)가 자동으로 표시됩니다.</div>
     </div>
 
+    ${tenantCard}
     ${renderScenarioAndNPL(p, auctions, state.rights[p.id] || [])}
   `;
+}
+
+// 소액임차인 지역구분 변경(문자열 저장 — updateScenario는 숫자 변환이라 별도 핸들러)
+function updateLeaseRegion(v) {
+  const id = state.currentPropertyId; if (!id) return;
+  state.scenarios = state.scenarios || {};
+  state.scenarios[id] = state.scenarios[id] || {};
+  state.scenarios[id].leaseRegion = v;
+  saveState();
+  renderView();
 }
 
 // ============================================================
