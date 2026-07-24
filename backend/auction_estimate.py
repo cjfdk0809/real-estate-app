@@ -292,3 +292,111 @@ def estimate_bid_rate(rows, target, cfg=None):
 
 def _r1(v):
     return round(v, 1) if isinstance(v, (int, float)) else None
+
+
+def _add_months(d, months):
+    """d에서 months개월 뺀 날짜(음수). 말일 오버플로는 28일로 클램프."""
+    y, mo = d.year, d.month - months
+    while mo <= 0:
+        mo += 12
+        y -= 1
+    while mo > 12:
+        mo -= 12
+        y += 1
+    return date(y, mo, min(d.day, 28))
+
+
+# ------------------------------------------------------------------
+# 백테스트: 추정 정확도 평가 (시점 홀드아웃 · 데이터 누수 차단)
+# ------------------------------------------------------------------
+def backtest_estimates(rows, cfg=None):
+    """
+    rows : auction_sales 행 리스트(각 행에 bid_rate, sale_date, sido, sigungu, dong,
+           use_group, fail_count). estimate_bid_rate와 동일 스키마 + dong 주석 필요.
+    동작 : 최근 holdout_months를 '검증셋', 그 이전 train_months를 '학습셋'으로 나눠,
+           검증셋 각 건을 '그 이전 데이터만'으로 추정하고 실제 bid_rate와 비교.
+           (검증셋은 학습셋과 시점이 겹치지 않아 데이터 누수 없음)
+    반환 : {available, overall{n,mape,median_ape,bias,rmse,coverage}, by_use_group, ...}
+      mape     : 평균 절대 백분율 오차(%) — 낮을수록 정확
+      bias     : 예측−실제 평균(%p) — 양수면 과대추정, 음수면 과소추정
+      rmse     : 제곱근 평균제곱오차(%p)
+      coverage : 실제값이 예측 [P25,P75] 구간에 든 비율(%) — 이상적으로 50 근처
+    """
+    cfg = dict(DEFAULT_CFG, **(cfg or {}))
+    asof = _as_date(cfg.get('asof')) or date.today()
+    holdout_months = int(cfg.get('holdout_months', 3))
+    train_months = int(cfg.get('train_months', 18))
+    max_test = int(cfg.get('max_test', 500))
+    lo, hi = cfg['min_rate'], cfg['max_rate']
+
+    holdout_start = _add_months(asof, holdout_months)
+    window_start = _add_months(asof, train_months)
+
+    clean = []
+    for r in rows:
+        br = r.get('bid_rate')
+        d = _as_date(r.get('sale_date'))
+        if br is None or br < lo or br > hi or d is None:
+            continue
+        clean.append((d, r))
+
+    train = [r for (d, r) in clean if window_start <= d < holdout_start]
+    test = [(d, r) for (d, r) in clean if holdout_start <= d <= asof]
+    test.sort(key=lambda t: t[0], reverse=True)   # 최근 우선(초과분 절단 시 최근 유지)
+    test_truncated = len(test) > max_test
+
+    # 학습셋을 (use_group, sido)로 사전 그룹핑 → 건마다 작은 후보집합만 추정에 전달
+    groups = {}
+    for r in train:
+        key = (r.get('use_group'), r.get('sido'))
+        groups.setdefault(key, []).append(r)
+
+    results = []
+    skipped = 0
+    for (d, r) in test[:max_test]:
+        target = {'sido': r.get('sido'), 'sigungu': r.get('sigungu'), 'dong': r.get('dong'),
+                  'use_group': r.get('use_group'), 'fail_count': r.get('fail_count'), 'asof': d}
+        cand = groups.get((r.get('use_group'), r.get('sido')), [])
+        est = estimate_bid_rate(cand, target, cfg)
+        if not est.get('available'):
+            skipped += 1
+            continue
+        pred, actual = est['point'], r['bid_rate']
+        err = pred - actual
+        results.append({
+            'err': err,
+            'ape': (abs(err) / actual) if actual else None,
+            'in_iv': (est['p25'] <= actual <= est['p75']),
+            'use_group': r.get('use_group'),
+            'chosen_level': est.get('chosen_level'),
+        })
+
+    def _agg(items):
+        n = len(items)
+        if not n:
+            return {'n': 0}
+        apes = sorted(x['ape'] for x in items if x['ape'] is not None)
+        errs = [x['err'] for x in items]
+        return {
+            'n': n,
+            'mape': round(sum(apes) / len(apes) * 100, 2) if apes else None,
+            'median_ape': round(apes[len(apes) // 2] * 100, 2) if apes else None,
+            'bias': round(sum(errs) / n, 2),
+            'rmse': round((sum(e * e for e in errs) / n) ** 0.5, 2),
+            'coverage': round(sum(1 for x in items if x['in_iv']) / n * 100, 1),
+        }
+
+    by_use = {}
+    for ug in sorted(set(x['use_group'] for x in results if x['use_group'])):
+        by_use[ug] = _agg([x for x in results if x['use_group'] == ug])
+
+    return {
+        'available': len(results) > 0,
+        'asof': asof.isoformat(),
+        'holdout_start': holdout_start.isoformat(), 'window_start': window_start.isoformat(),
+        'holdout_months': holdout_months, 'train_months': train_months,
+        'train_n': len(train), 'test_n': len(test), 'tested_n': len(results),
+        'skipped_n': skipped, 'test_truncated': test_truncated, 'max_test': max_test,
+        'overall': _agg(results),
+        'by_use_group': by_use,
+    }

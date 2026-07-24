@@ -28,7 +28,7 @@ from lawd_codes import LAWD_CODES, find_lawd_code
 from registry_analyzer import registry_bp  # 🆕 등기부 분석 모듈
 from housing_price_api import housing_bp  # 🆕 공시가격 조회 모듈
 from complex_identifier import identify_complex, identify_dong  # 🆕 Day 8: 단지 교차검증
-from auction_estimate import estimate_bid_rate  # 🆕 P1: 낙찰가율 추정 엔진(최근성·수축·유찰보정)
+from auction_estimate import estimate_bid_rate, backtest_estimates  # 🆕 P1: 낙찰가율 추정 엔진 + 백테스트
 
 # Supabase 클라이언트 (선택적 - 미설치/미설정 시에도 기존 기능은 정상 작동)
 try:
@@ -2480,6 +2480,62 @@ def auction_estimate():
             f'{cl} · 최근성가중({months}개월, 반감기{int(result.get("halflife_months",12))}개월) · '
             f'표본 {result.get("sample_n",0)}건(유효 {result.get("sample_n_eff",0)}) · 계층수축'
             + (f' · 유찰보정({fa.get("delta"):+.1f}%p)' if fa.get('applied') else ''))
+    return jsonify(result)
+
+
+# ============================================================
+# 추정 정확도 백테스트 — 최근 매각건을 홀드아웃해 예측 vs 실제 비교
+# 시점 분리(학습셋은 검증셋 이전)로 데이터 누수 없이 MAPE·편향·구간커버리지 산출.
+# ============================================================
+@app.route('/api/auction/backtest')
+def auction_backtest():
+    if not supabase:
+        return jsonify({'available': False, 'reason': 'Supabase 미설정'})
+    use_group = (request.args.get('use_group') or '').strip()
+    sido = (request.args.get('sido') or '').strip()
+    holdout_months = request.args.get('holdout_months', default=3, type=int)
+    train_months = request.args.get('train_months', default=18, type=int)
+    max_test = request.args.get('max_test', default=500, type=int)
+
+    import datetime as _dt
+    today = _dt.date.today()
+    window_start = (today - _dt.timedelta(days=train_months * 31)).isoformat()
+
+    try:
+        q = (supabase.table('auction_sales')
+             .select('use_group,sido,sigungu,address,bid_rate,fail_count,sale_date')
+             .not_.is_('sale_price', 'null')
+             .not_.is_('bid_rate', 'null')
+             .gte('sale_date', window_start)
+             .order('sale_date', desc=True)
+             .limit(8000))
+        if use_group:
+            q = q.eq('use_group', use_group)
+        if sido:
+            q = q.eq('sido', sido)
+        rows = (q.execute().data) or []
+    except Exception as e:
+        return jsonify({'available': False, 'reason': safe_error('조회 오류', e)})
+
+    if not rows:
+        return jsonify({'available': False, 'reason': '표본 없음', 'fetched': 0})
+
+    def _dong_of(r):
+        a = (r.get('address') or '')
+        for t in (r.get('sido') or '', r.get('sigungu') or ''):
+            a = a.replace(t, '')
+        a = a.strip()
+        return a.split()[0] if a else ''
+
+    for r in rows:
+        r['dong'] = _dong_of(r)
+
+    result = backtest_estimates(rows, {
+        'asof': today, 'holdout_months': holdout_months,
+        'train_months': train_months, 'max_test': max_test,
+    })
+    result['fetched'] = len(rows)
+    result['fetch_truncated'] = (len(rows) >= 8000)
     return jsonify(result)
 
 
