@@ -2434,6 +2434,16 @@ function drawPriceChart(comps) {
   const ctx = document.getElementById('priceChart');
   if (!ctx) return;
 
+  // 차트 라이브러리(CDN)를 못 불러온 경우(사내망 CDN 차단 등) — 뷰 전체가 깨지지 않도록
+  // 안내만 표시하고 아래 표는 정상 렌더되게 한다.
+  if (typeof Chart === 'undefined') {
+    try {
+      const box = ctx.parentElement;
+      if (box) box.innerHTML = '<div class="text-small text-muted" style="padding:16px;text-align:center;">📉 차트 라이브러리를 불러오지 못했습니다(네트워크). 거래 내역은 아래 표에서 확인하세요.</div>';
+    } catch (e) {}
+    return;
+  }
+
   // 유효 거래만 필터
   const valid = comps.filter(c => c.date && c.price);
   const wolseCount = valid.filter(c => c.type === '월세').length;
