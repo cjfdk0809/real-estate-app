@@ -903,7 +903,7 @@ table { border-collapse: collapse; width: 100%; }
 
     <div class="sidebar-footer">
       <button class="btn-add" onclick="openPropertyModal()">🔍 물건 검색</button>
-      <div id="buildStamp" style="margin-top:8px;text-align:center;font-size:10px;color:var(--ink-muted,#9aa3b2);letter-spacing:.02em;">build 2026-07-23 · 디자인 통일</div>
+      <div id="buildStamp" style="margin-top:8px;text-align:center;font-size:10px;color:var(--ink-muted,#9aa3b2);letter-spacing:.02em;">build 2026-07-23 · 속도개선 v2</div>
     </div>
   </aside>
 
@@ -6309,11 +6309,21 @@ async function autoCollectComparables(p) {
     }
   } catch (e) { return { ok: false, reason: '법정동코드 조회 실패' }; }
   if (!code || String(code).length !== 5) return { ok: false, reason: '법정동코드 없음' };
-  // 백엔드 수집 (24개월)
+  // 🆕 진행형 조회: 12개월 먼저(빠른 첫 응답) → 본건 면적 근접 사례가 얇으면 24개월로 확대.
+  const _fetchM = async (m) => {
+    const r = await fetch(`${BACKEND_URL}/api/transactions/${endpoint}?${new URLSearchParams({ lawd_cd: code, months: m })}`);
+    return await r.json();
+  };
+  const _oArea = Number(p.exclusiveArea) || 0;
+  const _nearN = (arr) => !_oArea ? (arr || []).length
+    : (arr || []).filter(x => { const a = Number(x.area); return a && Math.abs(a - _oArea) / _oArea <= 0.15; }).length;
   let d;
   try {
-    const r = await fetch(`${BACKEND_URL}/api/transactions/${endpoint}?${new URLSearchParams({ lawd_cd: code, months: 24 })}`);
-    d = await r.json();
+    d = await _fetchM(12);
+    if (!d.error && _nearN(d.items) < 5) {          // 근접 사례 부족 → 24개월로 확대
+      const d24 = await _fetchM(24);
+      if (!d24.error && d24.items && d24.items.length) d = d24;
+    }
   } catch (e) { return { ok: false, reason: '백엔드 연결 실패' }; }
   if (d.error) return { ok: false, reason: d.error };
   if (!d.items || !d.items.length) {
