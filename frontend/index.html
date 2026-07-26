@@ -2922,29 +2922,59 @@ function analyzeRights(rightsInput) {
   return { baseRight, baseDate, classified, assumedTotal, extinctTotal, seniorClaim, seniorHolder, hasTaxLien };
 }
 
-// 당사(키움) 근저당권 회수 분석: 순위·선순위 잠식·예상 회수액
-function computeOursRecovery(classified, distributable) {
-  const ours = (classified || []).find(r => r.isOurs);
-  if (!ours) return null;
-  const oursDate = ours.date || '';
-  const oursClaim = ours.amount || 0;  // 만원 (채권최고액)
-  // 당사보다 선순위(설정일 빠른) 배당대상 담보권(근저당) 채권최고액 합
-  const seniorMortgages = (classified || []).filter(r =>
-    !r.isOurs && (r.type || '').includes('근저당') && r.status !== '인수' && (r.date || '') !== '' && (r.date || '') < oursDate);
-  const seniorSum = seniorMortgages.reduce((s, r) => s + (r.amount || 0), 0);
-  const priority = seniorMortgages.length + 1;  // 담보권 기준 순위
-  const availForOurs = (distributable != null) ? Math.max(0, distributable - seniorSum) : null;
-  const recovered = (availForOurs != null) ? Math.min(oursClaim, availForOurs) : null;
-  const recoveryRate = (recovered != null && oursClaim) ? Math.min(100, recovered / oursClaim * 100) : null;
-  const shortfall = (recovered != null) ? Math.max(0, oursClaim - recovered) : null;
-  return { ours, oursClaim, priority, seniorSum, availForOurs, recovered, recoveryRate, shortfall };
+// 배당 워터폴: 배당대상(소멸·금액보유) 권리를 설정일 순으로 재원(pool)에서 순차 배당.
+// 각 권리에 배당액(alloc)을 부여하고, 마지막에 잉여(surplus)를 남긴다.
+// ※ 간이 추정: 담보물권 설정일 우선순위만 반영. 최우선변제·당해세·안분배당·경매비용(입력분 제외)은 미반영.
+function _distributionTargets(classified) {
+  return (classified || [])
+    .filter(r => r.status === '소멸' && (r.amount || 0) > 0)
+    .slice()
+    .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
 }
 
-// 권리관계 목록: 당사 근저당권 지정(단일 선택)
+function computeDistribution(classified, bid, assumedTotal, cost) {
+  const targets = _distributionTargets(classified);
+  const pool0 = Math.max(0, (bid || 0) - (assumedTotal || 0) - (cost || 0));
+  let pool = pool0;
+  const rows = targets.map(r => {
+    const claim = r.amount || 0;
+    const alloc = Math.min(claim, pool);
+    pool = Math.max(0, pool - alloc);
+    return { id: r.id, type: r.type, holder: r.holder, date: r.date, amount: claim,
+      isOurs: !!r.isOurs, alloc, rate: claim ? Math.min(100, alloc / claim * 100) : null };
+  });
+  const oursClaim = rows.filter(r => r.isOurs).reduce((s, r) => s + r.amount, 0);
+  const oursAlloc = rows.filter(r => r.isOurs).reduce((s, r) => s + r.alloc, 0);
+  return { pool0, surplus: pool, rows,
+    oursClaim, oursAlloc, oursRate: oursClaim ? Math.min(100, oursAlloc / oursClaim * 100) : null };
+}
+
+// 당사(키움) 근저당권 회수 분석: 여러 건 지정 가능. 워터폴 배당으로 순위·회수액 산정.
+function computeOursRecovery(classified, distributable) {
+  const oursList = (classified || []).filter(r => r.isOurs);
+  if (!oursList.length) return null;
+  const oursClaim = oursList.reduce((s, r) => s + (r.amount || 0), 0);  // 만원 (채권최고액 합)
+  // distributable(=낙찰가−인수금액)을 재원으로 워터폴 배당 → 당사 배당액 합산
+  const wf = computeDistribution(classified, (distributable || 0), 0, 0);
+  const recovered = (distributable != null) ? wf.rows.filter(r => r.isOurs).reduce((s, r) => s + r.alloc, 0) : null;
+  const recoveryRate = (recovered != null && oursClaim) ? Math.min(100, recovered / oursClaim * 100) : null;
+  const shortfall = (recovered != null) ? Math.max(0, oursClaim - recovered) : null;
+  // 당사 최선순위 건 기준 순위·선순위 담보 합계 (표시용)
+  const earliestOursDate = oursList.reduce((min, r) => (min == null || (r.date || '') < min) ? (r.date || '') : min, null);
+  const seniorMortgages = (classified || []).filter(r =>
+    !r.isOurs && (r.type || '').includes('근저당') && r.status !== '인수' && (r.date || '') !== '' && (r.date || '') < (earliestOursDate || ''));
+  const seniorSum = seniorMortgages.reduce((s, r) => s + (r.amount || 0), 0);
+  const priority = seniorMortgages.length + 1;  // 담보권 기준 순위 (당사 최선순위 건)
+  const availForOurs = (distributable != null) ? Math.max(0, distributable - seniorSum) : null;
+  return { oursList, ours: oursList[0], count: oursList.length,
+    oursClaim, priority, seniorSum, availForOurs, recovered, recoveryRate, shortfall };
+}
+
+// 권리관계 목록: 당사 근저당권 지정 (여러 건 개별 토글 가능)
 function updateRightOurs(id, checked) {
   const pid = state.currentPropertyId; if (!pid) return;
   const list = state.rights[pid] || [];
-  list.forEach(r => { r.isOurs = (checked && r.id === id); });
+  list.forEach(r => { if (r.id === id) r.isOurs = checked; });
   saveState();
   renderView();
 }
@@ -3048,6 +3078,11 @@ function renderScenarioAndNPL(p, auctions, rights) {
   const recoveryRate = (distributable != null && ra.seniorClaim) ? Math.min(100, distributable / ra.seniorClaim * 100) : null;
   const surplus = (distributable != null && ra.seniorClaim) ? (distributable - ra.seniorClaim) : null;
   const oursRec = computeOursRecovery(ra.classified, distributable);
+  // AM 의견 낙찰가율 — 담당자(AM) 직접 조정값(sc.mgrBidRate). 미설정 시 중립값 사용.
+  const amRate = (sc.mgrBidRate != null && !isNaN(sc.mgrBidRate)) ? Number(sc.mgrBidRate) : mid;
+  const amBid = calc(amRate);
+  // 배당표용 경매비용(선택 입력, 만원). 미입력 시 0.
+  const distCost = (sc.auctionCost != null && !isNaN(sc.auctionCost)) ? Number(sc.auctionCost) : 0;
 
   const scenarioCard = `
   <div class="card mb-24">
@@ -3061,6 +3096,8 @@ function renderScenarioAndNPL(p, auctions, rights) {
       <span class="text-small text-muted">(04 경매 적용 낙찰가율 연계 · 조정은 경매 ‘낙찰가율 직접입력’)</span>
       <span class="text-muted" style="margin-left:12px;">유찰저감</span>
       <input type="number" value="${discount}" onchange="updateScenario('discount', this.value)" style="width:52px;padding:5px;">%
+      <span style="margin-left:12px;padding-left:12px;border-left:1px solid var(--line);color:var(--kiwoom-pink-deep,#CC00CC);font-weight:700;">AM 의견 낙찰가율</span>
+      <input type="number" value="${amRate}" step="0.1" onchange="updateScenario('mgrBidRate', this.value)" style="width:64px;padding:5px;border-color:var(--kiwoom-pink-deep,#CC00CC);">%
     </div>
     <table class="tbl">
       <thead><tr><th>시나리오</th><th class="text-right">낙찰가율</th><th class="text-right">예상 낙찰가</th></tr></thead>
@@ -3068,10 +3105,11 @@ function renderScenarioAndNPL(p, auctions, rights) {
         <tr><td><span class="badge" style="background:#a8884a;color:#fff;">보수</span></td><td class="num">${con}%</td><td class="price">${fmt.won(calc(con))}</td></tr>
         <tr><td><span class="badge" style="background:#1e2a44;color:#fff;">중립</span></td><td class="num">${mid}%</td><td class="price text-accent">${fmt.won(midBid)}</td></tr>
         <tr><td><span class="badge" style="background:#2d5a3d;color:#fff;">적극</span></td><td class="num">${agg}%</td><td class="price">${fmt.won(calc(agg))}</td></tr>
+        <tr><td><span class="badge" style="background:var(--kiwoom-pink-deep,#CC00CC);color:#fff;">AM 의견</span></td><td class="num">${amRate}%</td><td class="price" style="font-weight:800;">${fmt.won(amBid)}</td></tr>
         <tr><td class="text-muted">1회 유찰 시 최저가</td><td class="num">${100 - discount}%</td><td class="price text-muted">${fmt.won(nextFloor)}</td></tr>
       </tbody>
     </table>
-    <div class="text-small text-muted" style="margin-top:8px;">※ 낙찰가율은 04 경매 <strong>적용 낙찰가율</strong>(한국부동산원 시군구 종합 또는 본건 직접입력)과 자동 연계됩니다. 보수 −5%p · 적극 +5%p.</div>
+    <div class="text-small text-muted" style="margin-top:8px;">※ 보수/중립/적극 낙찰가율은 04 경매 <strong>적용 낙찰가율</strong>과 자동 연계(보수 −5%p · 적극 +5%p). <strong style="color:var(--kiwoom-pink-deep,#CC00CC);">AM 의견</strong>은 담당자가 위 칸에서 직접 조정하며, 04 경매의 담당자안 낙찰가율과 동일값입니다.</div>
     `}
   </div>`;
 
@@ -3102,9 +3140,9 @@ function renderScenarioAndNPL(p, auctions, rights) {
     <div class="card-title">NPL 담보여력 분석 · 당사 채권 회수 <span class="text-muted text-small" style="font-weight:400;">· 중립 시나리오 기준</span></div>
     <div class="grid grid-2">
       <div>
-        <div class="info-row"><div class="info-label">당사 근저당권</div><div class="info-value">${oursRec.ours.holder || '-'} <span class="text-muted text-small">(${fmt.date(oursRec.ours.date)})</span></div></div>
-        <div class="info-row"><div class="info-label">당사 채권최고액</div><div class="info-value mono">${fmt.won(oursRec.oursClaim)}</div></div>
-        <div class="info-row"><div class="info-label">담보권 순위</div><div class="info-value">${oursRec.priority}순위${oursRec.priority === 1 ? ' <span class="text-accent text-small">(최선순위)</span>' : ''}</div></div>
+        <div class="info-row"><div class="info-label">당사 근저당권${oursRec.count > 1 ? ` (${oursRec.count}건)` : ''}</div><div class="info-value">${oursRec.oursList.map(o => `${o.holder || '-'} <span class="text-muted text-small">(${fmt.date(o.date)})</span>`).join('<br>')}</div></div>
+        <div class="info-row"><div class="info-label">당사 채권최고액${oursRec.count > 1 ? ' 합계' : ''}</div><div class="info-value mono">${fmt.won(oursRec.oursClaim)}</div></div>
+        <div class="info-row"><div class="info-label">담보권 순위</div><div class="info-value">${oursRec.priority}순위${oursRec.priority === 1 ? ' <span class="text-accent text-small">(최선순위)</span>' : ''}${oursRec.count > 1 ? ' <span class="text-muted text-small">(당사 최선순위 건 기준)</span>' : ''}</div></div>
         <div class="info-row"><div class="info-label">선순위 담보 합계</div><div class="info-value mono">${fmt.won(oursRec.seniorSum)}</div></div>
       </div>
       <div>
@@ -3123,7 +3161,73 @@ function renderScenarioAndNPL(p, auctions, rights) {
     </div>
   </div>` : '';
 
-  return scenarioCard + nplCard + oursCard;
+  // ── 시나리오별 예상 배당표 (간이 워터폴) ─────────────────────────
+  const _scenDefs = [
+    { key: 'con', label: '보수', color: '#a8884a', bid: calc(con) },
+    { key: 'mid', label: '중립', color: '#1e2a44', bid: midBid },
+    { key: 'agg', label: '적극', color: '#2d5a3d', bid: calc(agg) },
+    { key: 'am', label: 'AM 의견', color: 'var(--kiwoom-pink-deep,#CC00CC)', bid: amBid },
+  ];
+  const _targets = _distributionTargets(ra.classified);
+  const _dists = _scenDefs.map(s => computeDistribution(ra.classified, s.bid, ra.assumedTotal, distCost));
+  const _assumedRows = ra.classified.filter(r => r.status === '인수' && (r.amount || 0) > 0);
+  const _hasOurs = _dists[0].oursClaim > 0;
+
+  const _thScen = _scenDefs.map(s => `<th class="text-right" style="color:${s.color};">${s.label}</th>`).join('');
+  const _claimRows = _targets.map((r, i) => {
+    const mark = r.isOurs ? ' style="background:rgba(204,0,204,0.06);"' : '';
+    const oursTag = r.isOurs ? ' <span class="badge" style="background:var(--kiwoom-pink-deep,#CC00CC);color:#fff;font-size:9px;">당사</span>' : '';
+    const cells = _dists.map(d => {
+      const a = d.rows[i];
+      const full = a && a.amount > 0 && a.alloc >= a.amount;
+      return `<td class="price"${full ? '' : ' style="color:var(--accent);"'}>${fmt.won(a ? a.alloc : 0)}</td>`;
+    }).join('');
+    return `<tr${mark}>
+      <td class="num text-muted">${i + 1}</td>
+      <td class="text-small">${r.type} · ${r.holder || '-'}${oursTag}<br><span class="text-muted">${fmt.date(r.date)}</span></td>
+      <td class="price">${fmt.won(r.amount)}</td>
+      ${cells}
+    </tr>`;
+  }).join('');
+  const _poolRow = `<tr style="border-top:2px solid var(--line-strong,#ccc);font-weight:700;">
+    <td></td><td>배당가능재원</td><td class="text-muted text-small">낙찰가−인수−비용</td>
+    ${_dists.map(d => `<td class="price text-accent">${fmt.won(d.pool0)}</td>`).join('')}</tr>`;
+  const _surplusRow = `<tr class="text-muted">
+    <td></td><td>배당 후 잉여</td><td class="text-small">후순위·소유자</td>
+    ${_dists.map(d => `<td class="price">${fmt.won(d.surplus)}</td>`).join('')}</tr>`;
+  const _oursRow = _hasOurs ? `<tr style="background:rgba(204,0,204,0.06);font-weight:700;">
+    <td></td><td style="color:var(--kiwoom-pink-deep,#CC00CC);">당사 회수액 <span class="text-muted text-small">(회수율)</span></td>
+    <td class="price">${fmt.won(_dists[0].oursClaim)}</td>
+    ${_dists.map(d => `<td class="price">${fmt.won(d.oursAlloc)}<br><span class="text-small ${d.oursRate >= 100 ? 'text-muted' : 'text-accent'}">${d.oursRate != null ? d.oursRate.toFixed(1) + '%' : '-'}</span></td>`).join('')}</tr>` : '';
+
+  const distCard = (ap.value && _targets.length) ? `
+  <div class="card mb-24" style="border-left:4px solid #1e2a44;">
+    <div class="card-title">예상 배당표 (시나리오별) <span class="text-muted text-small" style="font-weight:400;">· 간이 워터폴 추정</span></div>
+    <div class="no-print" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;font-size:13px;">
+      <span class="text-muted">경매비용(선택)</span>
+      <input type="number" value="${distCost}" onchange="updateScenario('auctionCost', this.value)" style="width:90px;padding:5px;" placeholder="만원">만원
+      <span class="text-small text-muted">입력 시 배당재원에서 우선 차감</span>
+    </div>
+    <div style="overflow-x:auto;">
+      <table class="tbl">
+        <thead><tr><th>순위</th><th>권리 (유형·권리자·설정일)</th><th class="text-right">채권액</th>${_thScen}</tr></thead>
+        <tbody>
+          ${_claimRows || `<tr><td colspan="${3 + _scenDefs.length}" class="text-muted" style="text-align:center;padding:12px;">배당대상(소멸) 권리가 없습니다.</td></tr>`}
+          ${_poolRow}
+          ${_surplusRow}
+          ${_oursRow}
+        </tbody>
+      </table>
+    </div>
+    ${_assumedRows.length ? `<div class="text-small" style="margin-top:10px;color:var(--accent);">▸ 낙찰자 인수(배당 외): ${_assumedRows.map(r => `${r.type} ${r.holder || ''} ${fmt.won(r.amount)}`).join(' · ')} — 배당재원에서 이미 차감됨(인수금액 합 ${fmt.won(ra.assumedTotal)}).</div>` : ''}
+    <div class="text-small text-muted" style="margin-top:10px;line-height:1.7;">
+      ※ <strong>간이 추정</strong>입니다. 담보물권 <strong>설정일(등기순위) 순</strong>으로 배당재원을 순차 배분한 결과이며, 실제 배당과 다를 수 있습니다.<br>
+      ※ <strong>최우선변제(소액임차·임금채권)·당해세·안분배당(가압류 등 동순위)·경매비용(입력분 제외)</strong>은 반영되지 않았습니다. 채권액은 <strong>채권최고액</strong> 기준(실채권원금과 다를 수 있음)입니다.
+      ${ra.hasTaxLien ? '<br><strong style="color:var(--accent);">당해세 우선배당 리스크:</strong> 압류 등기가 있어 당해세가 담보물권보다 우선 배당될 수 있습니다(교부청구액 확인 필요). 위 표에는 미반영.' : ''}
+    </div>
+  </div>` : '';
+
+  return scenarioCard + nplCard + oursCard + distCard;
 }
 
 // ============================================================
@@ -3699,7 +3803,7 @@ function renderRights() {
           }).join('')}
         </tbody>
       </table>`}
-      <div class="text-small text-muted no-print" style="margin-top:10px;">※ 당사가 보유(매입)한 NPL 근저당권을 <strong>당사근저당</strong>에 체크하면, 아래 <strong>NPL 담보여력 분석</strong>에서 해당 채권의 순위와 회수 가능 여부(1순위면 전액 회수 가능 등)가 자동으로 표시됩니다.</div>
+      <div class="text-small text-muted no-print" style="margin-top:10px;">※ 당사가 보유(매입)한 NPL 근저당권을 <strong>당사근저당</strong>에 체크하면(<strong>여러 건 선택 가능</strong>), 아래 <strong>NPL 담보여력 분석</strong>·<strong>예상 배당표</strong>에서 해당 채권들의 순위와 회수 가능 여부·시나리오별 회수액이 자동으로 표시됩니다.</div>
     </div>
 
     ${renderScenarioAndNPL(p, auctions, state.rights[p.id] || [])}
