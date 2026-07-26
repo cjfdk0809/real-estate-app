@@ -445,6 +445,69 @@
       + '</div>';
   }
 
+  /* ===== 실제 낙찰가율 분포 대비 검증 (우리 추정 vs 그 지역 실측 분포) =====
+     진행 중 경매도 사전 비교 가능 — 최종 채택 낙찰가율이 실제 분포 어디에 위치하는지 표시. */
+  function _rateDistHTML(pid) {
+    var p = (state.properties || {})[pid]; if (!p) return '';
+    var be = resolveBidEstimate(pid); if (!be) return '';
+    var real = (typeof _realStat === 'function') ? _realStat(p) : null;
+    var ourRate = round1(be.decision === 'mgr' ? be.mRatePct : be.aiRatePct);
+    var decLabel = be.decision === 'mgr' ? '담당자안' : 'AI안';
+
+    // 지역 실제 분포 선택: 시군구(구 단위·표본 최다) 우선 → 동 → 유사도
+    var dist = null;
+    if (real) {
+      if (real.median != null && real.n) dist = { rate: real.median, lo: real.p25, hi: real.p75, n: real.n, label: (real.sigungu || '시군구') + ' 실측' };
+      else if (real.dongRate != null && real.dongN) dist = { rate: real.dongRate, lo: real.dongP25, hi: real.dongP75, n: real.dongN, label: (real.dongName || '동') + ' 실측' };
+      else if (real.simRate != null && real.simN) dist = { rate: real.simRate, lo: real.simP25, hi: real.simP75, n: real.simN, label: '유사도 실측' };
+    }
+
+    if (!dist || dist.rate == null) {
+      return '<div style="margin-top:14px;padding:12px 14px;border:1px dashed var(--line,#dfe4ee);border-radius:8px;background:#f8fafc;">'
+        + '<div style="font-weight:700;font-size:13px;margin-bottom:4px;">🎯 실제 낙찰가율 분포 대비</div>'
+        + '<div class="text-small text-muted">이 지역·용도의 <b>실측 낙찰 데이터가 부족</b>해 직접 비교가 어렵습니다(현재 통계 근사값으로 추정). 경매사례(04)가 쌓이면 자동 비교됩니다.</div></div>';
+    }
+
+    var med = round1(dist.rate);
+    var lo = dist.lo != null ? round1(dist.lo) : null;
+    var hi = dist.hi != null ? round1(dist.hi) : null;
+    var vals = [ourRate, med]; if (lo != null) vals.push(lo); if (hi != null) vals.push(hi);
+    var gLo = Math.floor(Math.min.apply(null, vals) - 4);
+    var gHi = Math.ceil(Math.max.apply(null, vals) + 4);
+    if (gHi - gLo < 10) gHi = gLo + 10;
+    var pct = function (v) { return Math.max(0, Math.min(100, (v - gLo) / (gHi - gLo) * 100)); };
+
+    var delta = round1(ourRate - med);
+    var pos, posColor;
+    if (lo != null && hi != null && ourRate >= lo && ourRate <= hi) { pos = '실제 분포 중앙권(적정)'; posColor = '#0f766e'; }
+    else if (ourRate < (lo != null ? lo : med)) { pos = '실제 분포 하위(보수적)'; posColor = '#1e40af'; }
+    else { pos = '실제 분포 상위(공격적)'; posColor = '#b91c1c'; }
+
+    var bandLeft = lo != null ? pct(lo) : pct(med);
+    var bandRight = hi != null ? pct(hi) : pct(med);
+
+    return ''
+      + '<div style="margin-top:14px;padding:14px 16px;border:1px solid var(--line,#e2e8f0);border-radius:8px;background:#f8fafc;">'
+      + '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:10px;flex-wrap:wrap;">'
+      + '<div style="font-weight:700;font-size:13px;">🎯 실제 낙찰가율 분포 대비 <span class="text-muted" style="font-weight:400;font-size:11px;">· ' + dist.label + ' ' + dist.n + '건</span></div>'
+      + '<div style="font-size:12px;color:' + posColor + ';font-weight:700;">' + pos + ' (' + (delta >= 0 ? '+' : '') + delta + '%p)</div>'
+      + '</div>'
+      + '<div style="position:relative;height:30px;margin:6px 2px 2px;">'
+      + '<div style="position:absolute;top:12px;left:0;right:0;height:6px;background:#e5e9f0;border-radius:3px;"></div>'
+      + ((lo != null && hi != null) ? '<div style="position:absolute;top:12px;left:' + bandLeft + '%;width:' + (bandRight - bandLeft) + '%;height:6px;background:#c7d2fe;border-radius:3px;"></div>' : '')
+      + '<div style="position:absolute;top:7px;left:' + pct(med) + '%;width:2px;height:16px;background:#475569;transform:translateX(-1px);"></div>'
+      + '<div style="position:absolute;top:2px;left:' + pct(ourRate) + '%;transform:translateX(-50%);width:14px;height:14px;border-radius:50%;background:' + PINK + ';border:2px solid #fff;box-shadow:0 0 0 1px ' + PINK + ';"></div>'
+      + '</div>'
+      + '<div style="display:flex;justify-content:space-between;font-size:10px;color:var(--ink-muted);margin-top:2px;"><span>' + gLo + '%</span><span>' + gHi + '%</span></div>'
+      + '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;font-size:12px;">'
+      + '<div><span style="color:' + PINK + ';font-weight:700;">● 우리 추정</span> <b>' + ourRate + '%</b> <span class="text-muted">(' + decLabel + ')</span></div>'
+      + '<div><span style="color:#475569;font-weight:700;">│ 실제 중앙</span> <b>' + med + '%</b></div>'
+      + ((lo != null && hi != null) ? '<div><span style="color:#6366f1;font-weight:700;">▨ 25~75분위</span> <b>' + lo + '~' + hi + '%</b></div>' : '')
+      + '</div>'
+      + '<div class="text-small text-muted" style="margin-top:6px;">진행 중 경매도 <b>사전 비교</b> — 이 지역·용도 최근 실제 낙찰가율 분포에서 우리 추정치 위치를 표시합니다. (낙찰가율 = 낙찰가 ÷ 감정가)</div>'
+      + '</div>';
+  }
+
   /* ===== (2) 04 경공매 캐스케이드 카드 ===== */
   function cardHTML(pid) {
     var be = resolveBidEstimate(pid); if (!be) return '';
@@ -567,6 +630,7 @@
       + '</div>'
       + '<div class="text-small text-muted" style="margin-top:12px;">✅ 최종 채택값은 <strong>08 담당자 의견</strong> · <strong>리포트(3-2 낙찰가 산정 결정·분석요약)</strong>에 자동 반영됩니다.</div>'
       + note
+      + _rateDistHTML(pid)
       + _compAdjHTML(pid)
       + '</div>';
   }
