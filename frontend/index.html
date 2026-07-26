@@ -904,7 +904,7 @@ table { border-collapse: collapse; width: 100%; }
 
     <div class="sidebar-footer">
       <button class="btn-add" onclick="openPropertyModal()">🔍 물건 검색</button>
-      <div id="buildStamp" style="margin-top:8px;text-align:center;font-size:10px;color:var(--ink-muted,#9aa3b2);letter-spacing:.02em;">build 2026-07-23 · 앱 안내서</div>
+      <div id="buildStamp" style="margin-top:8px;text-align:center;font-size:10px;color:var(--ink-muted,#9aa3b2);letter-spacing:.02em;">build 2026-07-23 · 지도 심플</div>
     </div>
   </aside>
 
@@ -3324,7 +3324,7 @@ function focusAuctionCase(i) {
 // (한국 공공지도 '브이월드'는 인증키+도메인 등록이 필요해 별도 처리)
 function _mapBaseLayers() {
   return {
-    '밝은 지도': L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+    '밝은 지도': L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
       { maxZoom: 20, subdomains: 'abcd', attribution: '© OpenStreetMap · © CARTO' }),
     '위성사진': L.layerGroup([
       L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
@@ -3341,7 +3341,8 @@ function _attachBaseLayers(map) {
   const bases = _mapBaseLayers();
   const choice = window._mapBaseChoice && bases[window._mapBaseChoice] ? window._mapBaseChoice : '밝은 지도';
   bases[choice].addTo(map);
-  L.control.layers(bases, null, { position: 'topright', collapsed: false }).addTo(map);
+  // collapsed:true → 항상 펼쳐진 라디오 박스 대신 작은 아이콘(hover 시 펼침)으로 화면을 깔끔하게
+  L.control.layers(bases, null, { position: 'topright', collapsed: true }).addTo(map);
   map.on('baselayerchange', e => { window._mapBaseChoice = e.name; });
 }
 
@@ -3377,7 +3378,7 @@ function openBigMap(kind) {
     + 'var D=' + json + ';'
     + 'var map=L.map("map").setView(D.center,D.zoom);'
     + 'var bases={'
-    + '"밝은 지도":L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",{maxZoom:20,subdomains:"abcd",attribution:"© OpenStreetMap · © CARTO"}),'
+    + '"밝은 지도":L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",{maxZoom:20,subdomains:"abcd",attribution:"© OpenStreetMap · © CARTO"}),'
     + '"위성사진":L.layerGroup([L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",{maxZoom:19,attribution:"© Esri"}),L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",{maxZoom:19})]),'
     + '"기본 지도":L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap"})'
     + '};'
@@ -6217,8 +6218,9 @@ function _renderCompsMap(origin, items, radius, originName) {
   if (_compsMap) { _compsMap.remove(); _compsMap = null; }
   _compsMap = L.map(box, { scrollWheelZoom: true }).setView(origin, radius && radius <= 500 ? 16 : 14);
 
-  // 배경지도: OSM (V-World 타일은 키가 프론트에 노출되므로 사용하지 않음)
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(_compsMap);
+  // 배경지도: CartoDB Positron(light) — 미니멀·저채도로 마커가 잘 보인다(타 지도와 톤 통일)
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+    { maxZoom: 20, subdomains: 'abcd', attribution: '© OpenStreetMap · © CARTO' }).addTo(_compsMap);
 
   // 반경원
   if (radius > 0) {
