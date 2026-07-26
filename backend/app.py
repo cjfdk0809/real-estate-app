@@ -333,7 +333,7 @@ def normalize_rent_item(raw):
 # ============================================================
 # 캐시: 같은 (LAWD_CD, YYYYMM) 조합은 1시간 동안 재호출 안 함
 # ============================================================
-@lru_cache(maxsize=256)
+@lru_cache(maxsize=2048)
 def fetch_trade_cached(lawd_cd, year_month, _ts):
     """캐시된 매매 데이터 조회. _ts는 캐시 무효화용."""
     params = {
@@ -348,7 +348,7 @@ def fetch_trade_cached(lawd_cd, year_month, _ts):
     return r.text
 
 
-@lru_cache(maxsize=256)
+@lru_cache(maxsize=2048)
 def fetch_rent_cached(lawd_cd, year_month, _ts):
     params = {
         'serviceKey': API_KEY,
@@ -363,9 +363,10 @@ def fetch_rent_cached(lawd_cd, year_month, _ts):
 
 
 def cache_ts():
-    """1시간 단위로 캐시 무효화."""
+    """6시간 단위로 캐시 무효화. 실거래는 지연(수일~수주) 갱신이라 6시간 캐시는 안전하고,
+    같은 시군구 반복 조회 시 캐시 적중률이 크게 올라 응답이 빨라진다."""
     now = datetime.now()
-    return f'{now.year}-{now.month}-{now.day}-{now.hour}'
+    return f'{now.year}-{now.month}-{now.day}-{now.hour // 6}'
 
 
 # ============================================================
@@ -1589,7 +1590,7 @@ def auto_lookup_building():
 # 연립다세대 실거래가
 # ============================================================
 
-@lru_cache(maxsize=256)
+@lru_cache(maxsize=2048)
 def fetch_rh_trade_cached(lawd_cd, year_month, _ts):
     """연립다세대 매매."""
     params = {
@@ -1604,7 +1605,7 @@ def fetch_rh_trade_cached(lawd_cd, year_month, _ts):
     return r.text
 
 
-@lru_cache(maxsize=256)
+@lru_cache(maxsize=2048)
 def fetch_rh_rent_cached(lawd_cd, year_month, _ts):
     """연립다세대 전월세."""
     params = {
@@ -1975,7 +1976,7 @@ def diag_codescan():
 # 오피스텔 실거래가 (구조: 연립다세대와 동일 — 전용면적·층·단지명 offiNm)
 # ============================================================
 
-@lru_cache(maxsize=256)
+@lru_cache(maxsize=2048)
 def fetch_offi_trade_cached(lawd_cd, year_month, _ts):
     """오피스텔 매매."""
     params = {
@@ -1990,7 +1991,7 @@ def fetch_offi_trade_cached(lawd_cd, year_month, _ts):
     return r.text
 
 
-@lru_cache(maxsize=256)
+@lru_cache(maxsize=2048)
 def fetch_offi_rent_cached(lawd_cd, year_month, _ts):
     """오피스텔 전월세."""
     params = {
@@ -2146,7 +2147,7 @@ def get_offi_transactions_bulk():
 # 단독/다가구 실거래가 (전용면적·층·단지명·지번 없음 → 연면적·대지면적·주택유형)
 # ============================================================
 
-@lru_cache(maxsize=256)
+@lru_cache(maxsize=2048)
 def fetch_sh_trade_cached(lawd_cd, year_month, _ts):
     """단독/다가구 매매."""
     params = {
@@ -2161,7 +2162,7 @@ def fetch_sh_trade_cached(lawd_cd, year_month, _ts):
     return r.text
 
 
-@lru_cache(maxsize=256)
+@lru_cache(maxsize=2048)
 def fetch_sh_rent_cached(lawd_cd, year_month, _ts):
     """단독/다가구 전월세."""
     params = {
