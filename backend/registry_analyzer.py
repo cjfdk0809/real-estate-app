@@ -204,7 +204,8 @@ def analyze_registry_with_claude(registry_text, api_key):
         model=REGISTRY_MODEL,       # 🆕 Haiku 기본(빠름) — 파일 상단 상수로 전환 가능
         max_tokens=16000,           # 항목 많은 등기부도 JSON이 잘리지 않도록 상향 유지
         temperature=0,              # 🆕 정형 추출 → 결정적 출력(정확도·일관성·속도 안정)
-        system=SYSTEM_INSTRUCTIONS,
+        # 🆕 시스템 프롬프트 캐싱(ephemeral) — 한 세션 내 등기부 여러 건 분석 시 반복 처리 비용·지연 절감
+        system=[{"type": "text", "text": SYSTEM_INSTRUCTIONS, "cache_control": {"type": "ephemeral"}}],
         messages=[
             {
                 "role": "user",
