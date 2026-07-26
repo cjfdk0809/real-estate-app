@@ -1726,22 +1726,39 @@ def get_rh_transactions_bulk():
     
     all_items = []
     errors = []
-    for ym in year_months:
+    # 🆕 월별 호출 병렬 처리(순차 → 동시 최대 8개). 24개월×매매·전월세=48콜을 몇 초 내 완료.
+    #    워커는 HTTP+파싱만, 결과 누적은 메인 스레드 → 경쟁조건 없음. (apt-bulk와 동일 패턴)
+    _ts = cache_ts()
+
+    def _fetch_rh(task):
+        ym, kind = task
         try:
-            xml_text = fetch_rh_trade_cached(lawd_cd, ym, cache_ts())
-            raw_items, err = parse_xml_items(xml_text)
-            if not err:
-                all_items.extend(normalize_rh_trade_item(x) for x in raw_items)
+            if kind == 'trade':
+                raw, err = parse_xml_items(fetch_rh_trade_cached(lawd_cd, ym, _ts))
+                if err:
+                    return ('err', f'{ym} 매매: {err}')
+                return ('ok', [normalize_rh_trade_item(x) for x in raw])
             else:
-                errors.append(f'{ym} 매매: {err}')
-            if include_rent:
-                xml_text = fetch_rh_rent_cached(lawd_cd, ym, cache_ts())
-                raw_items, err = parse_xml_items(xml_text)
-                if not err:
-                    all_items.extend(normalize_rh_rent_item(x) for x in raw_items)
+                raw, err = parse_xml_items(fetch_rh_rent_cached(lawd_cd, ym, _ts))
+                if err:
+                    return ('err', f'{ym} 전월세: {err}')
+                return ('ok', [normalize_rh_rent_item(x) for x in raw])
         except Exception as e:
-            errors.append(f'{ym}: {e}')
-    
+            return ('err', f'{ym} {kind}: {e}')
+
+    tasks = []
+    for ym in year_months:
+        tasks.append((ym, 'trade'))
+        if include_rent:
+            tasks.append((ym, 'rent'))
+
+    with ThreadPoolExecutor(max_workers=8) as _ex:
+        for status, payload in _ex.map(_fetch_rh, tasks):
+            if status == 'ok':
+                all_items.extend(payload)
+            else:
+                errors.append(payload)
+
     if danji_filter:
         nf = danji_filter.replace(' ', '').lower()
         all_items = [x for x in all_items if nf in x['name'].replace(' ', '').lower()]
@@ -3868,7 +3885,28 @@ def valuation_comp_adjusted():
     o_year = _ca_year(origin.get('build_year'))     # 본건 사용승인(건축)연도
     out_comps, cand = [], []      # cand=(ratio, sim, rec) — 매매 유효사례
     n_sale = 0
-    for c in comps:
+
+    # 🆕 사례 공시가격 조회(Supabase, 네트워크 바운드)를 병렬 선수행 → 집계는 순차(경쟁조건 없음).
+    #    사례가 많을수록(수십 건) 순차 왕복 대비 크게 단축.
+    def _cg_lookup(c):
+        price = c.get('price'); c_area = c.get('area'); jibun = (c.get('jibun') or '').strip()
+        if not (price and c_area and jibun):
+            return None
+        c_dong = (c.get('dong') or '').strip()
+        addr = ' '.join(x for x in [sido, sigungu, c_dong, jibun] if x)
+        try:
+            return lookup_housing_price(addr=addr, area=str(c_area))
+        except Exception:
+            return {'found': False}
+
+    _sale_idx = [i for i, c in enumerate(comps) if (c.get('type') or '매매') == '매매']
+    _cg_map = {}
+    if _sale_idx:
+        with ThreadPoolExecutor(max_workers=8) as _ex:
+            for i, cg in zip(_sale_idx, _ex.map(lambda i: _cg_lookup(comps[i]), _sale_idx)):
+                _cg_map[i] = cg
+
+    for i, c in enumerate(comps):
         if (c.get('type') or '매매') != '매매':      # 추정가격은 매매만 사용(전세·월세는 표시전용)
             continue
         n_sale += 1
@@ -3883,8 +3921,7 @@ def valuation_comp_adjusted():
         if not (price and c_area and jibun):
             rec['reason'] = '지번/면적/가격 누락'
             out_comps.append(rec); continue
-        addr = ' '.join(x for x in [sido, sigungu, c_dong, jibun] if x)
-        cg = lookup_housing_price(addr=addr, area=str(c_area))
+        cg = _cg_map.get(i) or {}
         if not cg.get('found') or not cg.get('housing_price'):
             rec['reason'] = '사례 공시가격 없음'
             out_comps.append(rec); continue
