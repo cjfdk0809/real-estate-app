@@ -885,6 +885,7 @@ table { border-collapse: collapse; width: 100%; }
 
     <div class="nav-section">
       <div class="nav-label">분석 모듈</div>
+      <div class="nav-item" data-view="guide"><span class="nav-item-num">00</span> 앱 안내서</div>
       <div class="nav-item active" data-view="overview"><span class="nav-item-num">01</span> 본건 정보</div>
       <div class="nav-item" data-view="comparables"><span class="nav-item-num">02</span> 거래사례 비교</div>
       <div class="nav-item" data-view="listings"><span class="nav-item-num">03</span> 매물현황</div>
@@ -903,7 +904,7 @@ table { border-collapse: collapse; width: 100%; }
 
     <div class="sidebar-footer">
       <button class="btn-add" onclick="openPropertyModal()">🔍 물건 검색</button>
-      <div id="buildStamp" style="margin-top:8px;text-align:center;font-size:10px;color:var(--ink-muted,#9aa3b2);letter-spacing:.02em;">build 2026-07-23 · 속도개선 v2</div>
+      <div id="buildStamp" style="margin-top:8px;text-align:center;font-size:10px;color:var(--ink-muted,#9aa3b2);letter-spacing:.02em;">build 2026-07-23 · 앱 안내서</div>
     </div>
   </aside>
 
@@ -911,6 +912,55 @@ table { border-collapse: collapse; width: 100%; }
   <main class="main">
     <div id="viewContainer"></div>
   </main>
+</div>
+
+<!-- ========== MODAL: 앱 안내서 (00) ========== -->
+<div class="modal-bg" id="guideModal">
+  <div class="modal" style="max-width: 760px;">
+    <div class="modal-title">📖 앱 안내서 · 사용 가이드</div>
+    <div class="modal-sub">부동산 자산관리 시스템 — NPL·경매 물건의 시세·추정 낙찰가를 자동으로 산출합니다.</div>
+
+    <div style="max-height: 62vh; overflow-y: auto; margin-top: 16px; padding-right: 6px;">
+
+      <div class="callout callout--info">
+        <div class="callout-title">⚡ 3단계면 끝납니다</div>
+        <b>①</b> 좌측 하단 <b>🔍 물건 검색</b>에서 <b>등기부 PDF 업로드</b> → AI가 권리관계·본건정보 자동 입력 &nbsp;·&nbsp;
+        <b>②</b> 물건을 열면 <b>국토부 실거래가 자동수집</b> &nbsp;·&nbsp;
+        <b>③</b> <b>05 추정낙찰가</b>에서 추정 시세·낙찰가 확인
+      </div>
+
+      <h3 style="font-family:var(--serif);font-size:16px;color:var(--kiwoom-navy);margin:20px 0 8px;">🚀 시작하기</h3>
+      <div class="info-row"><div class="info-label">물건 등록</div><div class="info-value"><b>🔍 물건 검색</b>(좌측 하단) → 등기부등본 PDF를 올리면 AI가 소유자·권리관계(근저당·가압류 등)·주소·면적을 자동 추출해 채웁니다.</div></div>
+      <div class="info-row"><div class="info-label">자동 수집</div><div class="info-value">물건을 선택하면 백그라운드로 <b>국토부 실거래</b>(연립·다세대/아파트 등 자동판별)를 12→24개월 조회해 <b>거래사례(02)</b>에 자동 등록합니다.</div></div>
+      <div class="info-row"><div class="info-label">직접 수집</div><div class="info-value">지역·유형이 자동으로 안 잡히면 02 탭의 <b>⚡ 국토부 자동수집</b> 버튼으로 직접 조건을 지정해 가져올 수 있습니다.</div></div>
+
+      <h3 style="font-family:var(--serif);font-size:16px;color:var(--kiwoom-navy);margin:20px 0 8px;">🧭 메뉴 안내</h3>
+      <div class="info-row"><div class="info-label">01 본건 정보</div><div class="info-value">물건 기본정보·면적·공시가격·소유/권리 요약.</div></div>
+      <div class="info-row"><div class="info-label">02 거래사례 비교</div><div class="info-value">수집한 실거래(매매·전세·월세) + 시세차트 + <b>공시가격 개별보정 추정시세(본건 대표값)</b>.</div></div>
+      <div class="info-row"><div class="info-label">03 매물현황</div><div class="info-value">현재 시장 매물 참고.</div></div>
+      <div class="info-row"><div class="info-label">04 경매사례</div><div class="info-value">인근 실제 경매 낙찰사례·낙찰가율.</div></div>
+      <div class="info-row"><div class="info-label">05 추정낙찰가</div><div class="info-value">기준시세 × 가치형성요인 × 낙찰가율. <b>AI안/담당자안</b> 채택 + <b>실제 낙찰가율 분포 대비 검증</b>.</div></div>
+      <div class="info-row"><div class="info-label">06 권리분석</div><div class="info-value">말소기준권리·인수/소멸·1순위 회수율 자동 판정.</div></div>
+      <div class="info-row"><div class="info-label">07 수익률·세금</div><div class="info-value">매입가 대비 수익률·전세가율·세금 시뮬레이션.</div></div>
+      <div class="info-row"><div class="info-label">08 담당자 의견</div><div class="info-value">최종 채택값 기반 검토 의견 정리.</div></div>
+      <div class="info-row"><div class="info-label">09 리포트</div><div class="info-value">전체 분석을 문서/PDF로 출력.</div></div>
+
+      <h3 style="font-family:var(--serif);font-size:16px;color:var(--kiwoom-navy);margin:20px 0 8px;">💡 핵심 개념</h3>
+      <div class="info-row"><div class="info-label">공시 개별보정</div><div class="info-value">유사 매매사례의 <b>실거래÷공시 배율</b>을 본건 공시가격에 적용 → 층·호·면적 개별성이 반영된 추정시세.</div></div>
+      <div class="info-row"><div class="info-label">낙찰가율 검증</div><div class="info-value">우리 추정 낙찰가율을 그 지역 <b>실제 낙찰가율 분포</b>(중앙·25~75분위)와 게이지로 비교 — 진행 중 경매도 사전 검증.</div></div>
+
+      <div class="callout callout--warn" style="margin-top:18px;">
+        <div class="callout-title">⚠️ 데이터가 안 뜰 때</div>
+        ① 주소가 정확한지(시군구·법정동) 확인 &nbsp;·&nbsp; ② 02 탭 상단 배너 메시지 확인(자동수집 실패 사유 표시) &nbsp;·&nbsp; ③ 기존 수집분에 지번이 없으면 재수집하면 공시 개별보정이 켜집니다.
+      </div>
+
+      <div class="text-small text-muted" style="margin-top:14px;">이 안내서는 좌측 <b>00 앱 안내서</b> 메뉴에서 언제든 다시 열 수 있습니다.</div>
+    </div>
+
+    <div class="btn-row right" style="margin-top: 18px;">
+      <button type="button" class="btn btn-primary" onclick="closeModal('guideModal')">시작하기</button>
+    </div>
+  </div>
 </div>
 
 <!-- ========== MODAL: PROPERTY ========== -->
@@ -1714,6 +1764,8 @@ function selectProperty(id) {
 
 document.querySelectorAll('.nav-item').forEach(item => {
   item.addEventListener('click', () => {
+    // 00 앱 안내서: 화면 전환 없이 모달만 연다(현재 보던 화면 유지)
+    if (item.dataset.view === 'guide') { openGuide(); return; }
     document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
     item.classList.add('active');
     state.currentView = item.dataset.view;
@@ -5600,6 +5652,9 @@ function closePropertyModal() {
     }
 }
 function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+// 00 앱 안내서 모달 열기
+function openGuide() { const m = document.getElementById('guideModal'); if (m) m.classList.add('show'); }
+window.openGuide = openGuide;
 
 document.getElementById('propertyForm').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -5803,6 +5858,8 @@ document.getElementById('rightForm').addEventListener('submit', async (e) => {
   // 🆕 앱 시작 시 현재 물건도 배경 자동수집 시작(02 탭 안 거쳐도) → 추정가 자동산출
   const _cp = state.properties[state.currentPropertyId];
   if (_cp && typeof _maybeAutoCollect === 'function') _maybeAutoCollect(_cp);
+  // 🆕 첫 방문 시 앱 안내서 1회 자동 표시(이후엔 00 메뉴로 열람)
+  try { if (!localStorage.getItem('guideSeen')) { openGuide(); localStorage.setItem('guideSeen', '1'); } } catch (e) {}
 })();
 </script>
 
