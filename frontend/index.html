@@ -905,6 +905,7 @@ table { border-collapse: collapse; width: 100%; }
     <div class="sidebar-footer">
       <button class="btn-add" onclick="openPropertyModal()">🔍 물건 검색</button>
       <button class="btn-add" onclick="openBulkModal()" style="margin-top:6px;background:rgba(255,255,255,0.08);">📚 등기부 대량 등록</button>
+      <button class="btn-add" onclick="downloadAllReportsZip()" style="margin-top:6px;background:rgba(255,255,255,0.08);" title="등록된 모든 물건의 리포트를 PDF로 만들어 ZIP으로 저장">📦 리포트 일괄 ZIP</button>
       <div id="buildStamp" style="margin-top:8px;text-align:center;font-size:10px;color:var(--ink-muted,#9aa3b2);letter-spacing:.02em;">build 2026-07-23 · 지도 심플</div>
     </div>
   </aside>
@@ -933,6 +934,7 @@ table { border-collapse: collapse; width: 100%; }
       <h3 style="font-family:var(--serif);font-size:16px;color:var(--kiwoom-navy);margin:20px 0 8px;">🚀 시작하기</h3>
       <div class="info-row"><div class="info-label">물건 등록</div><div class="info-value"><b>🔍 물건 검색</b>(좌측 하단) → 등기부등본 PDF를 올리면 AI가 소유자·권리관계(근저당·가압류 등)·주소·면적을 자동 추출해 채웁니다.</div></div>
       <div class="info-row"><div class="info-label">대량 등록</div><div class="info-value"><b>📚 등기부 대량 등록</b>(좌측 하단) → PDF 여러 개를 한 번에 올리면 파일마다 [AI 권리분석 → 물건 등록 → 실거래 자동수집]을 <b>순차 처리</b>합니다. 등록·수집은 자동, <b>리포트는 물건별로 확인 후</b> 저장하세요.</div></div>
+      <div class="info-row"><div class="info-label">리포트 ZIP</div><div class="info-value"><b>📦 리포트 일괄 ZIP</b>(좌측 하단) → 등록된 모든 물건의 리포트 PDF를 한 번에 만들어 ZIP 파일 하나로 저장합니다.</div></div>
       <div class="info-row"><div class="info-label">자동 수집</div><div class="info-value">물건을 선택하면 백그라운드로 <b>국토부 실거래</b>(연립·다세대/아파트 등 자동판별)를 12→24개월 조회해 <b>거래사례(02)</b>에 자동 등록합니다.</div></div>
       <div class="info-row"><div class="info-label">직접 수집</div><div class="info-value">지역·유형이 자동으로 안 잡히면 02 탭의 <b>⚡ 국토부 자동수집</b> 버튼으로 직접 조건을 지정해 가져올 수 있습니다.</div></div>
 
@@ -1135,6 +1137,7 @@ table { border-collapse: collapse; width: 100%; }
 
     <div class="btn-row right" style="margin-top: 16px;">
       <button type="button" class="btn" id="bulkCancelBtn" onclick="closeBulkModal()">닫기</button>
+      <button type="button" class="btn" id="bulkZipBtn" onclick="downloadAllReportsZip()" title="등록된 모든 물건의 리포트를 ZIP으로 저장">📦 리포트 ZIP 저장</button>
       <button type="button" class="btn btn-primary" id="bulkStartBtn" onclick="startBulkRegistry()" disabled>등록 시작</button>
     </div>
   </div>
@@ -6038,6 +6041,124 @@ async function startBulkRegistry() {
   showToast(`📚 <strong>대량 등록 완료</strong> — 성공 ${okCount}건, 실패 ${failCount}건<br><span style="font-size:11px;opacity:0.9;">각 물건을 열어 리포트를 확인·저장하세요.</span>`, failCount > 0 ? 'warn' : 'success', 6500);
 }
 window.startBulkRegistry = startBulkRegistry;
+
+// ============================================================
+// 리포트 일괄 다운로드 (ZIP): 등록된 물건들의 리포트 PDF를 서버에서 묶어 한 번에 저장
+// 물건마다 [실측 낙찰가율 프리페치 → 리포트 렌더 → sections 추출] 후 /api/report/pdf-bulk 로 전송.
+// ============================================================
+let _zipRunning = false;
+
+function _zipProgressOverlay() {
+  if (!document.getElementById('zipProgKeyframes')) {
+    const st = document.createElement('style');
+    st.id = 'zipProgKeyframes';
+    st.textContent = '@keyframes zipprog-spin{to{transform:rotate(360deg);}}';
+    document.head.appendChild(st);
+  }
+  let box = document.getElementById('zipProgress');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'zipProgress';
+    box.style.cssText = 'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(440px,92vw);background:#fff;border:1px solid #dde3ee;border-radius:10px;box-shadow:0 6px 24px rgba(0,22,77,0.18);padding:14px 18px;z-index:10002;font-family:Pretendard,sans-serif;';
+    box.innerHTML = '<div style="font-size:11px;font-weight:700;color:#011F8E;letter-spacing:0.04em;margin-bottom:10px;border-bottom:1px solid #eef1f7;padding-bottom:8px;">📦 리포트 일괄 저장 (ZIP)</div>'
+      + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">'
+      + '<span style="width:14px;height:14px;border:2px solid #E6EAF5;border-top-color:#011F8E;border-radius:50%;display:inline-block;animation:zipprog-spin 1s linear infinite;"></span>'
+      + '<span id="zipProgressMsg" style="font-size:12px;font-weight:600;color:#011F8E;"></span>'
+      + '<span id="zipProgressPct" style="margin-left:auto;font-family:monospace;font-size:12px;color:#8892A6;"></span></div>'
+      + '<div style="height:8px;background:#eef1f7;border-radius:6px;overflow:hidden;">'
+      + '<div id="zipProgressBar" style="height:100%;width:0%;background:linear-gradient(90deg,#011F8E,#2A4FBE);border-radius:6px;transition:width .4s ease;"></div></div>';
+    document.body.appendChild(box);
+  }
+  return {
+    update(pct, msg) {
+      const v = Math.max(0, Math.min(100, pct));
+      const m = document.getElementById('zipProgressMsg');
+      const pc = document.getElementById('zipProgressPct');
+      const bar = document.getElementById('zipProgressBar');
+      if (m) m.textContent = msg || '';
+      if (pc) pc.textContent = Math.round(v) + '%';
+      if (bar) bar.style.width = v + '%';
+    },
+    done() {
+      const b = document.getElementById('zipProgress');
+      if (b) { b.style.transition = 'opacity .3s'; b.style.opacity = '0'; setTimeout(() => b.remove(), 300); }
+    }
+  };
+}
+
+async function downloadAllReportsZip(ids) {
+  if (_zipRunning) return;
+  const allIds = (ids && ids.length) ? ids : Object.keys(state.properties);
+  const targets = allIds.filter(id => state.properties[id]);
+  if (targets.length === 0) { showToast('등록된 물건이 없습니다.', 'info', 3000); return; }
+
+  _zipRunning = true;
+  const prevId = state.currentPropertyId;
+  const prevView = state.currentView;
+  const overlay = _zipProgressOverlay();
+  const reports = [];
+  const usedNames = {};
+
+  try {
+    for (let i = 0; i < targets.length; i++) {
+      const id = targets[i];
+      const p = state.properties[id];
+      overlay.update(Math.round((i / targets.length) * 90), `리포트 생성 중 (${i + 1}/${targets.length}) — ${p.name || '무제'}`);
+      state.currentPropertyId = id;
+      state.currentView = 'report';
+      // 실측 낙찰가율 프리페치 (단건 리포트와 동일한 정확도로 렌더). 지역별 캐시라 반복 시 저렴.
+      try { if (typeof prefetchRealRates === 'function') await prefetchRealRates(p); } catch (e) { /* 폴백 계수 사용 */ }
+      try {
+        renderReport();
+      } catch (e) {
+        console.warn('[ZIP] 리포트 렌더 실패:', p.name, e);
+        continue;
+      }
+      await _sleep(0);  // DOM 반영 후 추출
+      const data = buildReportPdfDataFromDOM();
+      // 파일명: 단지명 + 동호 (금지문자 제거, 중복 방지)
+      const safe = s => String(s || '').replace(/[\\/:*?"<>|]/g, '').trim();
+      let base = '자산분석리포트_' + (safe(p.name) || 'report');
+      const loc = [safe(p.building), safe(p.unit)].filter(Boolean).join('');
+      if (loc) base += '_' + loc;
+      let fname = base + '.pdf';
+      let n = 2;
+      while (usedNames[fname]) { fname = `${base}(${n}).pdf`; n++; }
+      usedNames[fname] = true;
+      reports.push({ filename: fname, data });
+    }
+
+    if (reports.length === 0) throw new Error('생성할 리포트가 없습니다.');
+
+    overlay.update(94, `서버에서 ZIP으로 묶는 중... (${reports.length}건)`);
+    const r = await fetch(`${BACKEND_URL}/api/report/pdf-bulk`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reports }),
+    });
+    if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error || ('HTTP ' + r.status)); }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const today = new Date().toISOString().slice(0, 10);
+    a.href = url;
+    a.download = `자산분석리포트_${reports.length}건_${today}.zip`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 8000);
+    overlay.update(100, '완료');
+    showToast(`📦 <strong>리포트 ZIP 저장 완료</strong> — ${reports.length}건`, 'success', 5000);
+  } catch (e) {
+    showToast('리포트 ZIP 생성 실패: ' + (e.message || e), 'error', 6000);
+  } finally {
+    overlay.done();
+    _zipRunning = false;
+    // 화면 원복 (리포트 렌더로 바뀐 뷰를 사용자가 보던 상태로 복구)
+    state.currentPropertyId = prevId;
+    state.currentView = prevView;
+    if (typeof renderView === 'function') renderView();
+  }
+}
+window.downloadAllReportsZip = downloadAllReportsZip;
 
 document.getElementById('deletePropertyBtn').addEventListener('click', async () => {
   if (!confirm('이 물건과 관련된 모든 거래사례·경매·권리 데이터가 함께 삭제됩니다. 계속하시겠습니까?')) return;
