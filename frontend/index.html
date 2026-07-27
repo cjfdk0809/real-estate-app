@@ -3067,15 +3067,6 @@ function updateRightOurs(id, checked) {
   renderView();
 }
 
-// 권리관계 목록: 당사 근저당권 지정 (여러 건 개별 토글 가능)
-function updateRightOurs(id, checked) {
-  const pid = state.currentPropertyId; if (!pid) return;
-  const list = state.rights[pid] || [];
-  list.forEach(r => { if (r.id === id) r.isOurs = checked; });
-  saveState();
-  renderView();
-}
-
 // 감정가 확보: 경공매 사건 → 직접입력 → 거래사례 평균(대용) 순
 // 동일면적 비교 허용폭(㎡) — 아파트·오피스텔은 균질(±1㎡), 빌라(다세대·연립)는 면적 편차 커서 넓게(±10%, 최소 2㎡)
 function _sameAreaTol(p) {
