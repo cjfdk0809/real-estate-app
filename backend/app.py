@@ -4008,6 +4008,56 @@ def report_pdf():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/report/pdf-bulk', methods=['POST'])
+def report_pdf_bulk():
+    """여러 물건의 리포트 PDF를 한 번에 생성해 ZIP으로 반환 (대량 등록 후 일괄 다운로드)."""
+    try:
+        from pdf_report import build_report_pdf
+    except Exception as e:
+        return jsonify({'error': 'PDF 모듈 로드 실패: %s' % e}), 500
+    import io
+    import zipfile
+    try:
+        payload = request.get_json(force=True, silent=True) or {}
+        reports = payload.get('reports') or []
+        if not reports:
+            return jsonify({'error': '리포트 데이터가 없습니다.'}), 400
+
+        buf = io.BytesIO()
+        used_names = set()
+        ok = 0
+        with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for i, rep in enumerate(reports):
+                data = (rep or {}).get('data') or {}
+                name = (rep or {}).get('filename') or ('report_%d.pdf' % (i + 1))
+                if not str(name).lower().endswith('.pdf'):
+                    name = str(name) + '.pdf'
+                # 중복 파일명 방지 (ZIP 내 같은 이름 덮어쓰기 방지)
+                base = name[:-4]
+                cand = name
+                n = 2
+                while cand in used_names:
+                    cand = '%s(%d).pdf' % (base, n)
+                    n += 1
+                used_names.add(cand)
+                try:
+                    pdf_bytes = build_report_pdf(data)
+                    zf.writestr(cand, pdf_bytes)
+                    ok += 1
+                except Exception as e:
+                    # 한 건 실패해도 나머지는 계속 — 사유를 텍스트로 동봉
+                    zf.writestr(base + '_ERROR.txt', ('리포트 생성 실패: %s' % e).encode('utf-8'))
+
+        zip_bytes = buf.getvalue()
+        resp = Response(zip_bytes, mimetype='application/zip')
+        resp.headers['Content-Disposition'] = 'attachment; filename="asset_reports.zip"'
+        resp.headers['Content-Length'] = str(len(zip_bytes))
+        resp.headers['X-Report-Count'] = str(ok)
+        return resp
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 # ============================================================
 # 신규: 자동완성 검색 (Supabase DB 기반)
 # 전국 법정동(약 5만건) + 아파트 단지(약 1.8만개)를 빠르게 검색

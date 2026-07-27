@@ -904,6 +904,8 @@ table { border-collapse: collapse; width: 100%; }
 
     <div class="sidebar-footer">
       <button class="btn-add" onclick="openPropertyModal()">🔍 물건 검색</button>
+      <button class="btn-add" onclick="openBulkModal()" style="margin-top:6px;background:rgba(255,255,255,0.08);">📚 등기부 대량 등록</button>
+      <button class="btn-add" onclick="downloadAllReportsZip()" style="margin-top:6px;background:rgba(255,255,255,0.08);" title="등록된 모든 물건의 리포트를 PDF로 만들어 ZIP으로 저장">📦 리포트 일괄 ZIP</button>
       <div id="buildStamp" style="margin-top:8px;text-align:center;font-size:10px;color:var(--ink-muted,#9aa3b2);letter-spacing:.02em;">build 2026-07-23 · 지도 심플</div>
     </div>
   </aside>
@@ -931,6 +933,8 @@ table { border-collapse: collapse; width: 100%; }
 
       <h3 style="font-family:var(--serif);font-size:16px;color:var(--kiwoom-navy);margin:20px 0 8px;">🚀 시작하기</h3>
       <div class="info-row"><div class="info-label">물건 등록</div><div class="info-value"><b>🔍 물건 검색</b>(좌측 하단) → 등기부등본 PDF를 올리면 AI가 소유자·권리관계(근저당·가압류 등)·주소·면적을 자동 추출해 채웁니다.</div></div>
+      <div class="info-row"><div class="info-label">대량 등록</div><div class="info-value"><b>📚 등기부 대량 등록</b>(좌측 하단) → PDF 여러 개를 한 번에 올리면 파일마다 [AI 권리분석 → 물건 등록 → 실거래 자동수집]을 <b>순차 처리</b>합니다. 등록·수집은 자동, <b>리포트는 물건별로 확인 후</b> 저장하세요.</div></div>
+      <div class="info-row"><div class="info-label">리포트 ZIP</div><div class="info-value"><b>📦 리포트 일괄 ZIP</b>(좌측 하단) → 등록된 모든 물건의 리포트 PDF를 한 번에 만들어 ZIP 파일 하나로 저장합니다.</div></div>
       <div class="info-row"><div class="info-label">자동 수집</div><div class="info-value">물건을 선택하면 백그라운드로 <b>국토부 실거래</b>(연립·다세대/아파트 등 자동판별)를 12→24개월 조회해 <b>거래사례(02)</b>에 자동 등록합니다.</div></div>
       <div class="info-row"><div class="info-label">직접 수집</div><div class="info-value">지역·유형이 자동으로 안 잡히면 02 탭의 <b>⚡ 국토부 자동수집</b> 버튼으로 직접 조건을 지정해 가져올 수 있습니다.</div></div>
 
@@ -1102,6 +1106,40 @@ table { border-collapse: collapse; width: 100%; }
         <button type="submit" class="btn btn-primary">저장</button>
       </div>
     </form>
+  </div>
+</div>
+
+<!-- ========== MODAL: BULK REGISTRY (등기부 대량 등록) ========== -->
+<div class="modal-bg" id="bulkModal">
+  <div class="modal">
+    <div class="modal-title">
+      <span>📚 등기부 대량 등록</span>
+      <button type="button" class="modal-close" onclick="closeBulkModal()" aria-label="닫기" title="닫기">×</button>
+    </div>
+    <div class="modal-sub">등기부등본 PDF 여러 개를 한 번에 올리면, 파일마다 AI 권리분석 → 물건 등록 → 국토부 실거래 자동수집을 순서대로 처리합니다.</div>
+
+    <div id="bulkUploadZone"
+      style="border: 2px dashed var(--kiwoom-navy); border-radius: 8px; padding: 24px; text-align: center; cursor: pointer; transition: all 0.2s; background: white;"
+      onclick="document.getElementById('bulkFileInput').click();"
+      ondragover="event.preventDefault(); this.style.background='var(--kiwoom-navy-soft)';"
+      ondragleave="this.style.background='white';"
+      ondrop="event.preventDefault(); this.style.background='white'; handleBulkDrop(event);">
+      <div style="font-size: 14px; font-weight: 700; color: var(--kiwoom-navy); margin-bottom: 4px;">📎 클릭 또는 끌어놓기로 PDF 여러 개 선택</div>
+      <div style="font-size: 11px; color: var(--ink-soft);">집합건물 등기부 권장 · 파일당 최대 10MB</div>
+      <input type="file" id="bulkFileInput" accept="application/pdf" multiple style="display:none;" onchange="handleBulkFileSelect(event)">
+    </div>
+
+    <div class="callout callout--warn" style="margin-top:12px; font-size:11px;">
+      ⚠️ 국토부 실거래 API 한도 보호를 위해 <b>한 건씩 순차 처리</b>합니다(건당 10~30초 소요). 등록·수집은 자동, <b>최종 리포트는 물건을 열어 확인 후</b> 저장하세요.
+    </div>
+
+    <div id="bulkList" style="margin-top:14px;"></div>
+
+    <div class="btn-row right" style="margin-top: 16px;">
+      <button type="button" class="btn" id="bulkCancelBtn" onclick="closeBulkModal()">닫기</button>
+      <button type="button" class="btn" id="bulkZipBtn" onclick="downloadAllReportsZip()" title="등록된 모든 물건의 리포트를 ZIP으로 저장">📦 리포트 ZIP 저장</button>
+      <button type="button" class="btn btn-primary" id="bulkStartBtn" onclick="startBulkRegistry()" disabled>등록 시작</button>
+    </div>
   </div>
 </div>
 
@@ -2884,29 +2922,147 @@ function analyzeRights(rightsInput) {
   return { baseRight, baseDate, classified, assumedTotal, extinctTotal, seniorClaim, seniorHolder, hasTaxLien };
 }
 
-// 당사(키움) 근저당권 회수 분석: 순위·선순위 잠식·예상 회수액
-function computeOursRecovery(classified, distributable) {
-  const ours = (classified || []).find(r => r.isOurs);
-  if (!ours) return null;
-  const oursDate = ours.date || '';
-  const oursClaim = ours.amount || 0;  // 만원 (채권최고액)
-  // 당사보다 선순위(설정일 빠른) 배당대상 담보권(근저당) 채권최고액 합
-  const seniorMortgages = (classified || []).filter(r =>
-    !r.isOurs && (r.type || '').includes('근저당') && r.status !== '인수' && (r.date || '') !== '' && (r.date || '') < oursDate);
-  const seniorSum = seniorMortgages.reduce((s, r) => s + (r.amount || 0), 0);
-  const priority = seniorMortgages.length + 1;  // 담보권 기준 순위
-  const availForOurs = (distributable != null) ? Math.max(0, distributable - seniorSum) : null;
-  const recovered = (availForOurs != null) ? Math.min(oursClaim, availForOurs) : null;
-  const recoveryRate = (recovered != null && oursClaim) ? Math.min(100, recovered / oursClaim * 100) : null;
-  const shortfall = (recovered != null) ? Math.max(0, oursClaim - recovered) : null;
-  return { ours, oursClaim, priority, seniorSum, availForOurs, recovered, recoveryRate, shortfall };
+// 예상 배당표(가배당) 산정 — 옥션원 예상배당표 방식 준용.
+//  실제배당할금액 = 매각대금(예상낙찰가) + 전경매보증금 − 경매비용
+//  ※ 인수금액은 배당재원에서 차감하지 않고 '매수인 인수금액'으로 별도 표기(낙찰자 부담).
+//  배당대상(소멸) 권리를 설정일(등기순위) 순으로 재원에서 순차 배당. 인수 권리는 배당 0.
+// ※ 간이 추정: 최우선변제(소액임차·임금)·당해세·안분배당(동순위)·경매비용(입력분 제외)은 미반영.
+function _distributionItems(classified) {
+  return (classified || [])
+    .filter(r => (r.status === '소멸' || r.status === '인수') && (r.amount || 0) > 0)
+    .slice()
+    .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
 }
 
-// 권리관계 목록: 당사 근저당권 지정(단일 선택)
+function computeDistribution(classified, bid, opts) {
+  opts = opts || {};
+  const cost = Number(opts.cost) || 0;          // 경매비용
+  const deposit = Number(opts.prevDeposit) || 0; // 전(前)경매보증금
+  const gross = (bid || 0) + deposit;            // 매각대금 + 전경매보증금
+  const pool0 = Math.max(0, gross - cost);       // 실제배당할금액
+  let pool = pool0;
+  const items = _distributionItems(classified);
+  const rows = items.map(r => {
+    const claim = r.amount || 0;                 // 채권최고액(만원)
+    let alloc = 0, assumed = 0;
+    if (r.status === '인수') {
+      assumed = claim;                            // 매수인 인수금액 (배당 외)
+    } else {
+      alloc = Math.min(claim, pool);              // 배당금액
+      pool = Math.max(0, pool - alloc);
+    }
+    return { id: r.id, type: r.type, holder: r.holder, date: r.date, isOurs: !!r.isOurs,
+      status: r.status, claim, alloc, assumed,
+      rate: claim ? Math.min(100, alloc / claim * 100) : null,   // 배당비율
+      unpaid: Math.max(0, claim - alloc - assumed),               // 미배당금액
+      remaining: r.status === '인수' ? null : pool };             // 배당후 잔여금
+  });
+  const sum = (f, cond) => rows.filter(cond || (() => true)).reduce((s, r) => s + (r[f] || 0), 0);
+  const oursClaim = sum('claim', r => r.isOurs);
+  const oursAlloc = sum('alloc', r => r.isOurs);
+  return {
+    gross, cost, deposit, pool0, surplus: pool, rows,
+    totalClaim: sum('claim'), totalAlloc: sum('alloc'), totalUnpaid: sum('unpaid'), totalAssumed: sum('assumed'),
+    oursClaim, oursAlloc, oursRate: oursClaim ? Math.min(100, oursAlloc / oursClaim * 100) : null,
+  };
+}
+
+// 당사(키움) 근저당권 회수 분석: 여러 건 지정 가능. 예상 배당(가배당)으로 순위·회수액 산정.
+function computeOursRecovery(classified, bid, opts) {
+  const oursList = (classified || []).filter(r => r.isOurs);
+  if (!oursList.length) return null;
+  const d = computeDistribution(classified, bid, opts);
+  const oursClaim = d.oursClaim;                 // 채권최고액 합
+  const recovered = (bid != null) ? d.oursAlloc : null;
+  const recoveryRate = (recovered != null && oursClaim) ? Math.min(100, recovered / oursClaim * 100) : null;
+  const shortfall = (recovered != null) ? Math.max(0, oursClaim - recovered) : null;
+  // 당사 최선순위 건 기준 순위·선순위 담보 합계 (표시용)
+  const earliestOursDate = oursList.reduce((min, r) => (min == null || (r.date || '') < min) ? (r.date || '') : min, null);
+  const seniorMortgages = (classified || []).filter(r =>
+    !r.isOurs && (r.type || '').includes('근저당') && r.status !== '인수' && (r.date || '') !== '' && (r.date || '') < (earliestOursDate || ''));
+  const seniorSum = seniorMortgages.reduce((s, r) => s + (r.amount || 0), 0);
+  const priority = seniorMortgages.length + 1;
+  return { oursList, ours: oursList[0], count: oursList.length,
+    distributable: d.pool0, oursClaim, priority, seniorSum,
+    availForOurs: (bid != null) ? Math.max(0, d.pool0 - seniorSum) : null,
+    recovered, recoveryRate, shortfall };
+}
+
+// 예상 배당표 HTML (옥션원 예상배당표 양식) — 06 권리분석·리포트 공용.
+// meta: { label, badgeColor } — 시나리오 라벨/색.
+function distributionTableHTML(ra, bid, opts, meta) {
+  meta = meta || {};
+  const d = computeDistribution(ra.classified, bid, opts);
+  const _w = (v) => fmt.won(v);
+  const _summary = `
+    <table class="tbl" style="margin-bottom:10px;">
+      <tbody>
+        <tr><td style="width:160px;color:var(--ink-muted);">매각(예상)대금</td><td class="price">${_w(bid)}</td>
+            <td style="width:130px;color:var(--ink-muted);">전(前)경매보증금</td><td class="price">${_w(d.deposit)}</td></tr>
+        <tr><td style="color:var(--ink-muted);">경매비용</td><td class="price">${_w(d.cost)}</td>
+            <td style="color:var(--ink-muted);">실제 배당할 금액</td><td class="price text-accent" style="font-weight:800;">${_w(d.pool0)}</td></tr>
+      </tbody>
+    </table>`;
+  const _rows = d.rows.map((r, i) => {
+    const ours = r.isOurs ? ' style="background:rgba(204,0,204,0.06);"' : '';
+    const ourTag = r.isOurs ? ' <span class="badge" style="background:var(--kiwoom-pink-deep,#CC00CC);color:#fff;font-size:9px;">당사</span>' : '';
+    const assumedRow = r.status === '인수';
+    return `<tr${ours}>
+      <td class="num">${i + 1}</td>
+      <td class="text-small">${r.type}</td>
+      <td class="text-small">${r.holder || '-'}${ourTag}<br><span class="text-muted">${fmt.date(r.date)}</span></td>
+      <td class="price">${_w(r.claim)}</td>
+      <td class="price"${assumedRow ? '' : (r.alloc >= r.claim ? '' : ' style="color:var(--accent);"')}>${assumedRow ? '-' : _w(r.alloc)}</td>
+      <td class="num text-small">${assumedRow ? '-' : (r.rate != null ? r.rate.toFixed(1) + '%' : '-')}</td>
+      <td class="price">${_w(r.unpaid)}</td>
+      <td class="price">${r.assumed ? _w(r.assumed) : '0'}</td>
+      <td class="price text-muted">${assumedRow ? '-' : _w(r.remaining)}</td>
+      <td class="text-small">${r.status}</td>
+    </tr>`;
+  }).join('');
+  const _totalRow = `<tr style="border-top:2px solid var(--line-strong,#ccc);font-weight:700;">
+    <td colspan="3" style="text-align:center;">계</td>
+    <td class="price">${_w(d.totalClaim)}</td>
+    <td class="price text-accent">${_w(d.totalAlloc)}</td>
+    <td></td>
+    <td class="price">${_w(d.totalUnpaid)}</td>
+    <td class="price">${_w(d.totalAssumed)}</td>
+    <td class="price">${_w(d.surplus)}</td>
+    <td></td>
+  </tr>`;
+  return `
+    ${meta.label ? `<div class="text-small" style="margin-bottom:6px;font-weight:700;color:${meta.badgeColor || 'var(--kiwoom-navy)'};">▸ ${meta.label} 시나리오 · 예상 낙찰가 ${_w(bid)}</div>` : ''}
+    ${_summary}
+    <div style="overflow-x:auto;">
+      <table class="tbl">
+        <thead><tr>
+          <th>순위</th><th>이유</th><th>채권자</th>
+          <th class="text-right">채권최고액</th><th class="text-right">배당금액</th><th class="text-right">배당비율</th>
+          <th class="text-right">미배당금액</th><th class="text-right">매수인<br>인수금액</th><th class="text-right">배당후<br>잔여금</th><th>소멸여부</th>
+        </tr></thead>
+        <tbody>
+          ${_rows || `<tr><td colspan="10" class="text-muted" style="text-align:center;padding:12px;">배당·인수 대상 권리가 없습니다.</td></tr>`}
+          ${_rows ? _totalRow : ''}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+// 예상 배당표 시나리오 선택(보수/중립/적극/AM) — 문자열 키라 updateScenario와 별도.
+function setDistScenario(key) {
+  const id = state.currentPropertyId; if (!id) return;
+  state.scenarios = state.scenarios || {};
+  state.scenarios[id] = state.scenarios[id] || {};
+  state.scenarios[id].distScen = key;
+  saveState();
+  renderView();
+}
+
+// 권리관계 목록: 당사 근저당권 지정 (여러 건 개별 토글 가능)
 function updateRightOurs(id, checked) {
   const pid = state.currentPropertyId; if (!pid) return;
   const list = state.rights[pid] || [];
-  list.forEach(r => { r.isOurs = (checked && r.id === id); });
+  list.forEach(r => { if (r.id === id) r.isOurs = checked; });
   saveState();
   renderView();
 }
@@ -3006,10 +3162,18 @@ function renderScenarioAndNPL(p, auctions, rights) {
   const calc = (rate) => ap.value ? Math.round(ap.value * rate / 100) : null;
   const nextFloor = ap.value ? Math.round(ap.value * (100 - discount) / 100) : null;
   const midBid = calc(mid);
-  const distributable = (midBid != null) ? Math.max(0, midBid - ra.assumedTotal) : null;
+  // AM 의견 낙찰가율 — 담당자(AM) 직접 조정값(sc.mgrBidRate). 미설정 시 중립값 사용.
+  const amRate = (sc.mgrBidRate != null && !isNaN(sc.mgrBidRate)) ? Number(sc.mgrBidRate) : mid;
+  const amBid = calc(amRate);
+  // 배당표 재원 파라미터: 경매비용·전(前)경매보증금 (옥션원 예상배당표 방식)
+  const distCost = (sc.auctionCost != null && !isNaN(sc.auctionCost)) ? Number(sc.auctionCost) : 0;
+  const prevDeposit = (sc.prevDeposit != null && !isNaN(sc.prevDeposit)) ? Number(sc.prevDeposit) : 0;
+  const distOpts = { cost: distCost, prevDeposit: prevDeposit };
+  // 실제배당할금액(중립) = 매각대금 + 전경매보증금 − 경매비용 (인수금액은 차감하지 않음)
+  const distributable = (midBid != null) ? Math.max(0, midBid + prevDeposit - distCost) : null;
   const recoveryRate = (distributable != null && ra.seniorClaim) ? Math.min(100, distributable / ra.seniorClaim * 100) : null;
   const surplus = (distributable != null && ra.seniorClaim) ? (distributable - ra.seniorClaim) : null;
-  const oursRec = computeOursRecovery(ra.classified, distributable);
+  const oursRec = computeOursRecovery(ra.classified, midBid, distOpts);
 
   const scenarioCard = `
   <div class="card mb-24">
@@ -3023,6 +3187,8 @@ function renderScenarioAndNPL(p, auctions, rights) {
       <span class="text-small text-muted">(04 경매 적용 낙찰가율 연계 · 조정은 경매 ‘낙찰가율 직접입력’)</span>
       <span class="text-muted" style="margin-left:12px;">유찰저감</span>
       <input type="number" value="${discount}" onchange="updateScenario('discount', this.value)" style="width:52px;padding:5px;">%
+      <span style="margin-left:12px;padding-left:12px;border-left:1px solid var(--line);color:var(--kiwoom-pink-deep,#CC00CC);font-weight:700;">AM 의견 낙찰가율</span>
+      <input type="number" value="${amRate}" step="0.1" onchange="updateScenario('mgrBidRate', this.value)" style="width:64px;padding:5px;border-color:var(--kiwoom-pink-deep,#CC00CC);">%
     </div>
     <table class="tbl">
       <thead><tr><th>시나리오</th><th class="text-right">낙찰가율</th><th class="text-right">예상 낙찰가</th></tr></thead>
@@ -3030,10 +3196,11 @@ function renderScenarioAndNPL(p, auctions, rights) {
         <tr><td><span class="badge" style="background:#a8884a;color:#fff;">보수</span></td><td class="num">${con}%</td><td class="price">${fmt.won(calc(con))}</td></tr>
         <tr><td><span class="badge" style="background:#1e2a44;color:#fff;">중립</span></td><td class="num">${mid}%</td><td class="price text-accent">${fmt.won(midBid)}</td></tr>
         <tr><td><span class="badge" style="background:#2d5a3d;color:#fff;">적극</span></td><td class="num">${agg}%</td><td class="price">${fmt.won(calc(agg))}</td></tr>
+        <tr><td><span class="badge" style="background:var(--kiwoom-pink-deep,#CC00CC);color:#fff;">AM 의견</span></td><td class="num">${amRate}%</td><td class="price" style="font-weight:800;">${fmt.won(amBid)}</td></tr>
         <tr><td class="text-muted">1회 유찰 시 최저가</td><td class="num">${100 - discount}%</td><td class="price text-muted">${fmt.won(nextFloor)}</td></tr>
       </tbody>
     </table>
-    <div class="text-small text-muted" style="margin-top:8px;">※ 낙찰가율은 04 경매 <strong>적용 낙찰가율</strong>(한국부동산원 시군구 종합 또는 본건 직접입력)과 자동 연계됩니다. 보수 −5%p · 적극 +5%p.</div>
+    <div class="text-small text-muted" style="margin-top:8px;">※ 보수/중립/적극 낙찰가율은 04 경매 <strong>적용 낙찰가율</strong>과 자동 연계(보수 −5%p · 적극 +5%p). <strong style="color:var(--kiwoom-pink-deep,#CC00CC);">AM 의견</strong>은 담당자가 위 칸에서 직접 조정하며, 04 경매의 담당자안 낙찰가율과 동일값입니다.</div>
     `}
   </div>`;
 
@@ -3044,8 +3211,9 @@ function renderScenarioAndNPL(p, auctions, rights) {
       <div>
         <div class="info-row"><div class="info-label">1순위 채권최고액</div><div class="info-value mono">${fmt.won(ra.seniorClaim)}${ra.seniorHolder ? ` <span class="text-muted text-small">(${ra.seniorHolder})</span>` : ''}</div></div>
         <div class="info-row"><div class="info-label">예상 낙찰가(중립)</div><div class="info-value mono">${fmt.won(midBid)}</div></div>
-        <div class="info-row"><div class="info-label">선순위 인수금액</div><div class="info-value mono">${fmt.won(ra.assumedTotal)}</div></div>
-        <div class="info-row"><div class="info-label">배당가능재원</div><div class="info-value mono text-accent">${fmt.won(distributable)}</div></div>
+        <div class="info-row"><div class="info-label">경매비용</div><div class="info-value mono">${fmt.won(distCost)}</div></div>
+        <div class="info-row"><div class="info-label">실제 배당할 금액</div><div class="info-value mono text-accent">${fmt.won(distributable)}</div></div>
+        ${ra.assumedTotal ? `<div class="info-row"><div class="info-label">매수인 인수금액<span class="text-muted text-small"> (배당 외)</span></div><div class="info-value mono">${fmt.won(ra.assumedTotal)}</div></div>` : ''}
       </div>
       <div>
         <div class="info-row"><div class="info-label">1순위 회수율(추정)</div><div class="info-value mono ${recoveryRate >= 100 ? '' : 'text-accent'}">${recoveryRate != null ? recoveryRate.toFixed(1) + '%' : '-'}</div></div>
@@ -3064,9 +3232,9 @@ function renderScenarioAndNPL(p, auctions, rights) {
     <div class="card-title">NPL 담보여력 분석 · 당사 채권 회수 <span class="text-muted text-small" style="font-weight:400;">· 중립 시나리오 기준</span></div>
     <div class="grid grid-2">
       <div>
-        <div class="info-row"><div class="info-label">당사 근저당권</div><div class="info-value">${oursRec.ours.holder || '-'} <span class="text-muted text-small">(${fmt.date(oursRec.ours.date)})</span></div></div>
-        <div class="info-row"><div class="info-label">당사 채권최고액</div><div class="info-value mono">${fmt.won(oursRec.oursClaim)}</div></div>
-        <div class="info-row"><div class="info-label">담보권 순위</div><div class="info-value">${oursRec.priority}순위${oursRec.priority === 1 ? ' <span class="text-accent text-small">(최선순위)</span>' : ''}</div></div>
+        <div class="info-row"><div class="info-label">당사 근저당권${oursRec.count > 1 ? ` (${oursRec.count}건)` : ''}</div><div class="info-value">${oursRec.oursList.map(o => `${o.holder || '-'} <span class="text-muted text-small">(${fmt.date(o.date)})</span>`).join('<br>')}</div></div>
+        <div class="info-row"><div class="info-label">당사 채권최고액${oursRec.count > 1 ? ' 합계' : ''}</div><div class="info-value mono">${fmt.won(oursRec.oursClaim)}</div></div>
+        <div class="info-row"><div class="info-label">담보권 순위</div><div class="info-value">${oursRec.priority}순위${oursRec.priority === 1 ? ' <span class="text-accent text-small">(최선순위)</span>' : ''}${oursRec.count > 1 ? ' <span class="text-muted text-small">(당사 최선순위 건 기준)</span>' : ''}</div></div>
         <div class="info-row"><div class="info-label">선순위 담보 합계</div><div class="info-value mono">${fmt.won(oursRec.seniorSum)}</div></div>
       </div>
       <div>
@@ -3085,7 +3253,58 @@ function renderScenarioAndNPL(p, auctions, rights) {
     </div>
   </div>` : '';
 
-  return scenarioCard + nplCard + oursCard;
+  // ── 예상 배당표 (옥션원 예상배당표 양식) ─────────────────────────
+  const _scenDefs = [
+    { key: 'con', label: '보수', color: '#a8884a', bid: calc(con), rate: con },
+    { key: 'mid', label: '중립', color: '#1e2a44', bid: midBid, rate: mid },
+    { key: 'agg', label: '적극', color: '#2d5a3d', bid: calc(agg), rate: agg },
+    { key: 'am', label: 'AM 의견', color: '#CC00CC', bid: amBid, rate: amRate },
+  ];
+  const _distItems = _distributionItems(ra.classified);
+  const _selKey = ['con', 'mid', 'agg', 'am'].includes(sc.distScen) ? sc.distScen : 'mid';
+  const _selScen = _scenDefs.find(s => s.key === _selKey) || _scenDefs[1];
+  // 시나리오별 당사 회수 비교(요약)
+  const _cmp = _scenDefs.map(s => ({ ...s, d: computeDistribution(ra.classified, s.bid, distOpts) }));
+  const _hasOurs = _cmp[0].d.oursClaim > 0;
+
+  const _selBtns = _scenDefs.map(s => `<button type="button" onclick="setDistScenario('${s.key}')"
+      style="padding:5px 12px;border-radius:6px;border:1px solid ${s.key === _selKey ? s.color : 'var(--line-strong,#ccc)'};cursor:pointer;font-size:12px;font-weight:700;
+      background:${s.key === _selKey ? s.color : '#fff'};color:${s.key === _selKey ? '#fff' : 'var(--ink-soft)'};">${s.label} ${s.rate}%</button>`).join('');
+
+  const _cmpRow = _hasOurs ? `
+    <div style="overflow-x:auto;margin-top:14px;">
+      <table class="tbl">
+        <thead><tr><th>구분</th>${_scenDefs.map(s => `<th class="text-right" style="color:${s.color};">${s.label}</th>`).join('')}</tr></thead>
+        <tbody>
+          <tr><td>예상 낙찰가</td>${_cmp.map(s => `<td class="price">${fmt.won(s.bid)}</td>`).join('')}</tr>
+          <tr><td>실제 배당할 금액</td>${_cmp.map(s => `<td class="price text-accent">${fmt.won(s.d.pool0)}</td>`).join('')}</tr>
+          <tr style="font-weight:700;"><td>당사 회수액</td>${_cmp.map(s => `<td class="price">${fmt.won(s.d.oursAlloc)}</td>`).join('')}</tr>
+          <tr style="font-weight:700;"><td>당사 회수율</td>${_cmp.map(s => `<td class="num ${s.d.oursRate >= 100 ? '' : 'text-accent'}">${s.d.oursRate != null ? s.d.oursRate.toFixed(1) + '%' : '-'}</td>`).join('')}</tr>
+        </tbody>
+      </table>
+    </div>` : '';
+
+  const distCard = (ap.value && _distItems.length) ? `
+  <div class="card mb-24" style="border-left:4px solid #1e2a44;">
+    <div class="card-title">예상 배당표 (가배당) <span class="text-muted text-small" style="font-weight:400;">· 옥션원 예상배당표 양식 · 시나리오 선택</span></div>
+    <div class="no-print" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+      ${_selBtns}
+      <span style="margin-left:8px;padding-left:12px;border-left:1px solid var(--line);color:var(--ink-muted);font-size:12px;">경매비용</span>
+      <input type="number" value="${distCost}" onchange="updateScenario('auctionCost', this.value)" style="width:100px;padding:5px;" placeholder="만원">
+      <span style="color:var(--ink-muted);font-size:12px;">전경매보증금</span>
+      <input type="number" value="${prevDeposit}" onchange="updateScenario('prevDeposit', this.value)" style="width:100px;padding:5px;" placeholder="만원">
+      <span class="text-small text-muted">(만원)</span>
+    </div>
+    ${distributionTableHTML(ra, _selScen.bid, distOpts, { label: _selScen.label, badgeColor: _selScen.color })}
+    ${_cmpRow}
+    <div class="text-small text-muted" style="margin-top:10px;line-height:1.7;">
+      ※ 대표 등기부·매각물건명세서 기준으로 작성한 <strong>참고용 예상 배당표(가배당)</strong>입니다. 채권 금액·순위·내용에 따라 실제 배당표와 다를 수 있습니다.<br>
+      ※ 담보물권 <strong>설정일(등기순위) 순</strong> 배당. <strong>최우선변제(소액임차·임금채권)·당해세·안분배당(동순위)·경매비용(입력분 제외)</strong>은 미반영. 채권액은 <strong>채권최고액</strong> 기준(실채권원금과 다를 수 있음). 인수금액은 배당재원에서 차감하지 않고 <strong>매수인 인수금액</strong>으로 별도 표기.
+      ${ra.hasTaxLien ? '<br><strong style="color:var(--accent);">당해세 우선배당 리스크:</strong> 압류 등기가 있어 당해세가 담보물권보다 우선 배당될 수 있습니다(교부청구액 확인 필요). 위 표에는 미반영.' : ''}
+    </div>
+  </div>` : '';
+
+  return scenarioCard + nplCard + oursCard + distCard;
 }
 
 // ============================================================
@@ -3661,7 +3880,7 @@ function renderRights() {
           }).join('')}
         </tbody>
       </table>`}
-      <div class="text-small text-muted no-print" style="margin-top:10px;">※ 당사가 보유(매입)한 NPL 근저당권을 <strong>당사근저당</strong>에 체크하면, 아래 <strong>NPL 담보여력 분석</strong>에서 해당 채권의 순위와 회수 가능 여부(1순위면 전액 회수 가능 등)가 자동으로 표시됩니다.</div>
+      <div class="text-small text-muted no-print" style="margin-top:10px;">※ 당사가 보유(매입)한 NPL 근저당권을 <strong>당사근저당</strong>에 체크하면(<strong>여러 건 선택 가능</strong>), 아래 <strong>NPL 담보여력 분석</strong>·<strong>예상 배당표</strong>에서 해당 채권들의 순위와 회수 가능 여부·시나리오별 회수액이 자동으로 표시됩니다.</div>
     </div>
 
     ${renderScenarioAndNPL(p, auctions, state.rights[p.id] || [])}
@@ -3903,7 +4122,10 @@ function renderReport() {
   const _be = (typeof window.resolveBidEstimate === 'function') ? window.resolveBidEstimate(p.id) : null;
   const _finalBid = _be ? _be.finalBid : (_cas && ap.value ? Math.round(ap.value * _cas.center / 100) : null);
   const _decLabel = _be ? _be.decisionLabel : 'AI안';
-  const _finalDist = _finalBid != null ? Math.max(0, _finalBid - ra.assumedTotal) : null;
+  // 실제배당할금액(최종채택) = 낙찰가 + 전경매보증금 − 경매비용 (인수금액 차감하지 않음)
+  const _fCost = (sc.auctionCost != null && !isNaN(sc.auctionCost)) ? Number(sc.auctionCost) : 0;
+  const _fDep = (sc.prevDeposit != null && !isNaN(sc.prevDeposit)) ? Number(sc.prevDeposit) : 0;
+  const _finalDist = _finalBid != null ? Math.max(0, _finalBid + _fDep - _fCost) : null;
   const _finalRecovery = (_finalDist != null && ra.seniorClaim) ? Math.min(100, _finalDist / ra.seniorClaim * 100) : null;
   // 담당자 의견 (07 모듈 — 채택가 + 채택 사유)
   const _op = (state.opinion && state.opinion[p.id]) || {};
@@ -3919,8 +4141,24 @@ function renderReport() {
   const _agg = _cas ? _cas.scenarios.agg : (sc.agg != null ? sc.agg : 100);
   const _bid = (rate) => ap.value ? Math.round(ap.value * rate / 100) : null;
   const _midBid = _bid(_mid);
-  const _distributable = _midBid != null ? Math.max(0, _midBid - ra.assumedTotal) : null;
+  // AM 의견 낙찰가율(담당자안 낙찰가율과 동일 필드) + 경매비용/전경매보증금 (옥션원 방식)
+  const _amRate = (sc.mgrBidRate != null && !isNaN(sc.mgrBidRate)) ? Number(sc.mgrBidRate) : _mid;
+  const _amBid = _bid(_amRate);
+  const _distCost = (sc.auctionCost != null && !isNaN(sc.auctionCost)) ? Number(sc.auctionCost) : 0;
+  const _prevDeposit = (sc.prevDeposit != null && !isNaN(sc.prevDeposit)) ? Number(sc.prevDeposit) : 0;
+  const _distOpts = { cost: _distCost, prevDeposit: _prevDeposit };
+  const _distributable = _midBid != null ? Math.max(0, _midBid + _prevDeposit - _distCost) : null;
   const _recovery = (_distributable != null && ra.seniorClaim) ? Math.min(100, _distributable / ra.seniorClaim * 100) : null;
+  // 예상 배당표 — 화면과 동일 로직. 리포트는 4개 시나리오 각각의 상세표를 수록.
+  const _rItems = (typeof _distributionItems === 'function') ? _distributionItems(ra.classified) : [];
+  const _rScen = [
+    { label: '보수', color: '#a8884a', bid: _bid(_con), rate: _con },
+    { label: '중립', color: '#1e2a44', bid: _midBid, rate: _mid },
+    { label: '적극', color: '#2d5a3d', bid: _bid(_agg), rate: _agg },
+    { label: 'AM 의견', color: '#CC00CC', bid: _amBid, rate: _amRate },
+  ];
+  const _rCmp = _rScen.map(s => ({ ...s, d: computeDistribution(ra.classified, s.bid, _distOpts) }));
+  const _rHasOurs = _rCmp.length && _rCmp[0].d.oursClaim > 0;
 
   c.innerHTML = `
     <div class="page-head" style="display: flex; justify-content: space-between; align-items: flex-end; gap: 16px;">
@@ -3987,6 +4225,7 @@ function renderReport() {
         <tr><td>보수</td><td class="num">${_con}%</td><td class="price">${fmt.won(_bid(_con))}</td></tr>
         <tr><td>중립</td><td class="num">${_mid}%</td><td class="price text-accent">${fmt.won(_midBid)}</td></tr>
         <tr><td>적극</td><td class="num">${_agg}%</td><td class="price">${fmt.won(_bid(_agg))}</td></tr>
+        <tr><td>AM 의견</td><td class="num">${_amRate}%</td><td class="price">${fmt.won(_amBid)}</td></tr>
       </tbody>
     </table>
     <div class="info-row"><div class="info-label">기준 감정가</div><div class="info-value mono">${fmt.won(ap.value)} <span class="text-muted text-small">(${ap.source})</span></div></div>
@@ -4011,6 +4250,23 @@ function renderReport() {
     <div class="info-row"><div class="info-label">기준시세</div><div class="info-value mono">${fmt.won(_be.baseAi)} <span class="text-muted text-small">(${ap.source || ''})</span></div></div>
     ${ra.seniorClaim ? `<div class="info-row"><div class="info-label">최종 기준 1순위 회수율</div><div class="info-value mono text-accent">${_finalRecovery != null ? _finalRecovery.toFixed(1) + '%' : '-'}</div></div>` : ''}
     <div class="text-small text-muted" style="margin-top:6px;">※ 담당자안 보정값 — 단지외부 ${_be.mExt.toFixed(2)} · 단지내부 ${_be.mInt.toFixed(2)} · 호별 ${_be.mHo.toFixed(2)} · 기타 ${_be.mEtc.toFixed(2)} · 낙찰가율 ${_be.mRatePct}%. (05 추정낙찰가 탭에서 조정)</div>
+    ` : ''}
+
+    ${(ap.value && _rItems.length) ? `
+    <div class="section-h">3-3. 예상 배당표 (가배당 · 중립 시나리오)</div>
+    ${distributionTableHTML(ra, _midBid, _distOpts, { label: '중립', badgeColor: '#1e2a44' })}
+    ${_rHasOurs ? `
+    <div class="text-small" style="margin-top:12px;margin-bottom:4px;font-weight:700;">시나리오별 당사 회수 비교</div>
+    <table class="tbl mb-16">
+      <thead><tr><th>구분</th>${_rScen.map(s => `<th class="text-right">${s.label} ${s.rate}%</th>`).join('')}</tr></thead>
+      <tbody>
+        <tr><td>예상 낙찰가</td>${_rCmp.map(s => `<td class="price">${fmt.won(s.bid)}</td>`).join('')}</tr>
+        <tr><td>실제 배당할 금액</td>${_rCmp.map(s => `<td class="price">${fmt.won(s.d.pool0)}</td>`).join('')}</tr>
+        <tr><td>당사 회수액</td>${_rCmp.map(s => `<td class="price">${fmt.won(s.d.oursAlloc)}</td>`).join('')}</tr>
+        <tr><td>당사 회수율</td>${_rCmp.map(s => `<td class="num">${s.d.oursRate != null ? s.d.oursRate.toFixed(1) + '%' : '-'}</td>`).join('')}</tr>
+      </tbody>
+    </table>` : ''}
+    <div class="text-small text-muted" style="margin-top:6px;line-height:1.6;">※ 대표 등기부·매각물건명세서 기준 참고용 예상 배당표(가배당). 담보물권 설정일(등기순위) 순 배당이며 최우선변제·당해세·안분배당·경매비용(입력분 제외)은 미반영, 채권액은 채권최고액 기준. 인수금액은 배당재원에서 차감하지 않고 매수인 인수금액으로 별도 표기. 실제 배당과 다를 수 있음.${ra.hasTaxLien ? ' 당해세 우선배당 리스크 있음(교부청구액 확인 필요).' : ''}</div>
     ` : ''}
 
     ${rights.length > 0 ? `
@@ -4159,33 +4415,74 @@ function _mapUseFromRegistry(prop) {
   return '';  // 불명확 → 수동 선택
 }
 
+// 등기부 분석 결과 → 물건 폼 필드 객체 (모달 자동입력·대량등록 공용)
+// DOM에 의존하지 않는 순수 매핑이라 모달 폼과 대량등록 파이프라인이 동일 규칙을 공유한다.
+function buildPropertyFieldsFromRegistry(a) {
+  const f = {};
+  const set = (k, v) => { if (v != null && v !== '') f[k] = v; };
+  if (a && a.property) {
+    const p = a.property;
+    set('name', p.complex_name);
+    set('addrRoad', p.address_road);
+    set('addrLot', p.address_lot);
+    set('building', p.dong);
+    set('unit', p.ho);
+    set('exclusiveArea', p.exclusive_area_sqm);
+    set('landShare', p.land_share_sqm);
+    set('floor', p.floor);
+    set('totalFloors', p.total_floors);
+    set('completionDate', p.registration_date);
+    set('usage', p.main_use);
+    // 등기 건물유형 → 용도 드롭다운 값 (유형별 거래사례 수집 트리거)
+    const _mappedUse = _mapUseFromRegistry(p);
+    if (_mappedUse) f.use = _mappedUse;
+  }
+  if (a && a.ownership) {
+    set('owner', a.ownership.current_owner);
+    set('acquisitionDate', a.ownership.acquisition_date);
+  }
+  return f;
+}
+
+// 등기부 분석 결과 → 06 권리분석 항목 배열 (모달 저장·대량등록 공용)
+function buildRightsFromRegistry(a) {
+  if (!a || !a.rights_timeline) return [];
+  return a.rights_timeline
+    .filter(r => !r.is_cancelled && r.amount)
+    .map(r => ({
+      id: uid(),
+      type: r.type.includes('근저당') ? '근저당권' : r.type.includes('가압류') ? '가압류' : r.type.includes('임차') ? '임차권' : r.type,
+      date: r.date,
+      holder: r.creditor_or_holder,
+      amount: Math.round(r.amount / 10000),
+      assumed: 'false',
+      memo: r.description || ''
+    }));
+}
+
+// 등기부 분석 결과 → 메모 요약 문자열 (말소기준권리·임차인·경매)
+function buildNotesFromRegistry(a) {
+  const notes = [];
+  const baseline = a && a.analysis && a.analysis.baseline_right;
+  const tenant = a && a.analysis && a.analysis.tenant_analysis;
+  const auction = a && a.analysis && a.analysis.auction_status;
+  if (baseline) notes.push(`[말소기준권리] ${baseline.type} - ${baseline.holder} (${baseline.date})`);
+  if (tenant && tenant.has_tenant) {
+    notes.push(`[임차인] ${tenant.tenant_name || '-'} 보증금 ${tenant.deposit ? Math.round(tenant.deposit / 10000).toLocaleString() + '만원' : '-'} / 대항력 ${tenant.has_opposing_power ? 'O' : 'X'} / 인수 ${tenant.is_accepted_by_buyer ? '⚠O' : 'X'}`);
+  }
+  if (auction && auction.is_under_auction) notes.push(`[경매] ${auction.auction_type} ${auction.case_number} (${auction.court})`);
+  return notes.join('\n');
+}
+
 function applyRegistryToModalForm(a) {
   const form = document.getElementById('propertyForm');
   if (!form) return;
   const setIf = (k, v) => { if (form.elements[k] && v != null && v !== '') form.elements[k].value = v; };
-  
-  if (a.property) {
-    setIf('name', a.property.complex_name);
-    setIf('addrRoad', a.property.address_road);
-    setIf('addrLot', a.property.address_lot);
-    setIf('building', a.property.dong);
-    setIf('unit', a.property.ho);
-    setIf('exclusiveArea', a.property.exclusive_area_sqm);
-    setIf('landShare', a.property.land_share_sqm);
-    setIf('floor', a.property.floor);
-    setIf('totalFloors', a.property.total_floors);
-    setIf('completionDate', a.property.registration_date);
-    setIf('usage', a.property.main_use);
-    // 등기 건물유형 → 용도 드롭다운 자동 선택 (유형별 거래사례 수집 트리거)
-    const _mappedUse = _mapUseFromRegistry(a.property);
-    if (_mappedUse && form.elements['use']) form.elements['use'].value = _mappedUse;
-  }
-  
-  if (a.ownership) {
-    setIf('owner', a.ownership.current_owner);
-    setIf('acquisitionDate', a.ownership.acquisition_date);
-  }
-  
+
+  // 공용 매퍼로 폼 필드 채우기 (모달·대량등록 동일 규칙)
+  const _fields = buildPropertyFieldsFromRegistry(a);
+  Object.keys(_fields).forEach(k => setIf(k, _fields[k]));
+
   // ── 건축물대장 정보 + 거래사례 자동연동 ──────────────────────
   // 등기부 PDF에는 세대수·시공사·시행사·공급면적이 없고(건축물대장 소관),
   // 거래사례 자동수집에 필요한 시군구코드·지번도 없다.
@@ -4194,18 +4491,10 @@ function applyRegistryToModalForm(a) {
 
   // 메모에 핵심 요약 추가
   if (form.elements.notes) {
-    const baseline = a.analysis?.baseline_right;
-    const tenant = a.analysis?.tenant_analysis;
-    const auction = a.analysis?.auction_status;
-    const notes = [];
-    if (baseline) notes.push(`[말소기준권리] ${baseline.type} - ${baseline.holder} (${baseline.date})`);
-    if (tenant?.has_tenant) {
-      notes.push(`[임차인] ${tenant.tenant_name || '-'} 보증금 ${tenant.deposit ? Math.round(tenant.deposit/10000).toLocaleString()+'만원' : '-'} / 대항력 ${tenant.has_opposing_power ? 'O' : 'X'} / 인수 ${tenant.is_accepted_by_buyer ? '⚠O' : 'X'}`);
-    }
-    if (auction?.is_under_auction) notes.push(`[경매] ${auction.auction_type} ${auction.case_number} (${auction.court})`);
-    if (notes.length > 0) {
+    const summary = buildNotesFromRegistry(a);
+    if (summary) {
       const existing = form.elements.notes.value || '';
-      form.elements.notes.value = notes.join('\n') + (existing ? '\n\n' + existing : '');
+      form.elements.notes.value = summary + (existing ? '\n\n' + existing : '');
     }
   }
 
@@ -4484,8 +4773,11 @@ function _extractRoadName(addrRoad) {
   return m ? m[1] : '';
 }
 async function autoFetchComparables(propertyId, propertyData, ctx) {
+  // 대량등록(ctx.silent) 시에는 중앙 진행 팝업을 띄우지 않는다 (대량등록 모달의 자체 진행표 사용)
+  const _silent = !!(ctx && ctx.silent);
   // ── 진행률 막대 (화면 하단 고정) ───────────────────────────
   function _prog(pct, msg) {
+    if (_silent) return;
     if (!document.getElementById('autoProgressKeyframes')) {
       const st = document.createElement('style');
       st.id = 'autoProgressKeyframes';
@@ -5674,19 +5966,7 @@ document.getElementById('propertyForm').addEventListener('submit', async (e) => 
   // 등기부 PDF 분석 결과의 권리관계를 06 권리분석에 자동 등록
   if (_pendingRegistryAnalysis && _pendingRegistryAnalysis.rights_timeline) {
     if (!state.rights[id]) state.rights[id] = [];
-    _pendingRegistryAnalysis.rights_timeline
-      .filter(r => !r.is_cancelled && r.amount)
-      .forEach(r => {
-        state.rights[id].push({
-          id: uid(),
-          type: r.type.includes('근저당') ? '근저당권' : r.type.includes('가압류') ? '가압류' : r.type.includes('임차') ? '임차권' : r.type,
-          date: r.date,
-          holder: r.creditor_or_holder,
-          amount: Math.round(r.amount / 10000),
-          assumed: 'false',
-          memo: r.description || ''
-        });
-      });
+    buildRightsFromRegistry(_pendingRegistryAnalysis).forEach(r => state.rights[id].push(r));
     _pendingRegistryAnalysis = null;
   }
   // 거래사례 자동수집에 필요한 값 스냅샷 (closePropertyModal이 전역을 초기화하므로 미리 보관)
@@ -5736,6 +6016,367 @@ document.getElementById('propertyForm').addEventListener('submit', async (e) => 
     showToast(`✅ 물건검색 완료 — ${_regTag}거래사례 ${result.total}건 확인 (중복 제외, 신규 0건)`, 'info', 4000);
   }
 });
+
+// ============================================================
+// 등기부 대량 등록 (MVP): 여러 PDF → 파일별 [AI 권리분석 → 물건 등록 → 실거래 자동수집]
+// 국토부 API 한도 보호를 위해 순차 처리. 등록·수집은 자동, 리포트는 사용자가 물건별로 확인 후 저장.
+// ============================================================
+let _bulkItems = [];      // { file, name, status, detail, added }
+let _bulkRunning = false;
+
+function openBulkModal() {
+  if (_bulkRunning) { document.getElementById('bulkModal').classList.add('show'); return; }
+  _bulkItems = [];
+  renderBulkList();
+  const start = document.getElementById('bulkStartBtn');
+  if (start) start.disabled = true;
+  document.getElementById('bulkModal').classList.add('show');
+}
+window.openBulkModal = openBulkModal;
+
+function closeBulkModal() {
+  if (_bulkRunning) {
+    if (!confirm('아직 처리 중입니다. 창을 닫아도 남은 파일 등록은 백그라운드로 계속됩니다. 닫으시겠습니까?')) return;
+  }
+  document.getElementById('bulkModal').classList.remove('show');
+}
+window.closeBulkModal = closeBulkModal;
+
+function handleBulkDrop(event) {
+  if (event.dataTransfer && event.dataTransfer.files.length > 0) addBulkFiles(event.dataTransfer.files);
+}
+function handleBulkFileSelect(event) {
+  if (event.target.files.length > 0) addBulkFiles(event.target.files);
+  event.target.value = '';  // 같은 파일 재선택 허용
+}
+
+function addBulkFiles(fileList) {
+  if (_bulkRunning) return;
+  let skipped = 0;
+  Array.from(fileList).forEach(file => {
+    const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+    if (!isPdf) { skipped++; return; }
+    if (file.size > 10 * 1024 * 1024) { skipped++; return; }
+    // 이름+크기로 중복 방지
+    if (_bulkItems.some(it => it.file.name === file.name && it.file.size === file.size)) return;
+    _bulkItems.push({ file, name: file.name, status: '대기', detail: '', added: null });
+  });
+  if (skipped > 0) showToast(`⚠️ PDF가 아니거나 10MB 초과 파일 ${skipped}개는 제외했습니다.`, 'warn', 4000);
+  renderBulkList();
+  const start = document.getElementById('bulkStartBtn');
+  if (start) start.disabled = _bulkItems.length === 0;
+}
+
+function _bulkStatusStyle(status) {
+  switch (status) {
+    case '완료': return 'background:#eef6ee;color:#065f46;';
+    case '실패': return 'background:#fee2e2;color:#7f1d1d;';
+    case '건너뜀': return 'background:#fff7ed;color:#9a3412;';
+    case '분석중':
+    case '수집중': return 'background:var(--kiwoom-navy-soft);color:var(--kiwoom-navy);';
+    default: return 'background:#f1f3f8;color:#6b7280;';
+  }
+}
+
+function renderBulkList() {
+  const c = document.getElementById('bulkList');
+  if (!c) return;
+  if (_bulkItems.length === 0) {
+    c.innerHTML = '<div class="empty text-small" style="padding:16px 8px;text-align:center;color:var(--ink-muted);">선택된 파일이 없습니다. 위 영역에 PDF를 올려주세요.</div>';
+    return;
+  }
+  const done = _bulkItems.filter(it => it.status === '완료' || it.status === '실패' || it.status === '건너뜀').length;
+  const rows = _bulkItems.map((it, i) => {
+    const detail = it.detail ? `<div style="font-size:11px;color:var(--ink-soft);margin-top:2px;">${it.detail}</div>` : '';
+    return `<tr style="border-top:1px solid var(--line);">
+      <td style="padding:8px 6px;font-size:12px;color:var(--ink-muted);vertical-align:top;">${i + 1}</td>
+      <td style="padding:8px 6px;vertical-align:top;">
+        <div style="font-size:12px;font-weight:600;color:var(--ink);word-break:break-all;">${it.name}</div>${detail}
+      </td>
+      <td style="padding:8px 6px;text-align:right;vertical-align:top;white-space:nowrap;">
+        <span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;${_bulkStatusStyle(it.status)}">${it.status}</span>
+      </td>
+    </tr>`;
+  }).join('');
+  c.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+      <div style="font-size:11px;font-weight:700;color:var(--kiwoom-navy);letter-spacing:0.04em;">처리 대상 ${_bulkItems.length}개 · 완료 ${done}/${_bulkItems.length}</div>
+    </div>
+    <div style="max-height:320px;overflow-y:auto;border:1px solid var(--line);border-radius:6px;">
+      <table style="width:100%;border-collapse:collapse;">
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+// 등기부 단지명/도로명으로 K-apt를 조회해 시군구코드(bjd_code)·지번 본번을 best-effort로 확보.
+// 실패해도 autoFetchComparables가 주소에서 시군구코드를 보충하므로 수집은 계속된다.
+async function _bulkResolveLawd(a) {
+  const out = {};
+  try {
+    const p = (a && a.property) || {};
+    const lotNums = String(p.address_lot || '').match(/\d+(?:-\d+)?/g);
+    if (lotNums) out.bun = lotNums[lotNums.length - 1].split('-')[0];
+    const norm = s => (s || '').replace(/\s/g, '');
+    const name = (p.complex_name || '').trim();
+    let items = [];
+    if (name) {
+      const r = await fetch(`${BACKEND_URL}/api/search/apt?q=${encodeURIComponent(name)}&limit=30`);
+      const d = await r.json();
+      items = (d && d.items) ? d.items.map(it => ({ ...it, name: it.name || it.kapt_name || '' })) : [];
+    }
+    if (items.length === 0 && p.address_road) {
+      const roadQ = _extractRoadCore(p.address_road);
+      if (roadQ) {
+        const r2 = await fetch(`${BACKEND_URL}/api/search/apt?q=${encodeURIComponent(roadQ)}&limit=30`);
+        const d2 = await r2.json();
+        items = (d2 && d2.items) ? d2.items.map(it => ({ ...it, name: it.name || it.kapt_name || '' })) : [];
+      }
+    }
+    let chosen = null;
+    if (items.length === 1) {
+      chosen = items[0];
+    } else if (items.length > 1) {
+      const pdfRoad = norm(p.address_road), pdfLot = norm(p.address_lot);
+      const scored = items.map(it => {
+        const cRoad = norm(it.addr_road), cLot = norm(it.addr_lot);
+        let s = 0;
+        if (pdfRoad && cRoad && (cRoad.includes(pdfRoad) || pdfRoad.includes(cRoad))) s += 2;
+        if (pdfLot && cLot && (cLot.includes(pdfLot) || pdfLot.includes(cLot))) s += 2;
+        return { it, s };
+      }).sort((x, y) => y.s - x.s);
+      const top = scored[0];
+      if (top.s >= 2 && scored.filter(x => x.s === top.s).length === 1) chosen = top.it;
+    }
+    if (chosen && chosen.bjd_code) out.lawdCd = String(chosen.bjd_code).slice(0, 5);
+  } catch (e) { /* best-effort: 무시 */ }
+  return out;
+}
+
+const _BULK_NUMERIC = ['exclusiveArea', 'supplyArea', 'commonArea', 'landShare', 'floor', 'totalFloors', 'totalUnits', 'publicPrice'];
+const _sleep = ms => new Promise(res => setTimeout(res, ms));
+
+async function startBulkRegistry() {
+  if (_bulkRunning) return;
+  const pending = _bulkItems.filter(it => it.status === '대기');
+  if (pending.length === 0) { showToast('처리할 대기 파일이 없습니다.', 'info', 3000); return; }
+
+  _bulkRunning = true;
+  const startBtn = document.getElementById('bulkStartBtn');
+  const zone = document.getElementById('bulkUploadZone');
+  const fileInput = document.getElementById('bulkFileInput');
+  if (startBtn) { startBtn.disabled = true; startBtn.textContent = '처리 중...'; }
+  if (zone) zone.style.pointerEvents = 'none';
+  if (fileInput) fileInput.disabled = true;
+
+  let okCount = 0, failCount = 0, firstNewId = null;
+
+  for (const item of pending) {
+    // 1) AI 권리분석
+    item.status = '분석중'; item.detail = 'Claude AI 등기부 분석 중...'; renderBulkList();
+    let analysis = null;
+    try {
+      const fd = new FormData();
+      fd.append('pdf', item.file);
+      const resp = await fetch(`${BACKEND_URL}/api/analyze-registry`, { method: 'POST', body: fd });
+      let data;
+      try { data = await resp.json(); }
+      catch (e) { throw new Error('서버 응답 파싱 실패 (타임아웃 가능성)'); }
+      if (!data.success) throw new Error(data.error || '분석 실패');
+      analysis = data.analysis;
+    } catch (err) {
+      item.status = '실패'; item.detail = '분석 실패: ' + (err.message || err); failCount++; renderBulkList();
+      await _sleep(600);
+      continue;
+    }
+
+    // 2) 물건 객체 생성 + 등록
+    const fields = buildPropertyFieldsFromRegistry(analysis);
+    _BULK_NUMERIC.forEach(k => { if (fields[k] != null && fields[k] !== '') fields[k] = Number(fields[k]); });
+    const notes = buildNotesFromRegistry(analysis);
+    if (notes) fields.notes = notes;
+    const id = uid();
+    const property = { id, ...fields };
+    state.properties[id] = property;
+    if (!state.comparables[id]) state.comparables[id] = [];
+    if (!state.auctions[id]) state.auctions[id] = [];
+    state.rights[id] = buildRightsFromRegistry(analysis);
+    if (!firstNewId) firstNewId = id;
+
+    const _loc = `${property.name || '단지 미상'} ${property.building || ''} ${property.unit || ''}`.trim();
+    item.detail = _loc + ' · 실거래 수집 중...';
+    item.status = '수집중'; renderBulkList();
+
+    await saveState();
+    renderPropertyList();
+
+    // 3) 실거래 자동수집 (silent — 대량등록 진행표만 사용)
+    let result = { skipped: true, reason: '알 수 없음' };
+    try {
+      const ctx = await _bulkResolveLawd(analysis);
+      ctx.silent = true; ctx.hadRegistry = true;
+      result = await autoFetchComparables(id, property, ctx);
+    } catch (err) {
+      result = { error: (err && err.message) || String(err) };
+    }
+
+    // 4) 결과 반영
+    const rightsN = state.rights[id].length;
+    const rightsTxt = rightsN > 0 ? ` · 권리 ${rightsN}건` : '';
+    if (result.error) {
+      item.status = '완료'; item.added = 0;
+      item.detail = `${_loc} · ⚠️ 등록됨(거래사례 수집 실패: ${result.error})${rightsTxt}`;
+    } else if (result.skipped) {
+      item.status = '완료'; item.added = 0;
+      item.detail = `${_loc} · 등록됨(거래사례 건너뜀: ${result.reason || '-'})${rightsTxt}`;
+    } else if (result.added > 0) {
+      item.status = '완료'; item.added = result.added;
+      const warn = result.crossUnverified ? ' ⚠️미검증' : '';
+      item.detail = `${_loc} · 거래사례 ${result.added}건 수집${warn}${rightsTxt}`;
+    } else {
+      item.status = '완료'; item.added = 0;
+      item.detail = `${_loc} · 등록됨(신규 거래사례 없음)${rightsTxt}`;
+    }
+    okCount++;
+    renderBulkList();
+
+    await saveState();
+    await _sleep(900);  // 국토부 API 한도 완화용 파일 간 간격
+  }
+
+  _bulkRunning = false;
+  if (startBtn) { startBtn.textContent = '등록 시작'; startBtn.disabled = _bulkItems.filter(it => it.status === '대기').length === 0; }
+  if (zone) zone.style.pointerEvents = '';
+  if (fileInput) fileInput.disabled = false;
+
+  // 첫 등록 물건 선택 후 화면 갱신
+  if (firstNewId) {
+    state.currentPropertyId = firstNewId;
+    await saveState();
+    renderPropertyList();
+    if (typeof renderView === 'function') renderView();
+  }
+  showToast(`📚 <strong>대량 등록 완료</strong> — 성공 ${okCount}건, 실패 ${failCount}건<br><span style="font-size:11px;opacity:0.9;">각 물건을 열어 리포트를 확인·저장하세요.</span>`, failCount > 0 ? 'warn' : 'success', 6500);
+}
+window.startBulkRegistry = startBulkRegistry;
+
+// ============================================================
+// 리포트 일괄 다운로드 (ZIP): 등록된 물건들의 리포트 PDF를 서버에서 묶어 한 번에 저장
+// 물건마다 [실측 낙찰가율 프리페치 → 리포트 렌더 → sections 추출] 후 /api/report/pdf-bulk 로 전송.
+// ============================================================
+let _zipRunning = false;
+
+function _zipProgressOverlay() {
+  if (!document.getElementById('zipProgKeyframes')) {
+    const st = document.createElement('style');
+    st.id = 'zipProgKeyframes';
+    st.textContent = '@keyframes zipprog-spin{to{transform:rotate(360deg);}}';
+    document.head.appendChild(st);
+  }
+  let box = document.getElementById('zipProgress');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'zipProgress';
+    box.style.cssText = 'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(440px,92vw);background:#fff;border:1px solid #dde3ee;border-radius:10px;box-shadow:0 6px 24px rgba(0,22,77,0.18);padding:14px 18px;z-index:10002;font-family:Pretendard,sans-serif;';
+    box.innerHTML = '<div style="font-size:11px;font-weight:700;color:#011F8E;letter-spacing:0.04em;margin-bottom:10px;border-bottom:1px solid #eef1f7;padding-bottom:8px;">📦 리포트 일괄 저장 (ZIP)</div>'
+      + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">'
+      + '<span style="width:14px;height:14px;border:2px solid #E6EAF5;border-top-color:#011F8E;border-radius:50%;display:inline-block;animation:zipprog-spin 1s linear infinite;"></span>'
+      + '<span id="zipProgressMsg" style="font-size:12px;font-weight:600;color:#011F8E;"></span>'
+      + '<span id="zipProgressPct" style="margin-left:auto;font-family:monospace;font-size:12px;color:#8892A6;"></span></div>'
+      + '<div style="height:8px;background:#eef1f7;border-radius:6px;overflow:hidden;">'
+      + '<div id="zipProgressBar" style="height:100%;width:0%;background:linear-gradient(90deg,#011F8E,#2A4FBE);border-radius:6px;transition:width .4s ease;"></div></div>';
+    document.body.appendChild(box);
+  }
+  return {
+    update(pct, msg) {
+      const v = Math.max(0, Math.min(100, pct));
+      const m = document.getElementById('zipProgressMsg');
+      const pc = document.getElementById('zipProgressPct');
+      const bar = document.getElementById('zipProgressBar');
+      if (m) m.textContent = msg || '';
+      if (pc) pc.textContent = Math.round(v) + '%';
+      if (bar) bar.style.width = v + '%';
+    },
+    done() {
+      const b = document.getElementById('zipProgress');
+      if (b) { b.style.transition = 'opacity .3s'; b.style.opacity = '0'; setTimeout(() => b.remove(), 300); }
+    }
+  };
+}
+
+async function downloadAllReportsZip(ids) {
+  if (_zipRunning) return;
+  const allIds = (ids && ids.length) ? ids : Object.keys(state.properties);
+  const targets = allIds.filter(id => state.properties[id]);
+  if (targets.length === 0) { showToast('등록된 물건이 없습니다.', 'info', 3000); return; }
+
+  _zipRunning = true;
+  const prevId = state.currentPropertyId;
+  const prevView = state.currentView;
+  const overlay = _zipProgressOverlay();
+  const reports = [];
+  const usedNames = {};
+
+  try {
+    for (let i = 0; i < targets.length; i++) {
+      const id = targets[i];
+      const p = state.properties[id];
+      overlay.update(Math.round((i / targets.length) * 90), `리포트 생성 중 (${i + 1}/${targets.length}) — ${p.name || '무제'}`);
+      state.currentPropertyId = id;
+      state.currentView = 'report';
+      // 실측 낙찰가율 프리페치 (단건 리포트와 동일한 정확도로 렌더). 지역별 캐시라 반복 시 저렴.
+      try { if (typeof prefetchRealRates === 'function') await prefetchRealRates(p); } catch (e) { /* 폴백 계수 사용 */ }
+      try {
+        renderReport();
+      } catch (e) {
+        console.warn('[ZIP] 리포트 렌더 실패:', p.name, e);
+        continue;
+      }
+      await _sleep(0);  // DOM 반영 후 추출
+      const data = buildReportPdfDataFromDOM();
+      // 파일명: 단지명 + 동호 (금지문자 제거, 중복 방지)
+      const safe = s => String(s || '').replace(/[\\/:*?"<>|]/g, '').trim();
+      let base = '자산분석리포트_' + (safe(p.name) || 'report');
+      const loc = [safe(p.building), safe(p.unit)].filter(Boolean).join('');
+      if (loc) base += '_' + loc;
+      let fname = base + '.pdf';
+      let n = 2;
+      while (usedNames[fname]) { fname = `${base}(${n}).pdf`; n++; }
+      usedNames[fname] = true;
+      reports.push({ filename: fname, data });
+    }
+
+    if (reports.length === 0) throw new Error('생성할 리포트가 없습니다.');
+
+    overlay.update(94, `서버에서 ZIP으로 묶는 중... (${reports.length}건)`);
+    const r = await fetch(`${BACKEND_URL}/api/report/pdf-bulk`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reports }),
+    });
+    if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error || ('HTTP ' + r.status)); }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const today = new Date().toISOString().slice(0, 10);
+    a.href = url;
+    a.download = `자산분석리포트_${reports.length}건_${today}.zip`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 8000);
+    overlay.update(100, '완료');
+    showToast(`📦 <strong>리포트 ZIP 저장 완료</strong> — ${reports.length}건`, 'success', 5000);
+  } catch (e) {
+    showToast('리포트 ZIP 생성 실패: ' + (e.message || e), 'error', 6000);
+  } finally {
+    overlay.done();
+    _zipRunning = false;
+    // 화면 원복 (리포트 렌더로 바뀐 뷰를 사용자가 보던 상태로 복구)
+    state.currentPropertyId = prevId;
+    state.currentView = prevView;
+    if (typeof renderView === 'function') renderView();
+  }
+}
+window.downloadAllReportsZip = downloadAllReportsZip;
 
 document.getElementById('deletePropertyBtn').addEventListener('click', async () => {
   if (!confirm('이 물건과 관련된 모든 거래사례·경매·권리 데이터가 함께 삭제됩니다. 계속하시겠습니까?')) return;
