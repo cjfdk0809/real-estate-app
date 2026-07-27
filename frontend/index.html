@@ -858,6 +858,9 @@ table { border-collapse: collapse; width: 100%; }
 .map-lbl::before { display: none; }  /* Leaflet 툴팁 화살표 제거 */
 .map-lbl-origin { color: #E6007E; border-color: #E6007E; }
 .map-lbl-same { color: #CC00CC; border-color: #CC00CC; }
+.map-lbl-num { min-width: 18px; text-align: center; padding: 0 4px; border-radius: 9px;
+  background: var(--kiwoom-navy, #1A2540); color: #fff; border-color: var(--kiwoom-navy, #1A2540); }
+.map-lbl-num.map-lbl-same { background: #CC00CC; border-color: #CC00CC; color: #fff; }
 </style>
 <script src="/kfi_trade_collector.js?v=20260723d"></script>
 <script src="/auction_rates.js?v=20260723d"></script>
@@ -2301,9 +2304,10 @@ function renderComparables() {
         return `
       <table class="tbl">
         <thead><tr>
+          <th style="text-align:center;">No.</th>
           <th style="text-align:center;">거래일</th><th style="text-align:center;">유형</th><th style="text-align:center;">단지</th><th style="text-align:center;">동·호</th>
           <th style="text-align:center;">전용면적</th><th style="text-align:center;">층</th>
-          <th style="text-align:center;">금액 / 월세</th><th style="text-align:center;">평당가</th><th style="text-align:center;">비고</th><th class="no-print"></th>
+          <th style="text-align:center;">금액 / 월세</th><th style="text-align:center;">평당가</th><th style="text-align:left;">비고</th><th class="no-print"></th>
         </tr></thead>
         <tbody>
           ${compsFiltered.map((x, i) => {
@@ -2314,6 +2318,7 @@ function renderComparables() {
             const sameDanji = oName && x.name === oName;
             const nameStyle = sameDanji ? ' style="color:var(--kiwoom-pink-deep,#CC00CC);font-weight:700;"' : '';
             return `<tr data-cidx="${i}" onclick="focusCompCase(${i})" style="cursor:pointer;" title="지도에서 이 거래 위치로 이동">
+              <td class="num" style="text-align:center;font-weight:700;color:var(--kiwoom-navy);">${i + 1}</td>
               <td class="num" style="text-align:center;">${fmt.date(x.date)}</td>
               <td style="text-align:center;"><span class="badge badge-${x.type}">${x.type}</span></td>
               <td style="text-align:center;"${nameStyle}>${x.name}</td>
@@ -2322,7 +2327,7 @@ function renderComparables() {
               <td class="num" style="text-align:center;">${x.floor || '-'}</td>
               <td class="price" style="text-align:center;">${priceCell}</td>
               <td class="num text-small" style="text-align:center;">${pyongPrice ? pyongPrice.toLocaleString() + '만/평' : '-'}</td>
-              <td class="text-small text-muted" style="text-align:center;">${x.memo || ''}</td>
+              <td class="text-small text-muted" style="text-align:left;">${x.memo || ''}</td>
               <td class="no-print" style="text-align:center;" onclick="event.stopPropagation();"><span class="tbl-action" onclick="editComparable('${x.id}')">편집</span><span class="tbl-action" onclick="deleteComparable('${x.id}')">삭제</span></td>
             </tr>`;
           }).join('')}
@@ -2330,7 +2335,7 @@ function renderComparables() {
       </table>`;
       })()}
       ${compsFiltered.length ? `
-      <div id="compMapNote" class="text-small text-muted" style="margin-top:12px;">🗺️ <span style="color:#E6007E;font-weight:700;">본건(분홍)</span> · <span style="color:var(--kiwoom-pink-deep,#CC00CC);font-weight:700;">본건 단지(자주)</span> · <span style="color:#1A2540;">타 단지(네이비)</span> — <strong>매매 거래만</strong> 표시합니다(경매 낙찰가 추정용). 표의 <strong>매매 행을 클릭</strong>하면 지도가 그 위치로 이동, 마커 클릭 시 <strong>네이버 지도로 이동</strong>합니다.</div>
+      <div id="compMapNote" class="text-small text-muted" style="margin-top:12px;">🗺️ <span style="color:#E6007E;font-weight:700;">본건(분홍)</span> · <span style="color:var(--kiwoom-pink-deep,#CC00CC);font-weight:700;">본건 단지(자주)</span> · <span style="color:#1A2540;">타 단지(네이비)</span> — <strong>매매 거래만</strong> 표시합니다(경매 낙찰가 추정용). 마커의 <strong>번호(No.)는 위 목록 행 번호</strong>와 같습니다. 표의 <strong>매매 행을 클릭</strong>하면 지도가 그 위치로 이동, 마커 클릭 시 <strong>네이버 지도로 이동</strong>합니다.</div>
       <div style="margin-top:6px;"><button id="compBigBtn" class="btn btn-ghost" style="display:none;" onclick="openBigMap('comp')">🔎 지도 별도 창으로 크게 보기</button></div>
       <div id="compCasesMap" style="height:360px;border:1px solid var(--line);border-radius:6px;margin-top:4px;display:none;"></div>` : ''}
     </div>
@@ -2424,14 +2429,16 @@ async function _renderCompMap(p, comps) {
     const lng = c[1] + rad * Math.sin(ang) / Math.cos(c[0] * Math.PI / 180);
     const same = !!(p.name && x.name === p.name);
     const addrFull = compAddr(x);
-    const casePopup = `<b>${nm}</b> <span style="color:#888;">${x.type || ''}</span><br>${fmt.date(x.date)} · <b>${fmt.won(x.price)}</b>${x.monthly ? ' / 월 ' + x.monthly + '만' : ''}<br>${x.area != null ? x.area + '㎡' : ''}${x.floor ? ' · ' + x.floor + '층' : ''}<br><a href="${naverUrl(addrFull)}" target="_blank" rel="noopener" style="color:${same ? '#CC00CC' : '#1A2540'};font-weight:600;">🔗 네이버 지도에서 보기</a>`;
+    const no = i + 1;   // 목록 번호와 동일 (표 행 index i ↔ 마커 번호)
+    const casePopup = `<b>#${no} ${nm}</b> <span style="color:#888;">${x.type || ''}</span><br>${fmt.date(x.date)} · <b>${fmt.won(x.price)}</b>${x.monthly ? ' / 월 ' + x.monthly + '만' : ''}<br>${x.area != null ? x.area + '㎡' : ''}${x.floor ? ' · ' + x.floor + '층' : ''}<br><a href="${naverUrl(addrFull)}" target="_blank" rel="noopener" style="color:${same ? '#CC00CC' : '#1A2540'};font-weight:600;">🔗 네이버 지도에서 보기</a>`;
     const m = L.circleMarker([lat, lng], { radius: 6, color: '#fff', weight: 1.5,
       fillColor: same ? '#CC00CC' : '#1A2540', fillOpacity: 0.9 })
       .addTo(_compMap)
       .bindPopup(casePopup);
-    if (k === 1) m.bindTooltip(nm, { permanent: true, direction: 'top', offset: [0, -6], className: 'map-lbl' + (same ? ' map-lbl-same' : '') });
+    // 목록 번호를 마커마다 영구 표시(단지명은 팝업에). 목록 행 ↔ 지도 마커 대응.
+    m.bindTooltip(String(no), { permanent: true, direction: 'top', offset: [0, -6], className: 'map-lbl map-lbl-num' + (same ? ' map-lbl-same' : '') });
     _compMarkers[i] = { marker: m, latlng: [lat, lng] };
-    bigMarkers.push({ lat, lng, fill: same ? '#CC00CC' : '#1A2540', label: nm, showLabel: k === 1, cls: 'map-lbl' + (same ? ' map-lbl-same' : ''), off: -6, popup: casePopup });
+    bigMarkers.push({ lat, lng, fill: same ? '#CC00CC' : '#1A2540', label: String(no), showLabel: true, cls: 'map-lbl map-lbl-num' + (same ? ' map-lbl-same' : ''), off: -6, popup: casePopup });
     pts.push([lat, lng]);
   });
   if (pts.length > 1) _compMap.fitBounds(L.latLngBounds(pts).pad(0.15));
@@ -3589,6 +3596,8 @@ function openBigMap(kind) {
     + '.map-lbl::before{display:none;}'
     + '.map-lbl-origin{color:#E6007E;border-color:#E6007E;}'
     + '.map-lbl-same{color:#CC00CC;border-color:#CC00CC;}'
+    + '.map-lbl-num{min-width:18px;text-align:center;padding:0 4px;border-radius:9px;background:#1A2540;color:#fff;border-color:#1A2540;}'
+    + '.map-lbl-num.map-lbl-same{background:#CC00CC;border-color:#CC00CC;color:#fff;}'
     + '</style></head><body>'
     + '<div id="hd"><span class="lg">키움에프앤아이</span> <span>' + d.title + '</span>'
     + '<span class="leg"><span style="color:#E6007E;">● 본건</span> &nbsp; <span style="color:#CC00CC;">● 본건 동일</span> &nbsp; <span style="color:#1A2540;">● 기타</span></span></div>'
