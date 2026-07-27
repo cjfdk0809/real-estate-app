@@ -2922,41 +2922,58 @@ function analyzeRights(rightsInput) {
   return { baseRight, baseDate, classified, assumedTotal, extinctTotal, seniorClaim, seniorHolder, hasTaxLien };
 }
 
-// 배당 워터폴: 배당대상(소멸·금액보유) 권리를 설정일 순으로 재원(pool)에서 순차 배당.
-// 각 권리에 배당액(alloc)을 부여하고, 마지막에 잉여(surplus)를 남긴다.
-// ※ 간이 추정: 담보물권 설정일 우선순위만 반영. 최우선변제·당해세·안분배당·경매비용(입력분 제외)은 미반영.
-function _distributionTargets(classified) {
+// 예상 배당표(가배당) 산정 — 옥션원 예상배당표 방식 준용.
+//  실제배당할금액 = 매각대금(예상낙찰가) + 전경매보증금 − 경매비용
+//  ※ 인수금액은 배당재원에서 차감하지 않고 '매수인 인수금액'으로 별도 표기(낙찰자 부담).
+//  배당대상(소멸) 권리를 설정일(등기순위) 순으로 재원에서 순차 배당. 인수 권리는 배당 0.
+// ※ 간이 추정: 최우선변제(소액임차·임금)·당해세·안분배당(동순위)·경매비용(입력분 제외)은 미반영.
+function _distributionItems(classified) {
   return (classified || [])
-    .filter(r => r.status === '소멸' && (r.amount || 0) > 0)
+    .filter(r => (r.status === '소멸' || r.status === '인수') && (r.amount || 0) > 0)
     .slice()
     .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
 }
 
-function computeDistribution(classified, bid, assumedTotal, cost) {
-  const targets = _distributionTargets(classified);
-  const pool0 = Math.max(0, (bid || 0) - (assumedTotal || 0) - (cost || 0));
+function computeDistribution(classified, bid, opts) {
+  opts = opts || {};
+  const cost = Number(opts.cost) || 0;          // 경매비용
+  const deposit = Number(opts.prevDeposit) || 0; // 전(前)경매보증금
+  const gross = (bid || 0) + deposit;            // 매각대금 + 전경매보증금
+  const pool0 = Math.max(0, gross - cost);       // 실제배당할금액
   let pool = pool0;
-  const rows = targets.map(r => {
-    const claim = r.amount || 0;
-    const alloc = Math.min(claim, pool);
-    pool = Math.max(0, pool - alloc);
-    return { id: r.id, type: r.type, holder: r.holder, date: r.date, amount: claim,
-      isOurs: !!r.isOurs, alloc, rate: claim ? Math.min(100, alloc / claim * 100) : null };
+  const items = _distributionItems(classified);
+  const rows = items.map(r => {
+    const claim = r.amount || 0;                 // 채권최고액(만원)
+    let alloc = 0, assumed = 0;
+    if (r.status === '인수') {
+      assumed = claim;                            // 매수인 인수금액 (배당 외)
+    } else {
+      alloc = Math.min(claim, pool);              // 배당금액
+      pool = Math.max(0, pool - alloc);
+    }
+    return { id: r.id, type: r.type, holder: r.holder, date: r.date, isOurs: !!r.isOurs,
+      status: r.status, claim, alloc, assumed,
+      rate: claim ? Math.min(100, alloc / claim * 100) : null,   // 배당비율
+      unpaid: Math.max(0, claim - alloc - assumed),               // 미배당금액
+      remaining: r.status === '인수' ? null : pool };             // 배당후 잔여금
   });
-  const oursClaim = rows.filter(r => r.isOurs).reduce((s, r) => s + r.amount, 0);
-  const oursAlloc = rows.filter(r => r.isOurs).reduce((s, r) => s + r.alloc, 0);
-  return { pool0, surplus: pool, rows,
-    oursClaim, oursAlloc, oursRate: oursClaim ? Math.min(100, oursAlloc / oursClaim * 100) : null };
+  const sum = (f, cond) => rows.filter(cond || (() => true)).reduce((s, r) => s + (r[f] || 0), 0);
+  const oursClaim = sum('claim', r => r.isOurs);
+  const oursAlloc = sum('alloc', r => r.isOurs);
+  return {
+    gross, cost, deposit, pool0, surplus: pool, rows,
+    totalClaim: sum('claim'), totalAlloc: sum('alloc'), totalUnpaid: sum('unpaid'), totalAssumed: sum('assumed'),
+    oursClaim, oursAlloc, oursRate: oursClaim ? Math.min(100, oursAlloc / oursClaim * 100) : null,
+  };
 }
 
-// 당사(키움) 근저당권 회수 분석: 여러 건 지정 가능. 워터폴 배당으로 순위·회수액 산정.
-function computeOursRecovery(classified, distributable) {
+// 당사(키움) 근저당권 회수 분석: 여러 건 지정 가능. 예상 배당(가배당)으로 순위·회수액 산정.
+function computeOursRecovery(classified, bid, opts) {
   const oursList = (classified || []).filter(r => r.isOurs);
   if (!oursList.length) return null;
-  const oursClaim = oursList.reduce((s, r) => s + (r.amount || 0), 0);  // 만원 (채권최고액 합)
-  // distributable(=낙찰가−인수금액)을 재원으로 워터폴 배당 → 당사 배당액 합산
-  const wf = computeDistribution(classified, (distributable || 0), 0, 0);
-  const recovered = (distributable != null) ? wf.rows.filter(r => r.isOurs).reduce((s, r) => s + r.alloc, 0) : null;
+  const d = computeDistribution(classified, bid, opts);
+  const oursClaim = d.oursClaim;                 // 채권최고액 합
+  const recovered = (bid != null) ? d.oursAlloc : null;
   const recoveryRate = (recovered != null && oursClaim) ? Math.min(100, recovered / oursClaim * 100) : null;
   const shortfall = (recovered != null) ? Math.max(0, oursClaim - recovered) : null;
   // 당사 최선순위 건 기준 순위·선순위 담보 합계 (표시용)
@@ -2964,10 +2981,90 @@ function computeOursRecovery(classified, distributable) {
   const seniorMortgages = (classified || []).filter(r =>
     !r.isOurs && (r.type || '').includes('근저당') && r.status !== '인수' && (r.date || '') !== '' && (r.date || '') < (earliestOursDate || ''));
   const seniorSum = seniorMortgages.reduce((s, r) => s + (r.amount || 0), 0);
-  const priority = seniorMortgages.length + 1;  // 담보권 기준 순위 (당사 최선순위 건)
-  const availForOurs = (distributable != null) ? Math.max(0, distributable - seniorSum) : null;
+  const priority = seniorMortgages.length + 1;
   return { oursList, ours: oursList[0], count: oursList.length,
-    oursClaim, priority, seniorSum, availForOurs, recovered, recoveryRate, shortfall };
+    distributable: d.pool0, oursClaim, priority, seniorSum,
+    availForOurs: (bid != null) ? Math.max(0, d.pool0 - seniorSum) : null,
+    recovered, recoveryRate, shortfall };
+}
+
+// 예상 배당표 HTML (옥션원 예상배당표 양식) — 06 권리분석·리포트 공용.
+// meta: { label, badgeColor } — 시나리오 라벨/색.
+function distributionTableHTML(ra, bid, opts, meta) {
+  meta = meta || {};
+  const d = computeDistribution(ra.classified, bid, opts);
+  const _w = (v) => fmt.won(v);
+  const _summary = `
+    <table class="tbl" style="margin-bottom:10px;">
+      <tbody>
+        <tr><td style="width:160px;color:var(--ink-muted);">매각(예상)대금</td><td class="price">${_w(bid)}</td>
+            <td style="width:130px;color:var(--ink-muted);">전(前)경매보증금</td><td class="price">${_w(d.deposit)}</td></tr>
+        <tr><td style="color:var(--ink-muted);">경매비용</td><td class="price">${_w(d.cost)}</td>
+            <td style="color:var(--ink-muted);">실제 배당할 금액</td><td class="price text-accent" style="font-weight:800;">${_w(d.pool0)}</td></tr>
+      </tbody>
+    </table>`;
+  const _rows = d.rows.map((r, i) => {
+    const ours = r.isOurs ? ' style="background:rgba(204,0,204,0.06);"' : '';
+    const ourTag = r.isOurs ? ' <span class="badge" style="background:var(--kiwoom-pink-deep,#CC00CC);color:#fff;font-size:9px;">당사</span>' : '';
+    const assumedRow = r.status === '인수';
+    return `<tr${ours}>
+      <td class="num">${i + 1}</td>
+      <td class="text-small">${r.type}</td>
+      <td class="text-small">${r.holder || '-'}${ourTag}<br><span class="text-muted">${fmt.date(r.date)}</span></td>
+      <td class="price">${_w(r.claim)}</td>
+      <td class="price"${assumedRow ? '' : (r.alloc >= r.claim ? '' : ' style="color:var(--accent);"')}>${assumedRow ? '-' : _w(r.alloc)}</td>
+      <td class="num text-small">${assumedRow ? '-' : (r.rate != null ? r.rate.toFixed(1) + '%' : '-')}</td>
+      <td class="price">${_w(r.unpaid)}</td>
+      <td class="price">${r.assumed ? _w(r.assumed) : '0'}</td>
+      <td class="price text-muted">${assumedRow ? '-' : _w(r.remaining)}</td>
+      <td class="text-small">${r.status}</td>
+    </tr>`;
+  }).join('');
+  const _totalRow = `<tr style="border-top:2px solid var(--line-strong,#ccc);font-weight:700;">
+    <td colspan="3" style="text-align:center;">계</td>
+    <td class="price">${_w(d.totalClaim)}</td>
+    <td class="price text-accent">${_w(d.totalAlloc)}</td>
+    <td></td>
+    <td class="price">${_w(d.totalUnpaid)}</td>
+    <td class="price">${_w(d.totalAssumed)}</td>
+    <td class="price">${_w(d.surplus)}</td>
+    <td></td>
+  </tr>`;
+  return `
+    ${meta.label ? `<div class="text-small" style="margin-bottom:6px;font-weight:700;color:${meta.badgeColor || 'var(--kiwoom-navy)'};">▸ ${meta.label} 시나리오 · 예상 낙찰가 ${_w(bid)}</div>` : ''}
+    ${_summary}
+    <div style="overflow-x:auto;">
+      <table class="tbl">
+        <thead><tr>
+          <th>순위</th><th>이유</th><th>채권자</th>
+          <th class="text-right">채권최고액</th><th class="text-right">배당금액</th><th class="text-right">배당비율</th>
+          <th class="text-right">미배당금액</th><th class="text-right">매수인<br>인수금액</th><th class="text-right">배당후<br>잔여금</th><th>소멸여부</th>
+        </tr></thead>
+        <tbody>
+          ${_rows || `<tr><td colspan="10" class="text-muted" style="text-align:center;padding:12px;">배당·인수 대상 권리가 없습니다.</td></tr>`}
+          ${_rows ? _totalRow : ''}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+// 예상 배당표 시나리오 선택(보수/중립/적극/AM) — 문자열 키라 updateScenario와 별도.
+function setDistScenario(key) {
+  const id = state.currentPropertyId; if (!id) return;
+  state.scenarios = state.scenarios || {};
+  state.scenarios[id] = state.scenarios[id] || {};
+  state.scenarios[id].distScen = key;
+  saveState();
+  renderView();
+}
+
+// 권리관계 목록: 당사 근저당권 지정 (여러 건 개별 토글 가능)
+function updateRightOurs(id, checked) {
+  const pid = state.currentPropertyId; if (!pid) return;
+  const list = state.rights[pid] || [];
+  list.forEach(r => { if (r.id === id) r.isOurs = checked; });
+  saveState();
+  renderView();
 }
 
 // 권리관계 목록: 당사 근저당권 지정 (여러 건 개별 토글 가능)
@@ -3074,15 +3171,18 @@ function renderScenarioAndNPL(p, auctions, rights) {
   const calc = (rate) => ap.value ? Math.round(ap.value * rate / 100) : null;
   const nextFloor = ap.value ? Math.round(ap.value * (100 - discount) / 100) : null;
   const midBid = calc(mid);
-  const distributable = (midBid != null) ? Math.max(0, midBid - ra.assumedTotal) : null;
-  const recoveryRate = (distributable != null && ra.seniorClaim) ? Math.min(100, distributable / ra.seniorClaim * 100) : null;
-  const surplus = (distributable != null && ra.seniorClaim) ? (distributable - ra.seniorClaim) : null;
-  const oursRec = computeOursRecovery(ra.classified, distributable);
   // AM 의견 낙찰가율 — 담당자(AM) 직접 조정값(sc.mgrBidRate). 미설정 시 중립값 사용.
   const amRate = (sc.mgrBidRate != null && !isNaN(sc.mgrBidRate)) ? Number(sc.mgrBidRate) : mid;
   const amBid = calc(amRate);
-  // 배당표용 경매비용(선택 입력, 만원). 미입력 시 0.
+  // 배당표 재원 파라미터: 경매비용·전(前)경매보증금 (옥션원 예상배당표 방식)
   const distCost = (sc.auctionCost != null && !isNaN(sc.auctionCost)) ? Number(sc.auctionCost) : 0;
+  const prevDeposit = (sc.prevDeposit != null && !isNaN(sc.prevDeposit)) ? Number(sc.prevDeposit) : 0;
+  const distOpts = { cost: distCost, prevDeposit: prevDeposit };
+  // 실제배당할금액(중립) = 매각대금 + 전경매보증금 − 경매비용 (인수금액은 차감하지 않음)
+  const distributable = (midBid != null) ? Math.max(0, midBid + prevDeposit - distCost) : null;
+  const recoveryRate = (distributable != null && ra.seniorClaim) ? Math.min(100, distributable / ra.seniorClaim * 100) : null;
+  const surplus = (distributable != null && ra.seniorClaim) ? (distributable - ra.seniorClaim) : null;
+  const oursRec = computeOursRecovery(ra.classified, midBid, distOpts);
 
   const scenarioCard = `
   <div class="card mb-24">
@@ -3120,8 +3220,9 @@ function renderScenarioAndNPL(p, auctions, rights) {
       <div>
         <div class="info-row"><div class="info-label">1순위 채권최고액</div><div class="info-value mono">${fmt.won(ra.seniorClaim)}${ra.seniorHolder ? ` <span class="text-muted text-small">(${ra.seniorHolder})</span>` : ''}</div></div>
         <div class="info-row"><div class="info-label">예상 낙찰가(중립)</div><div class="info-value mono">${fmt.won(midBid)}</div></div>
-        <div class="info-row"><div class="info-label">선순위 인수금액</div><div class="info-value mono">${fmt.won(ra.assumedTotal)}</div></div>
-        <div class="info-row"><div class="info-label">배당가능재원</div><div class="info-value mono text-accent">${fmt.won(distributable)}</div></div>
+        <div class="info-row"><div class="info-label">경매비용</div><div class="info-value mono">${fmt.won(distCost)}</div></div>
+        <div class="info-row"><div class="info-label">실제 배당할 금액</div><div class="info-value mono text-accent">${fmt.won(distributable)}</div></div>
+        ${ra.assumedTotal ? `<div class="info-row"><div class="info-label">매수인 인수금액<span class="text-muted text-small"> (배당 외)</span></div><div class="info-value mono">${fmt.won(ra.assumedTotal)}</div></div>` : ''}
       </div>
       <div>
         <div class="info-row"><div class="info-label">1순위 회수율(추정)</div><div class="info-value mono ${recoveryRate >= 100 ? '' : 'text-accent'}">${recoveryRate != null ? recoveryRate.toFixed(1) + '%' : '-'}</div></div>
@@ -3161,68 +3262,53 @@ function renderScenarioAndNPL(p, auctions, rights) {
     </div>
   </div>` : '';
 
-  // ── 시나리오별 예상 배당표 (간이 워터폴) ─────────────────────────
+  // ── 예상 배당표 (옥션원 예상배당표 양식) ─────────────────────────
   const _scenDefs = [
-    { key: 'con', label: '보수', color: '#a8884a', bid: calc(con) },
-    { key: 'mid', label: '중립', color: '#1e2a44', bid: midBid },
-    { key: 'agg', label: '적극', color: '#2d5a3d', bid: calc(agg) },
-    { key: 'am', label: 'AM 의견', color: 'var(--kiwoom-pink-deep,#CC00CC)', bid: amBid },
+    { key: 'con', label: '보수', color: '#a8884a', bid: calc(con), rate: con },
+    { key: 'mid', label: '중립', color: '#1e2a44', bid: midBid, rate: mid },
+    { key: 'agg', label: '적극', color: '#2d5a3d', bid: calc(agg), rate: agg },
+    { key: 'am', label: 'AM 의견', color: '#CC00CC', bid: amBid, rate: amRate },
   ];
-  const _targets = _distributionTargets(ra.classified);
-  const _dists = _scenDefs.map(s => computeDistribution(ra.classified, s.bid, ra.assumedTotal, distCost));
-  const _assumedRows = ra.classified.filter(r => r.status === '인수' && (r.amount || 0) > 0);
-  const _hasOurs = _dists[0].oursClaim > 0;
+  const _distItems = _distributionItems(ra.classified);
+  const _selKey = ['con', 'mid', 'agg', 'am'].includes(sc.distScen) ? sc.distScen : 'mid';
+  const _selScen = _scenDefs.find(s => s.key === _selKey) || _scenDefs[1];
+  // 시나리오별 당사 회수 비교(요약)
+  const _cmp = _scenDefs.map(s => ({ ...s, d: computeDistribution(ra.classified, s.bid, distOpts) }));
+  const _hasOurs = _cmp[0].d.oursClaim > 0;
 
-  const _thScen = _scenDefs.map(s => `<th class="text-right" style="color:${s.color};">${s.label}</th>`).join('');
-  const _claimRows = _targets.map((r, i) => {
-    const mark = r.isOurs ? ' style="background:rgba(204,0,204,0.06);"' : '';
-    const oursTag = r.isOurs ? ' <span class="badge" style="background:var(--kiwoom-pink-deep,#CC00CC);color:#fff;font-size:9px;">당사</span>' : '';
-    const cells = _dists.map(d => {
-      const a = d.rows[i];
-      const full = a && a.amount > 0 && a.alloc >= a.amount;
-      return `<td class="price"${full ? '' : ' style="color:var(--accent);"'}>${fmt.won(a ? a.alloc : 0)}</td>`;
-    }).join('');
-    return `<tr${mark}>
-      <td class="num text-muted">${i + 1}</td>
-      <td class="text-small">${r.type} · ${r.holder || '-'}${oursTag}<br><span class="text-muted">${fmt.date(r.date)}</span></td>
-      <td class="price">${fmt.won(r.amount)}</td>
-      ${cells}
-    </tr>`;
-  }).join('');
-  const _poolRow = `<tr style="border-top:2px solid var(--line-strong,#ccc);font-weight:700;">
-    <td></td><td>배당가능재원</td><td class="text-muted text-small">낙찰가−인수−비용</td>
-    ${_dists.map(d => `<td class="price text-accent">${fmt.won(d.pool0)}</td>`).join('')}</tr>`;
-  const _surplusRow = `<tr class="text-muted">
-    <td></td><td>배당 후 잉여</td><td class="text-small">후순위·소유자</td>
-    ${_dists.map(d => `<td class="price">${fmt.won(d.surplus)}</td>`).join('')}</tr>`;
-  const _oursRow = _hasOurs ? `<tr style="background:rgba(204,0,204,0.06);font-weight:700;">
-    <td></td><td style="color:var(--kiwoom-pink-deep,#CC00CC);">당사 회수액 <span class="text-muted text-small">(회수율)</span></td>
-    <td class="price">${fmt.won(_dists[0].oursClaim)}</td>
-    ${_dists.map(d => `<td class="price">${fmt.won(d.oursAlloc)}<br><span class="text-small ${d.oursRate >= 100 ? 'text-muted' : 'text-accent'}">${d.oursRate != null ? d.oursRate.toFixed(1) + '%' : '-'}</span></td>`).join('')}</tr>` : '';
+  const _selBtns = _scenDefs.map(s => `<button type="button" onclick="setDistScenario('${s.key}')"
+      style="padding:5px 12px;border-radius:6px;border:1px solid ${s.key === _selKey ? s.color : 'var(--line-strong,#ccc)'};cursor:pointer;font-size:12px;font-weight:700;
+      background:${s.key === _selKey ? s.color : '#fff'};color:${s.key === _selKey ? '#fff' : 'var(--ink-soft)'};">${s.label} ${s.rate}%</button>`).join('');
 
-  const distCard = (ap.value && _targets.length) ? `
-  <div class="card mb-24" style="border-left:4px solid #1e2a44;">
-    <div class="card-title">예상 배당표 (시나리오별) <span class="text-muted text-small" style="font-weight:400;">· 간이 워터폴 추정</span></div>
-    <div class="no-print" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;font-size:13px;">
-      <span class="text-muted">경매비용(선택)</span>
-      <input type="number" value="${distCost}" onchange="updateScenario('auctionCost', this.value)" style="width:90px;padding:5px;" placeholder="만원">만원
-      <span class="text-small text-muted">입력 시 배당재원에서 우선 차감</span>
-    </div>
-    <div style="overflow-x:auto;">
+  const _cmpRow = _hasOurs ? `
+    <div style="overflow-x:auto;margin-top:14px;">
       <table class="tbl">
-        <thead><tr><th>순위</th><th>권리 (유형·권리자·설정일)</th><th class="text-right">채권액</th>${_thScen}</tr></thead>
+        <thead><tr><th>구분</th>${_scenDefs.map(s => `<th class="text-right" style="color:${s.color};">${s.label}</th>`).join('')}</tr></thead>
         <tbody>
-          ${_claimRows || `<tr><td colspan="${3 + _scenDefs.length}" class="text-muted" style="text-align:center;padding:12px;">배당대상(소멸) 권리가 없습니다.</td></tr>`}
-          ${_poolRow}
-          ${_surplusRow}
-          ${_oursRow}
+          <tr><td>예상 낙찰가</td>${_cmp.map(s => `<td class="price">${fmt.won(s.bid)}</td>`).join('')}</tr>
+          <tr><td>실제 배당할 금액</td>${_cmp.map(s => `<td class="price text-accent">${fmt.won(s.d.pool0)}</td>`).join('')}</tr>
+          <tr style="font-weight:700;"><td>당사 회수액</td>${_cmp.map(s => `<td class="price">${fmt.won(s.d.oursAlloc)}</td>`).join('')}</tr>
+          <tr style="font-weight:700;"><td>당사 회수율</td>${_cmp.map(s => `<td class="num ${s.d.oursRate >= 100 ? '' : 'text-accent'}">${s.d.oursRate != null ? s.d.oursRate.toFixed(1) + '%' : '-'}</td>`).join('')}</tr>
         </tbody>
       </table>
+    </div>` : '';
+
+  const distCard = (ap.value && _distItems.length) ? `
+  <div class="card mb-24" style="border-left:4px solid #1e2a44;">
+    <div class="card-title">예상 배당표 (가배당) <span class="text-muted text-small" style="font-weight:400;">· 옥션원 예상배당표 양식 · 시나리오 선택</span></div>
+    <div class="no-print" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+      ${_selBtns}
+      <span style="margin-left:8px;padding-left:12px;border-left:1px solid var(--line);color:var(--ink-muted);font-size:12px;">경매비용</span>
+      <input type="number" value="${distCost}" onchange="updateScenario('auctionCost', this.value)" style="width:100px;padding:5px;" placeholder="만원">
+      <span style="color:var(--ink-muted);font-size:12px;">전경매보증금</span>
+      <input type="number" value="${prevDeposit}" onchange="updateScenario('prevDeposit', this.value)" style="width:100px;padding:5px;" placeholder="만원">
+      <span class="text-small text-muted">(만원)</span>
     </div>
-    ${_assumedRows.length ? `<div class="text-small" style="margin-top:10px;color:var(--accent);">▸ 낙찰자 인수(배당 외): ${_assumedRows.map(r => `${r.type} ${r.holder || ''} ${fmt.won(r.amount)}`).join(' · ')} — 배당재원에서 이미 차감됨(인수금액 합 ${fmt.won(ra.assumedTotal)}).</div>` : ''}
+    ${distributionTableHTML(ra, _selScen.bid, distOpts, { label: _selScen.label, badgeColor: _selScen.color })}
+    ${_cmpRow}
     <div class="text-small text-muted" style="margin-top:10px;line-height:1.7;">
-      ※ <strong>간이 추정</strong>입니다. 담보물권 <strong>설정일(등기순위) 순</strong>으로 배당재원을 순차 배분한 결과이며, 실제 배당과 다를 수 있습니다.<br>
-      ※ <strong>최우선변제(소액임차·임금채권)·당해세·안분배당(가압류 등 동순위)·경매비용(입력분 제외)</strong>은 반영되지 않았습니다. 채권액은 <strong>채권최고액</strong> 기준(실채권원금과 다를 수 있음)입니다.
+      ※ 대표 등기부·매각물건명세서 기준으로 작성한 <strong>참고용 예상 배당표(가배당)</strong>입니다. 채권 금액·순위·내용에 따라 실제 배당표와 다를 수 있습니다.<br>
+      ※ 담보물권 <strong>설정일(등기순위) 순</strong> 배당. <strong>최우선변제(소액임차·임금채권)·당해세·안분배당(동순위)·경매비용(입력분 제외)</strong>은 미반영. 채권액은 <strong>채권최고액</strong> 기준(실채권원금과 다를 수 있음). 인수금액은 배당재원에서 차감하지 않고 <strong>매수인 인수금액</strong>으로 별도 표기.
       ${ra.hasTaxLien ? '<br><strong style="color:var(--accent);">당해세 우선배당 리스크:</strong> 압류 등기가 있어 당해세가 담보물권보다 우선 배당될 수 있습니다(교부청구액 확인 필요). 위 표에는 미반영.' : ''}
     </div>
   </div>` : '';
@@ -4045,7 +4131,10 @@ function renderReport() {
   const _be = (typeof window.resolveBidEstimate === 'function') ? window.resolveBidEstimate(p.id) : null;
   const _finalBid = _be ? _be.finalBid : (_cas && ap.value ? Math.round(ap.value * _cas.center / 100) : null);
   const _decLabel = _be ? _be.decisionLabel : 'AI안';
-  const _finalDist = _finalBid != null ? Math.max(0, _finalBid - ra.assumedTotal) : null;
+  // 실제배당할금액(최종채택) = 낙찰가 + 전경매보증금 − 경매비용 (인수금액 차감하지 않음)
+  const _fCost = (sc.auctionCost != null && !isNaN(sc.auctionCost)) ? Number(sc.auctionCost) : 0;
+  const _fDep = (sc.prevDeposit != null && !isNaN(sc.prevDeposit)) ? Number(sc.prevDeposit) : 0;
+  const _finalDist = _finalBid != null ? Math.max(0, _finalBid + _fDep - _fCost) : null;
   const _finalRecovery = (_finalDist != null && ra.seniorClaim) ? Math.min(100, _finalDist / ra.seniorClaim * 100) : null;
   // 담당자 의견 (07 모듈 — 채택가 + 채택 사유)
   const _op = (state.opinion && state.opinion[p.id]) || {};
@@ -4061,18 +4150,24 @@ function renderReport() {
   const _agg = _cas ? _cas.scenarios.agg : (sc.agg != null ? sc.agg : 100);
   const _bid = (rate) => ap.value ? Math.round(ap.value * rate / 100) : null;
   const _midBid = _bid(_mid);
-  const _distributable = _midBid != null ? Math.max(0, _midBid - ra.assumedTotal) : null;
-  const _recovery = (_distributable != null && ra.seniorClaim) ? Math.min(100, _distributable / ra.seniorClaim * 100) : null;
-  // AM 의견 낙찰가율(담당자안 낙찰가율과 동일 필드) + 경매비용
+  // AM 의견 낙찰가율(담당자안 낙찰가율과 동일 필드) + 경매비용/전경매보증금 (옥션원 방식)
   const _amRate = (sc.mgrBidRate != null && !isNaN(sc.mgrBidRate)) ? Number(sc.mgrBidRate) : _mid;
   const _amBid = _bid(_amRate);
   const _distCost = (sc.auctionCost != null && !isNaN(sc.auctionCost)) ? Number(sc.auctionCost) : 0;
-  // 시나리오별 예상 배당표(간이 워터폴) — 리포트/화면 동일 로직 재사용
-  const _rTargets = (typeof _distributionTargets === 'function') ? _distributionTargets(ra.classified) : [];
-  const _rScen = [['보수', _bid(_con)], ['중립', _midBid], ['적극', _bid(_agg)], ['AM 의견', _amBid]];
-  const _rDists = _rScen.map(s => computeDistribution(ra.classified, s[1], ra.assumedTotal, _distCost));
-  const _rHasOurs = _rDists.length && _rDists[0].oursClaim > 0;
-  const _rAssumed = ra.classified.filter(r => r.status === '인수' && (r.amount || 0) > 0);
+  const _prevDeposit = (sc.prevDeposit != null && !isNaN(sc.prevDeposit)) ? Number(sc.prevDeposit) : 0;
+  const _distOpts = { cost: _distCost, prevDeposit: _prevDeposit };
+  const _distributable = _midBid != null ? Math.max(0, _midBid + _prevDeposit - _distCost) : null;
+  const _recovery = (_distributable != null && ra.seniorClaim) ? Math.min(100, _distributable / ra.seniorClaim * 100) : null;
+  // 예상 배당표 — 화면과 동일 로직. 리포트는 4개 시나리오 각각의 상세표를 수록.
+  const _rItems = (typeof _distributionItems === 'function') ? _distributionItems(ra.classified) : [];
+  const _rScen = [
+    { label: '보수', color: '#a8884a', bid: _bid(_con), rate: _con },
+    { label: '중립', color: '#1e2a44', bid: _midBid, rate: _mid },
+    { label: '적극', color: '#2d5a3d', bid: _bid(_agg), rate: _agg },
+    { label: 'AM 의견', color: '#CC00CC', bid: _amBid, rate: _amRate },
+  ];
+  const _rCmp = _rScen.map(s => ({ ...s, d: computeDistribution(ra.classified, s.bid, _distOpts) }));
+  const _rHasOurs = _rCmp.length && _rCmp[0].d.oursClaim > 0;
 
   c.innerHTML = `
     <div class="page-head" style="display: flex; justify-content: space-between; align-items: flex-end; gap: 16px;">
@@ -4166,25 +4261,21 @@ function renderReport() {
     <div class="text-small text-muted" style="margin-top:6px;">※ 담당자안 보정값 — 단지외부 ${_be.mExt.toFixed(2)} · 단지내부 ${_be.mInt.toFixed(2)} · 호별 ${_be.mHo.toFixed(2)} · 기타 ${_be.mEtc.toFixed(2)} · 낙찰가율 ${_be.mRatePct}%. (05 추정낙찰가 탭에서 조정)</div>
     ` : ''}
 
-    ${(ap.value && _rTargets.length) ? `
-    <div class="section-h">3-3. 예상 배당표 (시나리오별)</div>
+    ${(ap.value && _rItems.length) ? `
+    <div class="section-h">3-3. 예상 배당표 (가배당 · 중립 시나리오)</div>
+    ${distributionTableHTML(ra, _midBid, _distOpts, { label: '중립', badgeColor: '#1e2a44' })}
+    ${_rHasOurs ? `
+    <div class="text-small" style="margin-top:12px;margin-bottom:4px;font-weight:700;">시나리오별 당사 회수 비교</div>
     <table class="tbl mb-16">
-      <thead><tr><th>순위</th><th>권리 (유형·권리자·설정일)</th><th class="text-right">채권액</th><th class="text-right">보수</th><th class="text-right">중립</th><th class="text-right">적극</th><th class="text-right">AM</th></tr></thead>
+      <thead><tr><th>구분</th>${_rScen.map(s => `<th class="text-right">${s.label} ${s.rate}%</th>`).join('')}</tr></thead>
       <tbody>
-        ${_rTargets.map((r, i) => `<tr>
-          <td class="num">${i + 1}</td>
-          <td class="text-small">${r.type} · ${r.holder || '-'}${r.isOurs ? ' (당사)' : ''} · ${fmt.date(r.date)}</td>
-          <td class="price">${fmt.won(r.amount)}</td>
-          ${_rDists.map(d => `<td class="price">${fmt.won(d.rows[i].alloc)}</td>`).join('')}
-        </tr>`).join('')}
-        <tr><td></td><td>배당가능재원 <span class="text-muted text-small">(낙찰가−인수−비용)</span></td><td></td>${_rDists.map(d => `<td class="price text-accent">${fmt.won(d.pool0)}</td>`).join('')}</tr>
-        <tr><td></td><td>배당 후 잉여</td><td></td>${_rDists.map(d => `<td class="price">${fmt.won(d.surplus)}</td>`).join('')}</tr>
-        ${_rHasOurs ? `<tr><td></td><td>당사 회수액</td><td class="price">${fmt.won(_rDists[0].oursClaim)}</td>${_rDists.map(d => `<td class="price">${fmt.won(d.oursAlloc)}</td>`).join('')}</tr>
-        <tr><td></td><td>당사 회수율</td><td></td>${_rDists.map(d => `<td class="num">${d.oursRate != null ? d.oursRate.toFixed(1) + '%' : '-'}</td>`).join('')}</tr>` : ''}
+        <tr><td>예상 낙찰가</td>${_rCmp.map(s => `<td class="price">${fmt.won(s.bid)}</td>`).join('')}</tr>
+        <tr><td>실제 배당할 금액</td>${_rCmp.map(s => `<td class="price">${fmt.won(s.d.pool0)}</td>`).join('')}</tr>
+        <tr><td>당사 회수액</td>${_rCmp.map(s => `<td class="price">${fmt.won(s.d.oursAlloc)}</td>`).join('')}</tr>
+        <tr><td>당사 회수율</td>${_rCmp.map(s => `<td class="num">${s.d.oursRate != null ? s.d.oursRate.toFixed(1) + '%' : '-'}</td>`).join('')}</tr>
       </tbody>
-    </table>
-    ${_rAssumed.length ? `<div class="text-small" style="margin-top:6px;">▸ 낙찰자 인수(배당 외): ${_rAssumed.map(r => `${r.type} ${r.holder || ''} ${fmt.won(r.amount)}`).join(' · ')} (인수금액 합 ${fmt.won(ra.assumedTotal)}, 배당재원에서 차감)</div>` : ''}
-    <div class="text-small text-muted" style="margin-top:6px;">※ 간이 추정 — 담보물권 설정일(등기순위) 순 배당. 최우선변제·당해세·안분배당·경매비용(입력분 제외) 미반영, 채권액은 채권최고액 기준. 실제 배당과 다를 수 있음.${ra.hasTaxLien ? ' 당해세 우선배당 리스크 있음(교부청구액 확인 필요).' : ''}</div>
+    </table>` : ''}
+    <div class="text-small text-muted" style="margin-top:6px;line-height:1.6;">※ 대표 등기부·매각물건명세서 기준 참고용 예상 배당표(가배당). 담보물권 설정일(등기순위) 순 배당이며 최우선변제·당해세·안분배당·경매비용(입력분 제외)은 미반영, 채권액은 채권최고액 기준. 인수금액은 배당재원에서 차감하지 않고 매수인 인수금액으로 별도 표기. 실제 배당과 다를 수 있음.${ra.hasTaxLien ? ' 당해세 우선배당 리스크 있음(교부청구액 확인 필요).' : ''}</div>
     ` : ''}
 
     ${rights.length > 0 ? `
