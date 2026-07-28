@@ -117,6 +117,8 @@
         dongN: d.dong_n, dongRefFail: d.dong_ref_fail,
         simRate: d.sim_rate, simP25: d.sim_p25, simP75: d.sim_p75,
         simN: d.sim_n, simNeff: d.sim_neff, simRefFail: d.sim_ref_fail,
+        infocareRate: d.infocare_rate, infocareN: d.infocare_n, infocareScope: d.infocare_scope,
+        infocareRegion: d.infocare_region, infocareAsof: d.infocare_asof,
       } : null;
     } catch (e) { _realCache[key] = null; }
   }
@@ -291,6 +293,14 @@
                       delta: round1(center - round1(baseRate)) };
         }
       }
+    } else if (real && real.infocareRate != null
+               && (tier === 'stat_sigungu' || tier === 'stat_national' || tier === 'default')) {
+      // 관측 사례(동일단지·시군구)·실측이 없어 '한국부동산원 용도무관 종합/기본값'으로 갈 상황이면,
+      // 그 대신 '해당 지역 동일 용도'의 INFOCARE(CSV) 낙찰가율을 적용한다(용도별 편차·전문성 확보).
+      tier = 'infocare';
+      center = round1(real.infocareRate);
+      asof = real.infocareAsof; isStat = true; useFactor = 1; usedReal = true;
+      sampleN = real.infocareN; effN = real.infocareN;
     } else if (tier === 'default') {
       // 지역 신호가 전혀 없을 때만 근사 용도계수 적용(아파트 기준 90% × 용도계수).
       center = round1(center * useFactor);
@@ -321,6 +331,9 @@
                                  + (real.dongName || '동') + ' (동 단위, n=' + real.dongN + ')'; break;
       case 'stat_real':    scope = _useLabel(p.use || p.usage) + ' 실측 낙찰가율 · '
                                  + (real.derivation || ((real.region || '전국') + ' (n=' + real.n + ')')); break;
+      case 'infocare':     scope = (real.infocareRegion || targetSg || '시군구') + ' ' + _useLabel(p.use || p.usage) + ' 낙찰가율(인포케어)'
+                                 + (real.infocareScope && real.infocareScope !== 'sigungu' ? ' · ' + (real.infocareScope === 'national' ? '전국' : '시도') + ' 동일용도 평균' : '')
+                                 + (real.infocareN != null ? ' (표본 ' + real.infocareN + '건)' : ''); break;
       case 'stat_sigungu': scope = (targetSg || '시군구') + ' 통계(용도무관 종합)'; break;
       case 'stat_national':scope = '전국 평균(용도무관 종합)'; break;
       default:             scope = '기본값(지역 미확인)';
@@ -386,6 +399,7 @@
     sim: ['#0e7490', '유사도 가중 실측'],
     stat_dong: ['#0b7a53', '동 단위 실측'],
     stat_real: ['#0f766e', '실측 낙찰가율'],
+    infocare: ['#0369a1', '인포케어 용도별 통계'],
     stat_sigungu: ['#1e3a5f', '3단계 · 시군구 통계'],
     stat_national: ['#5a6b8c', '4단계 · 전국 통계'], default: ['#a8884a', '디폴트']
   };
@@ -522,8 +536,12 @@
       note = '<div class="text-small text-muted">🎯 낙찰가율은 <strong>' + cas.scope + '</strong>입니다. 본건과 <strong>면적이 비슷하고 가까운 지역</strong>(같은 동 > 같은 구 > 같은 시)의 실측 낙찰사례에 <strong>가중치</strong>를 줘 산출했습니다 — 연립·다세대·나홀로아파트처럼 사례가 얇고 개별성이 큰 물건에 맞춘 방식입니다.</div>';
     } else if (cas.tier === 'stat_dong') {
       note = '<div class="text-small text-muted">📍 낙찰가율은 <strong>' + cas.scope + '</strong> ' + cas.sampleN + '건의 중앙값입니다 (본건과 같은 동·용도의 실측 낙찰사례 우선 적용).</div>';
-    } else if (cas.isStat) {
+    } else if (cas.tier === 'infocare') {
+      note = '<div class="text-small text-muted">📊 낙찰가율은 <strong>' + cas.scope + '</strong>입니다 (인포케어 경매낙찰 통계 · <strong>동일 용도</strong>). 지역 실측 사례가 적어, 용도무관 종합 대신 <strong>해당 지역·용도의 인포케어 낙찰가율</strong>을 적용했습니다.</div>';
+    } else if (cas.tier === 'stat_sigungu' || cas.tier === 'stat_national') {
       note = '<div class="text-small text-muted">📊 낙찰가율은 <strong>' + cas.scope + '</strong> 종합 낙찰가율입니다 (한국부동산원 법원경매통계 ' + cas.asof + ', 용도무관). 아파트는 종합보다 다소 높을 수 있습니다.</div>';
+    } else if (cas.isStat) {
+      note = '<div class="text-small text-muted">📊 낙찰가율은 <strong>' + cas.scope + '</strong>입니다 (인포케어 실측 · 동일 용도).</div>';
     } else if (cas.tier === 'default') {
       note = '<div class="text-small" style="color:var(--warn);">⚠️ 소재지에서 지역을 못 읽어 기본값(90%)을 적용했습니다. 주소를 확인하세요.</div>';
     } else {
@@ -618,7 +636,7 @@
       + facRow('단지외부요인', '교통·입지·학군·환경', be.mExt, 'ext')
       + facRow('단지내부요인', '브랜드·세대수·구조·노후도', be.mInt, 'int')
       + facRow('호별요인', '층·향·위치별 효용', be.mHo, 'ho')
-      + rateRow('낙찰가율', cas.scope + (cas.asof ? ' · 한국부동산원 ' + cas.asof : ''), be.aiRatePct, be.mRatePct)
+      + rateRow('낙찰가율', cas.scope + (cas.asof ? ' · ' + ((cas.tier === 'stat_sigungu' || cas.tier === 'stat_national') ? '한국부동산원' : '인포케어') + ' ' + cas.asof : ''), be.aiRatePct, be.mRatePct)
       + facRow('기타요인', '명도난이도·시장상황·급매 등 개별조정', be.mEtc, 'etc')
       + '<tr style="border-top:1px solid var(--line,#dfe4ee);"><td style="padding:6px 0;font-weight:700;font-size:13px;color:var(--ink-soft);">요인 곱 <span style="font-weight:400;color:var(--ink-muted);font-size:11px;">(낙찰가율 제외)</span></td><td style="padding:6px 8px;text-align:center;font-weight:700;font-size:13px;">1.00</td><td style="padding:6px 8px;text-align:center;font-weight:700;font-size:13px;color:var(--kiwoom-navy);">' + factorProd.toFixed(2) + '</td><td></td></tr>'
       + '</tbody></table>'
