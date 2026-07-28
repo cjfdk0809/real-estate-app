@@ -2975,9 +2975,9 @@ function _distributionItems(classified) {
 function computeDistribution(classified, bid, opts) {
   opts = opts || {};
   const cost = Number(opts.cost) || 0;          // 경매비용
-  const deposit = Number(opts.prevDeposit) || 0; // 전(前)경매보증금
-  const gross = (bid || 0) + deposit;            // 매각대금 + 전경매보증금
-  const pool0 = Math.max(0, gross - cost);       // 실제배당할금액
+  // 선순위 총액(최우선변제·임금·당해세·조세·선순위 근저당 등) — 낙찰가에서 우선 차감
+  const senior = Number(opts.senior != null ? opts.senior : opts.prevDeposit) || 0;
+  const pool0 = Math.max(0, (bid || 0) - cost - senior);   // 실제 배당예상금액
   let pool = pool0;
   const items = _distributionItems(classified);
   const rows = items.map(r => {
@@ -2999,7 +2999,7 @@ function computeDistribution(classified, bid, opts) {
   const oursClaim = sum('claim', r => r.isOurs);
   const oursAlloc = sum('alloc', r => r.isOurs);
   return {
-    gross, cost, deposit, pool0, surplus: pool, rows,
+    bid: (bid || 0), cost, senior, pool0, surplus: pool, rows,
     totalClaim: sum('claim'), totalAlloc: sum('alloc'), totalUnpaid: sum('unpaid'), totalAssumed: sum('assumed'),
     oursClaim, oursAlloc, oursRate: oursClaim ? Math.min(100, oursAlloc / oursClaim * 100) : null,
   };
@@ -3032,15 +3032,6 @@ function distributionTableHTML(ra, bid, opts, meta) {
   meta = meta || {};
   const d = computeDistribution(ra.classified, bid, opts);
   const _w = (v) => fmt.won(v);
-  const _summary = `
-    <table class="tbl" style="margin-bottom:10px;max-width:460px;">
-      <tbody>
-        <tr><td style="width:180px;color:var(--ink-muted);">채택안 금액</td><td class="price">${_w(bid)}</td></tr>
-        <tr><td style="color:var(--ink-muted);">경매비용</td><td class="price">${_w(d.cost)}</td></tr>
-        <tr><td style="color:var(--ink-muted);">선순위총액</td><td class="price">${_w(d.deposit)}</td></tr>
-        <tr><td style="color:var(--ink-muted);">실제 배당예상금액</td><td class="price text-accent" style="font-weight:800;">${_w(d.pool0)}</td></tr>
-      </tbody>
-    </table>`;
   const _rows = d.rows.map((r, i) => {
     const ours = r.isOurs ? ' style="background:rgba(30,42,68,0.06);"' : '';
     const ourTag = r.isOurs ? ' <span class="badge" style="background:var(--kiwoom-navy,#1A2540);color:#fff;font-size:9px;">당사</span>' : '';
@@ -3070,7 +3061,6 @@ function distributionTableHTML(ra, bid, opts, meta) {
   </tr>`;
   return `
     ${meta.label ? `<div class="text-small" style="margin-bottom:6px;font-weight:700;color:${meta.badgeColor || 'var(--kiwoom-navy)'};">▸ ${meta.label}${meta.suffix != null ? meta.suffix : ' 시나리오'} · 예상 낙찰가 ${_w(bid)}</div>` : ''}
-    ${_summary}
     <div style="overflow-x:auto;">
       <table class="tbl">
         <thead><tr>
@@ -3203,64 +3193,15 @@ function renderScenarioAndNPL(p, auctions, rights) {
   // AM 의견 낙찰가율 — 담당자(AM) 직접 조정값(sc.mgrBidRate). 미설정 시 중립값 사용.
   const amRate = (sc.mgrBidRate != null && !isNaN(sc.mgrBidRate)) ? Number(sc.mgrBidRate) : mid;
   const amBid = calc(amRate);
-  // 배당표 재원 파라미터: 경매비용·전(前)경매보증금 (옥션원 예상배당표 방식)
+  // 배당표 재원 파라미터: 경매비용 + 선순위 총액(6개 항목 직접 입력·합산)
   const distCost = (sc.auctionCost != null && !isNaN(sc.auctionCost)) ? Number(sc.auctionCost) : 0;
-  const prevDeposit = (sc.prevDeposit != null && !isNaN(sc.prevDeposit)) ? Number(sc.prevDeposit) : 0;
-  const distOpts = { cost: distCost, prevDeposit: prevDeposit };
-  // 실제배당할금액(중립) = 매각대금 + 전경매보증금 − 경매비용 (인수금액은 차감하지 않음)
-  const distributable = (midBid != null) ? Math.max(0, midBid + prevDeposit - distCost) : null;
-  const recoveryRate = (distributable != null && ra.seniorClaim) ? Math.min(100, distributable / ra.seniorClaim * 100) : null;
-  const surplus = (distributable != null && ra.seniorClaim) ? (distributable - ra.seniorClaim) : null;
-  const oursRec = computeOursRecovery(ra.classified, midBid, distOpts);
-
-  const nplCard = (ap.value && ra.seniorClaim) ? `
-  <div class="card mb-24" style="border-left:4px solid var(--accent);">
-    <div class="card-title">NPL 담보여력 분석 <span class="text-muted text-small" style="font-weight:400;">· 중립 시나리오 기준</span></div>
-    <div class="grid grid-2">
-      <div>
-        <div class="info-row"><div class="info-label">1순위 채권최고액</div><div class="info-value mono">${fmt.won(ra.seniorClaim)}${ra.seniorHolder ? ` <span class="text-muted text-small">(${ra.seniorHolder})</span>` : ''}</div></div>
-        <div class="info-row"><div class="info-label">예상 낙찰가(중립)</div><div class="info-value mono">${fmt.won(midBid)}</div></div>
-        <div class="info-row"><div class="info-label">경매비용</div><div class="info-value mono">${fmt.won(distCost)}</div></div>
-        <div class="info-row"><div class="info-label">실제 배당할 금액</div><div class="info-value mono text-accent">${fmt.won(distributable)}</div></div>
-        ${ra.assumedTotal ? `<div class="info-row"><div class="info-label">매수인 인수금액<span class="text-muted text-small"> (배당 외)</span></div><div class="info-value mono">${fmt.won(ra.assumedTotal)}</div></div>` : ''}
-      </div>
-      <div>
-        <div class="info-row"><div class="info-label">1순위 회수율(추정)</div><div class="info-value mono ${recoveryRate >= 100 ? '' : 'text-accent'}">${recoveryRate != null ? recoveryRate.toFixed(1) + '%' : '-'}</div></div>
-        <div class="info-row"><div class="info-label">${surplus >= 0 ? '여유' : '부족분'}</div><div class="info-value mono">${fmt.won(Math.abs(surplus || 0))}</div></div>
-      </div>
-    </div>
-    <div class="notice" style="margin-top:12px;">
-      <div class="notice-title">${recoveryRate >= 100 ? '✅ 1순위 기준 전액 회수 가능 구간' : '⚠️ 담보여력 빠듯 — 전액 회수 불확실'}</div>
-      예상 낙찰가와 1순위 채권최고액이 ${recoveryRate >= 100 ? '여유 있는' : '근접한'} 수준입니다. 실제 회수액은 배당순위·실채권원금에 따라 달라집니다.
-      ${ra.hasTaxLien ? '<br><strong style="color:var(--accent);">당해세 우선배당 리스크:</strong> 압류(국세·지방세·건보)가 등기되어 있어 당해세(재산세·종부세 등)는 법정기일과 무관하게 1순위 근저당보다 우선 배당될 수 있습니다. 입찰·채권평가 전 교부청구액(체납세액 총액)을 반드시 확인하세요.' : ''}
-    </div>
-  </div>` : '';
-
-  const oursCard = (oursRec && ap.value) ? `
-  <div class="card mb-24" style="border-left:4px solid var(--kiwoom-pink-deep,#CC00CC);">
-    <div class="card-title">NPL 담보여력 분석 · 당사 채권 회수 <span class="text-muted text-small" style="font-weight:400;">· 중립 시나리오 기준</span></div>
-    <div class="grid grid-2">
-      <div>
-        <div class="info-row"><div class="info-label">당사 근저당권${oursRec.count > 1 ? ` (${oursRec.count}건)` : ''}</div><div class="info-value">${oursRec.oursList.map(o => `${o.holder || '-'} <span class="text-muted text-small">(${fmt.date(o.date)})</span>`).join('<br>')}</div></div>
-        <div class="info-row"><div class="info-label">당사 채권최고액${oursRec.count > 1 ? ' 합계' : ''}</div><div class="info-value mono">${fmt.won(oursRec.oursClaim)}</div></div>
-        <div class="info-row"><div class="info-label">담보권 순위</div><div class="info-value">${oursRec.priority}순위${oursRec.priority === 1 ? ' <span class="text-accent text-small">(최선순위)</span>' : ''}${oursRec.count > 1 ? ' <span class="text-muted text-small">(당사 최선순위 건 기준)</span>' : ''}</div></div>
-        <div class="info-row"><div class="info-label">선순위 담보 합계</div><div class="info-value mono">${fmt.won(oursRec.seniorSum)}</div></div>
-      </div>
-      <div>
-        <div class="info-row"><div class="info-label">배당가능재원</div><div class="info-value mono">${fmt.won(distributable)}</div></div>
-        <div class="info-row"><div class="info-label">당사 배당가능액</div><div class="info-value mono">${fmt.won(oursRec.availForOurs)}</div></div>
-        <div class="info-row"><div class="info-label">당사 예상 회수액</div><div class="info-value mono text-accent" style="font-weight:800;">${fmt.won(oursRec.recovered)}</div></div>
-        <div class="info-row"><div class="info-label">당사 회수율</div><div class="info-value mono ${oursRec.recoveryRate >= 100 ? '' : 'text-accent'}">${oursRec.recoveryRate != null ? oursRec.recoveryRate.toFixed(1) + '%' : '-'}</div></div>
-      </div>
-    </div>
-    <div class="notice" style="margin-top:12px;">
-      <div class="notice-title">${oursRec.recoveryRate >= 100 ? '✅ 당사 채권 전액 회수 가능 구간' : (oursRec.recoveryRate > 0 ? '⚠️ 당사 채권 일부 회수 — 부족분 ' + fmt.won(oursRec.shortfall) : '❌ 당사 채권 회수 불가 구간 (선순위 잠식)')}</div>
-      ${oursRec.priority === 1
-        ? '당사가 <strong>1순위(최선순위) 근저당권자</strong>입니다. 예상 낙찰가에서 선순위 인수금액을 제한 배당가능재원으로 당사 채권을 가장 먼저 배당받습니다.'
-        : '당사보다 선순위 담보권 ' + (oursRec.priority - 1) + '건(합계 ' + fmt.won(oursRec.seniorSum) + ')이 먼저 배당된 뒤, 잔여 재원에서 당사 채권이 배당됩니다.'}
-      ${ra.hasTaxLien ? '<br><strong style="color:var(--accent);">당해세 우선배당 리스크:</strong> 압류 등기가 있어 당해세(재산세·종부세 등)가 당사 근저당보다 우선 배당될 수 있습니다. 실제 회수액은 교부청구액(체납세액) 확인 후 재산정이 필요합니다.' : ''}
-    </div>
-  </div>` : '';
+  const _n0 = (v) => (v != null && v !== '' && !isNaN(v)) ? Number(v) : 0;
+  const _snr = {
+    lease: _n0(sc.snrLease), wage: _n0(sc.snrWage), curtax: _n0(sc.snrCurTax),
+    tax: _n0(sc.snrTax), mort: _n0(sc.snrMort), etc: _n0(sc.snrEtc),
+  };
+  const seniorTotal = _snr.lease + _snr.wage + _snr.curtax + _snr.tax + _snr.mort + _snr.etc;
+  const distOpts = { cost: distCost, senior: seniorTotal };
 
   // ── 예상 배당표 (옥션원 예상배당표 양식) — 추정낙찰가(채택안) 기준 ──────────
   // 03 추정낙찰가에서 최종 채택한 안(AI안/담당자안)의 낙찰예상가를 매각대금으로 가배당표 산정.
@@ -3284,23 +3225,38 @@ function renderScenarioAndNPL(p, auctions, rights) {
       </table>
     </div>` : '';
 
+  const _snrDefs = [
+    ['snrLease', '1) 선순위 임차보증금', _snr.lease],
+    ['snrWage',  '2) 선순위 임금채권',   _snr.wage],
+    ['snrCurTax','3) 선순위 당해세',     _snr.curtax],
+    ['snrTax',   '4) 선순위 조세',       _snr.tax],
+    ['snrMort',  '5) 선순위 근저당',     _snr.mort],
+    ['snrEtc',   '6) 기타',             _snr.etc],
+  ];
+  const _snrInputRows = _snrDefs.map(([f, label, v]) =>
+    `<tr><td style="padding-left:22px;color:var(--ink-soft);">${label}</td>`
+    + `<td style="text-align:right;"><input type="number" min="0" step="1" value="${v || ''}" onchange="updateScenario('${f}', this.value)" style="width:130px;padding:5px;text-align:right;font-variant-numeric:tabular-nums;border:1px solid var(--line-strong,#c2cad9);border-radius:6px;" placeholder="0"> <span class="text-small text-muted">만원</span></td></tr>`
+  ).join('');
+
   const distCard = (ap.value && _distItems.length) ? `
   <div class="card mb-24" style="border-left:4px solid #011F8E;">
-    <div class="card-title">예상 배당표 (가배당) <span class="text-muted text-small" style="font-weight:400;">· 옥션원 예상배당표 양식 · 추정낙찰가(${finalLabel} 채택) 기준</span></div>
-    <div class="text-small text-muted" style="margin:-4px 0 12px;">03 추정낙찰가에서 최종 채택한 <strong>${finalLabel}</strong>의 낙찰예상가 <strong class="mono" style="color:#dc2626;">${fmt.won(finalBid)}</strong> <span style="color:var(--ink-muted);">(낙찰가율 ${finalRate}%)</span>를 매각대금으로 가배당표를 산정합니다.</div>
-    <div class="no-print" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
-      <span style="color:var(--ink-muted);font-size:12px;">경매비용</span>
-      <input type="number" value="${distCost}" onchange="updateScenario('auctionCost', this.value)" style="width:100px;padding:5px;" placeholder="만원">
-      <span style="color:var(--ink-muted);font-size:12px;">선순위총액</span>
-      <input type="number" value="${prevDeposit}" onchange="updateScenario('prevDeposit', this.value)" style="width:100px;padding:5px;" placeholder="만원">
-      <span class="text-small text-muted">(만원)</span>
-    </div>
+    <div class="card-title">예상 배당표 (가배당) <span class="text-muted text-small" style="font-weight:400;">· 추정낙찰가(${finalLabel} 채택) 기준</span></div>
+    <div class="text-small text-muted" style="margin:-4px 0 12px;">03 추정낙찰가에서 최종 채택한 <strong>${finalLabel}</strong>의 낙찰예상가에서 경매비용·선순위 총액을 차감해 실제 배당예상금액을 산정합니다.</div>
+    <table class="tbl" style="max-width:560px;margin-bottom:12px;">
+      <tbody>
+        <tr><td style="width:220px;color:var(--ink-muted);">추정낙찰가 <span class="text-small">(채택안 금액)</span></td><td class="price" style="color:#dc2626;font-weight:800;">${fmt.won(finalBid)}</td></tr>
+        <tr><td style="color:var(--ink-muted);">경매비용</td><td style="text-align:right;"><input type="number" min="0" step="1" value="${distCost || ''}" onchange="updateScenario('auctionCost', this.value)" style="width:130px;padding:5px;text-align:right;font-variant-numeric:tabular-nums;border:1px solid var(--line-strong,#c2cad9);border-radius:6px;" placeholder="0"> <span class="text-small text-muted">만원</span></td></tr>
+        <tr style="border-top:1px solid var(--line,#dfe4ee);"><td style="font-weight:700;">선순위 총 금액 <span class="text-small text-muted" style="font-weight:400;">(1~6 합산)</span></td><td class="price" style="font-weight:800;">${fmt.won(seniorTotal)}</td></tr>
+        ${_snrInputRows}
+        <tr style="border-top:2px solid var(--line-strong,#c2cad9);"><td style="font-weight:800;">실제 배당예상금액 <span class="text-small text-muted" style="font-weight:400;">(채택안−경매비용−선순위총액)</span></td><td class="price text-accent" style="font-weight:800;">${fmt.won(_dFinal.pool0)}</td></tr>
+      </tbody>
+    </table>
     ${distributionTableHTML(ra, finalBid, distOpts, {})}
     ${_oursRow}
     <div class="text-small text-muted" style="margin-top:10px;line-height:1.7;">
-      ※ 대표 등기부·매각물건명세서 기준으로 작성한 <strong>참고용 예상 배당표(가배당)</strong>입니다. 채권 금액·순위·내용에 따라 실제 배당표와 다를 수 있습니다.<br>
-      ※ 담보물권 <strong>설정일(등기순위) 순</strong> 배당. <strong>최우선변제(소액임차·임금채권)·당해세·안분배당(동순위)·경매비용(입력분 제외)</strong>은 미반영. 채권액은 <strong>채권최고액</strong> 기준(실채권원금과 다를 수 있음). 인수금액은 배당재원에서 차감하지 않고 <strong>매수인 인수금액</strong>으로 별도 표기.
-      ${ra.hasTaxLien ? '<br><strong style="color:var(--accent);">당해세 우선배당 리스크:</strong> 압류 등기가 있어 당해세가 담보물권보다 우선 배당될 수 있습니다(교부청구액 확인 필요). 위 표에는 미반영.' : ''}
+      ※ <strong>선순위 총 금액</strong>은 본건 배당에서 <strong>우선 변제되는 금액</strong>(최우선 임차보증금·임금채권·당해세·조세·선순위 근저당 등)을 직접 입력해 합산합니다. <strong>실제 배당예상금액 = 추정낙찰가 − 경매비용 − 선순위 총 금액.</strong><br>
+      ※ 아래 상세표는 <strong>등기부 권리</strong>를 설정일(등기순위) 순으로 배당한 참고용 가배당입니다. <strong>선순위 근저당</strong>란에는 상세표에 있는 채권을 <strong>중복 입력하지 마세요</strong>(이중 차감 방지). 채권액은 채권최고액 기준, 인수금액은 배당재원에서 차감하지 않고 매수인 인수금액으로 별도 표기.
+      ${ra.hasTaxLien ? '<br><strong style="color:var(--accent);">당해세 우선배당 리스크:</strong> 압류 등기가 있어 당해세가 담보물권보다 우선 배당될 수 있습니다(교부청구액 확인 필요).' : ''}
     </div>
   </div>` : '';
 
@@ -4133,10 +4089,13 @@ function renderReport() {
   const _be = (typeof window.resolveBidEstimate === 'function') ? window.resolveBidEstimate(p.id) : null;
   const _finalBid = _be ? _be.finalBid : (_cas && ap.value ? Math.round(ap.value * _cas.center / 100) : null);
   const _decLabel = _be ? _be.decisionLabel : 'AI안';
-  // 실제배당할금액(최종채택) = 낙찰가 + 전경매보증금 − 경매비용 (인수금액 차감하지 않음)
+  // 실제 배당예상금액(채택안) = 낙찰가 − 경매비용 − 선순위 총액(6개 항목 합산)
   const _fCost = (sc.auctionCost != null && !isNaN(sc.auctionCost)) ? Number(sc.auctionCost) : 0;
-  const _fDep = (sc.prevDeposit != null && !isNaN(sc.prevDeposit)) ? Number(sc.prevDeposit) : 0;
-  const _finalDist = _finalBid != null ? Math.max(0, _finalBid + _fDep - _fCost) : null;
+  const _rn0 = (v) => (v != null && v !== '' && !isNaN(v)) ? Number(v) : 0;
+  const _snrR = { lease: _rn0(sc.snrLease), wage: _rn0(sc.snrWage), curtax: _rn0(sc.snrCurTax),
+    tax: _rn0(sc.snrTax), mort: _rn0(sc.snrMort), etc: _rn0(sc.snrEtc) };
+  const _seniorTotalR = _snrR.lease + _snrR.wage + _snrR.curtax + _snrR.tax + _snrR.mort + _snrR.etc;
+  const _finalDist = _finalBid != null ? Math.max(0, _finalBid - _fCost - _seniorTotalR) : null;
   const _finalRecovery = (_finalDist != null && ra.seniorClaim) ? Math.min(100, _finalDist / ra.seniorClaim * 100) : null;
   // 담당자 의견 (07 모듈 — 채택가 + 채택 사유)
   const _op = (state.opinion && state.opinion[p.id]) || {};
@@ -4155,11 +4114,8 @@ function renderReport() {
   // AM 의견 낙찰가율(담당자안 낙찰가율과 동일 필드) + 경매비용/전경매보증금 (옥션원 방식)
   const _amRate = (sc.mgrBidRate != null && !isNaN(sc.mgrBidRate)) ? Number(sc.mgrBidRate) : _mid;
   const _amBid = _bid(_amRate);
-  const _distCost = (sc.auctionCost != null && !isNaN(sc.auctionCost)) ? Number(sc.auctionCost) : 0;
-  const _prevDeposit = (sc.prevDeposit != null && !isNaN(sc.prevDeposit)) ? Number(sc.prevDeposit) : 0;
-  const _distOpts = { cost: _distCost, prevDeposit: _prevDeposit };
-  const _distributable = _midBid != null ? Math.max(0, _midBid + _prevDeposit - _distCost) : null;
-  const _recovery = (_distributable != null && ra.seniorClaim) ? Math.min(100, _distributable / ra.seniorClaim * 100) : null;
+  const _distCost = _fCost;
+  const _distOpts = { cost: _distCost, senior: _seniorTotalR };
   // 예상 배당표는 03 추정낙찰가 최종 채택안(AI안/담당자안) 기준으로 산정(06 모달과 동일).
   const _fDist = _finalBid != null ? computeDistribution(ra.classified, _finalBid, _distOpts) : null;
   const _fHasOurs = !!(_fDist && _fDist.oursClaim > 0);
@@ -4248,6 +4204,21 @@ function renderReport() {
 
     ${(ap.value && _rItems.length) ? `
     <div class="section-h">3-3. 예상 배당표 (가배당 · ${_decLabel} 채택 기준)</div>
+    <table class="tbl mb-16" style="max-width:520px;">
+      <thead><tr><th>구분</th><th class="text-right">금액(만원)</th></tr></thead>
+      <tbody>
+        <tr><td>추정낙찰가 (채택안 금액)</td><td class="price">${fmt.won(_finalBid)}</td></tr>
+        <tr><td>경매비용</td><td class="price">${fmt.won(_fCost)}</td></tr>
+        <tr><td style="font-weight:700;">선순위 총 금액 (1~6 합산)</td><td class="price" style="font-weight:700;">${fmt.won(_seniorTotalR)}</td></tr>
+        <tr><td>&nbsp;&nbsp;1) 선순위 임차보증금</td><td class="price">${fmt.won(_snrR.lease)}</td></tr>
+        <tr><td>&nbsp;&nbsp;2) 선순위 임금채권</td><td class="price">${fmt.won(_snrR.wage)}</td></tr>
+        <tr><td>&nbsp;&nbsp;3) 선순위 당해세</td><td class="price">${fmt.won(_snrR.curtax)}</td></tr>
+        <tr><td>&nbsp;&nbsp;4) 선순위 조세</td><td class="price">${fmt.won(_snrR.tax)}</td></tr>
+        <tr><td>&nbsp;&nbsp;5) 선순위 근저당</td><td class="price">${fmt.won(_snrR.mort)}</td></tr>
+        <tr><td>&nbsp;&nbsp;6) 기타</td><td class="price">${fmt.won(_snrR.etc)}</td></tr>
+        <tr style="font-weight:800;"><td>실제 배당예상금액</td><td class="price text-accent">${fmt.won(_finalDist)}</td></tr>
+      </tbody>
+    </table>
     ${distributionTableHTML(ra, _finalBid, _distOpts, { label: _decLabel + ' 채택', suffix: '', badgeColor: '#011F8E' })}
     ${_fHasOurs ? `
     <div class="text-small" style="margin-top:12px;margin-bottom:4px;font-weight:700;">당사 채권 회수 (채택안 기준)</div>
