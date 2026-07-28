@@ -3644,10 +3644,75 @@ def admin_import_rates():
     return Response(head + preview + done + form, mimetype='text/html; charset=utf-8')
 
 
+def _iter_csv_members(files):
+    """업로드된 파일들을 (표시이름, raw_bytes) CSV 단위로 펼친다.
+    .zip 이면 내부 .csv 를 모두 추출(한글 파일명 CP949 보정), 아니면 그대로 CSV 취급.
+    → 전국 지자체 CSV를 폴더째 zip 하나로 올릴 수 있게 한다."""
+    import io as _io
+    import zipfile as _zip
+    for f in files:
+        fname = f.filename or '(이름없음)'
+        data = f.read()
+        is_zip = fname.lower().endswith('.zip') or data[:2] == b'PK'
+        if not is_zip:
+            yield fname, data
+            continue
+        try:
+            zf = _zip.ZipFile(_io.BytesIO(data))
+        except Exception:
+            yield fname + ' (ZIP 열기 실패)', b''
+            continue
+        for zi in zf.infolist():
+            if zi.is_dir():
+                continue
+            nm = zi.filename
+            # UTF-8 플래그(0x800) 미설정 zip(윈도우 한글)은 파일명이 CP437로 잘못 디코드됨 → CP949 복원.
+            if not (zi.flag_bits & 0x800):
+                try:
+                    nm = nm.encode('cp437').decode('cp949')
+                except Exception:
+                    pass
+            base = nm.replace('\\', '/').rsplit('/', 1)[-1]
+            if not base.lower().endswith('.csv') or base.startswith('.'):
+                continue
+            try:
+                yield base, zf.read(zi)
+            except Exception:
+                yield base + ' (읽기 실패)', b''
+
+
+def _bulk_replace_rate_stats(rows, months, asof):
+    """rows(=[{sido,sigungu,use_group,sample_n,rate}])를 한 번에 적재.
+    (period_months + 이번 업로드에 포함된 각 시도의 해당 시군구) 기존 행만 삭제 후 일괄 insert.
+    행 단위 select/update 를 없애 대량(전국 ~250개)에서도 타임아웃 없이 idempotent 하게 동작한다.
+    반환: 기록된 행 수."""
+    if not rows:
+        return 0
+    by_sido = {}
+    for r in rows:
+        by_sido.setdefault(r['sido'], set()).add(r['sigungu'])
+    # 정확히 '이번에 다시 올린 시군구'만 삭제 → 같은 시도의 다른 구 데이터는 보존.
+    for sido, sggs in by_sido.items():
+        (supabase.table('auction_rate_stats').delete()
+         .eq('period_months', months).eq('sido', sido)
+         .in_('sigungu', sorted(sggs)).execute())
+    recs = [{'sido': r['sido'], 'sigungu': r['sigungu'], 'use_group': r['use_group'],
+             'period_months': months, 'sample_n': r['sample_n'],
+             'median_rate': r['rate'], 'avg_rate': r['rate'], 'asof': asof}
+            for r in rows]
+    written = 0
+    for i in range(0, len(recs), 500):  # 500행씩 청크 insert
+        chunk = recs[i:i + 500]
+        supabase.table('auction_rate_stats').insert(chunk).execute()
+        written += len(chunk)
+    return written
+
+
 # ============================================================
-# INFOCARE 대량 적재 — 여러 시군구 CSV를 한 번에. 파일명에서 시도·시군구 자동 인식.
+# INFOCARE 대량 적재 — 여러 시군구 CSV(또는 zip 하나)를 한 번에. 파일명에서 시도·시군구 자동 인식.
 #   ※ 반드시 '앱의 이 화면(브라우저)'에서 업로드해야 진짜 파일명이 전달됩니다.
 #     (채팅 업로드는 파일명이 지워짐)  파일명 예: '서울특별시 강남구.csv'
+#   ※ 전국 규모는 CSV들을 폴더째 zip 으로 묶어 zip 하나만 올리면 됩니다.
 #   GET: 폼. POST: 파일별 파싱+지역인식→미리보기(기본). commit=1+key로 전체 적재.
 #   URL: /admin/import-rates-bulk
 # ============================================================
@@ -3658,7 +3723,7 @@ def admin_import_rates_bulk():
             'style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px 18px;margin:12px 0;display:grid;gap:10px;max-width:560px">'
             '<label>기간(개월) <input name="months" value="12" style="width:100%;padding:6px 8px"></label>'
             '<label>기준월(asof) <input name="asof" placeholder="예: 2026-06 (비우면 오늘)" style="width:100%;padding:6px 8px"></label>'
-            '<label>CSV 여러 개 선택 <input type="file" name="files" accept=".csv" multiple required></label>'
+            '<label>CSV 여러 개 또는 ZIP <input type="file" name="files" accept=".csv,.zip" multiple required></label>'
             '<label><input type="checkbox" name="commit" value="1"> 전체 적재(체크 안 하면 미리보기만)</label>'
             '<label>관리자 키(적재 시 필요) <input name="key" style="width:100%;padding:6px 8px"></label>'
             '<button type="submit" style="padding:9px;background:#0f766e;color:#fff;border:0;border-radius:6px;font-weight:700;cursor:pointer">파싱 / 적재</button>'
@@ -3668,7 +3733,8 @@ def admin_import_rates_bulk():
             'table{border-collapse:collapse;width:100%;font-size:13.5px;margin-top:8px}th,td{border:1px solid #e2e8f0;padding:6px 9px}'
             'th{background:#f8fafc}.muted{color:#64748b;font-size:13px}.ok{color:#166534;font-weight:700}.err{color:#b91c1c;font-weight:700}</style>'
             '<h1>INFOCARE 시군구 낙찰가율 — 대량 적재</h1>'
-            '<p class="muted">여러 시군구 CSV를 한 번에 올립니다. <b>파일명에 시도+시군구</b>가 있어야 자동 인식됩니다(예: <code>서울특별시 강남구.csv</code>). '
+            '<p class="muted">여러 시군구 CSV를 한 번에 올립니다. 전국 규모면 <b>CSV들을 폴더째 ZIP 하나</b>로 묶어 올려도 됩니다(내부 파일명으로 인식). '
+            '<b>파일명에 시도+시군구</b>가 있어야 자동 인식됩니다(예: <code>서울특별시 강남구.csv</code>). '
             '⚠️ 반드시 <b>이 브라우저 화면</b>에서 올리세요(채팅에 올리면 파일명이 지워집니다).</p>')
 
     if request.method == 'GET':
@@ -3689,15 +3755,16 @@ def admin_import_rates_bulk():
     if commit and ADMIN_SECRET and key != ADMIN_SECRET:
         return Response(head + form + '<p class="err">전체 적재하려면 올바른 관리자 키가 필요합니다. (미리보기는 키 없이 가능)</p>', mimetype='text/html; charset=utf-8')
 
-    rows_html, ok_cnt, skip_cnt, write_cnt = [], 0, 0, 0
-    for f in files:
-        fname = f.filename or '(이름없음)'
+    import html as _html
+    # 1) 모든 업로드(zip 포함)를 CSV 단위로 펼쳐 파싱·지역인식 → 순서 보존 항목 목록.
+    entries, ok_cnt, skip_cnt = [], 0, 0
+    for fname, data in _iter_csv_members(files):
         sido, sgg = _detect_region_from_name(fname)
         try:
-            agg, _picked = _parse_infocare_csv(f.read())
+            agg, _picked = _parse_infocare_csv(data)
         except Exception as e:
             skip_cnt += 1
-            rows_html.append(f'<tr><td>{fname}</td><td class="err">파싱실패</td><td colspan="4">{e}</td></tr>')
+            entries.append({'kind': 'fail', 'name': fname, 'err': str(e)})
             continue
         vals = {x['use_group']: x for x in agg}
         cells = ''.join(
@@ -3706,28 +3773,47 @@ def admin_import_rates_bulk():
             for u in ('apt', 'rh', 'offi'))
         if not (sido and sgg):
             skip_cnt += 1
-            rows_html.append(f'<tr><td>{fname}</td><td class="err">지역인식실패</td>'
-                             f'<td>{sido or "?"} {sgg or "?"}</td>{cells}</tr>')
+            entries.append({'kind': 'skip', 'name': fname, 'sido': sido, 'sgg': sgg, 'cells': cells})
             continue
-        action = '미리보기'
-        if commit:
-            try:
-                for x in agg:
-                    if x['rate'] is not None:
-                        _upsert_rate_stat(sido, sgg, x['use_group'], months, x['sample_n'], x['rate'], asof)
-                        write_cnt += 1
-                action = '<span class="ok">적재완료</span>'
-            except Exception as e:
-                action = f'<span class="err">적재실패: {e}</span>'
         ok_cnt += 1
-        rows_html.append(f'<tr><td>{fname}</td><td>{action}</td><td><b>{sido} {sgg}</b></td>{cells}</tr>')
+        entries.append({'kind': 'ok', 'name': fname, 'sido': sido, 'sgg': sgg, 'agg': agg, 'cells': cells})
+
+    # 2) 적재는 전체를 모아 한 번에(배치) — 행 단위 쓰기 제거로 대량에서도 타임아웃 없음.
+    write_cnt, commit_err = 0, None
+    if commit:
+        all_rows = [{'sido': e['sido'], 'sigungu': e['sgg'], 'use_group': x['use_group'],
+                     'sample_n': x['sample_n'], 'rate': x['rate']}
+                    for e in entries if e['kind'] == 'ok' for x in e['agg'] if x['rate'] is not None]
+        try:
+            write_cnt = _bulk_replace_rate_stats(all_rows, months, asof)
+        except Exception as e:
+            commit_err = str(e)
+
+    # 3) 결과 표 — 원래 업로드 순서대로.
+    if commit:
+        ok_action = f'<span class="err">적재실패</span>' if commit_err else '<span class="ok">적재완료</span>'
+    else:
+        ok_action = '미리보기'
+    rows_html = []
+    for e in entries:
+        nm = _html.escape(e['name'])
+        if e['kind'] == 'fail':
+            rows_html.append(f'<tr><td>{nm}</td><td class="err">파싱실패</td><td colspan="4">{_html.escape(e["err"])}</td></tr>')
+        elif e['kind'] == 'skip':
+            rows_html.append(f'<tr><td>{nm}</td><td class="err">지역인식실패</td>'
+                             f'<td>{_html.escape(e["sido"] or "?")} {_html.escape(e["sgg"] or "?")}</td>{e["cells"]}</tr>')
+        else:
+            rows_html.append(f'<tr><td>{nm}</td><td>{ok_action}</td>'
+                             f'<td><b>{_html.escape(e["sido"])} {_html.escape(e["sgg"])}</b></td>{e["cells"]}</tr>')
 
     summary = (f'<p style="margin-top:10px">인식 <b>{ok_cnt}</b>개 · 건너뜀 <b>{skip_cnt}</b>개'
-               + (f' · <span class="ok">적재 {write_cnt}건</span>' if commit else ' · <b>미리보기</b>(적재 안 함)') + '</p>')
+               + (f' · <span class="ok">적재 {write_cnt}행</span>' if commit and not commit_err
+                  else (f' · <span class="err">적재 실패: {_html.escape(commit_err)}</span>' if commit_err
+                        else ' · <b>미리보기</b>(적재 안 함)')) + '</p>')
     tbl = ('<table><thead><tr><th>파일명</th><th>상태</th><th>인식지역</th>'
            '<th>아파트</th><th>연립·다세대</th><th>오피스텔</th></tr></thead>'
            f'<tbody>{"".join(rows_html)}</tbody></table>')
-    tip = ('' if commit else '<p class="muted" style="margin-top:12px">☝️ 값·지역이 맞으면 <b>전체 적재</b> 체크 + 관리자 키 입력 후 같은 파일들을 다시 올리세요. '
+    tip = ('' if commit else '<p class="muted" style="margin-top:12px">☝️ 값·지역이 맞으면 <b>전체 적재</b> 체크 + 관리자 키 입력 후 같은 파일(또는 ZIP)을 다시 올리세요. '
            '지역인식 실패는 파일명에 <code>시도 시군구</code>를 넣어 다시 시도하세요.</p>')
     return Response(head + summary + tbl + tip + form, mimetype='text/html; charset=utf-8')
 
