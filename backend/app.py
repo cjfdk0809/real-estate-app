@@ -25,6 +25,7 @@ from dotenv import load_dotenv
 
 from lawd_codes import LAWD_CODES, find_lawd_code
 from registry_analyzer import registry_bp  # 🆕 등기부 분석 모듈
+from assistant import assistant_bp  # 🆕 AI 도우미 모듈
 from housing_price_api import housing_bp, lookup_housing_price  # 🆕 공시가격 조회 모듈
 from complex_identifier import identify_complex, identify_dong  # 🆕 Day 8: 단지 교차검증
 
@@ -118,6 +119,7 @@ URL_BR_PRICE = 'https://apis.data.go.kr/1613000/BldRgstHubService/getBrHsprcInfo
 app = Flask(__name__, static_folder='../frontend', static_url_path='')
 CORS(app)
 app.register_blueprint(registry_bp)  # 🆕 등기부 분석 Blueprint 등록
+app.register_blueprint(assistant_bp)  # 🆕 AI 도우미 Blueprint 등록
 app.register_blueprint(housing_bp)  # 🆕 공시가격 조회 Blueprint 등록
 
 # ============================================================
