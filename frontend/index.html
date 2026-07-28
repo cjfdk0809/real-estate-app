@@ -7118,5 +7118,157 @@ async function _maybeAutoCollect(p) {
 }
 </script>
 
+<!-- ========== AI 도우미 (플로팅 챗) ========== -->
+<script>
+(function () {
+  'use strict';
+  var NAVY = '#011F8E', NAVY_DEEP = '#00164D';
+  var history = [];   // {role:'user'|'assistant', content}
+  var busy = false;
+
+  // 현재 열린 물건의 요약(있으면) — 백엔드가 답변 근거로 사용. 오류 나도 조용히 무시.
+  function buildContext() {
+    try {
+      if (typeof state === 'undefined' || !state) return null;
+      var pid = state.currentPropertyId;
+      var p = (pid && state.properties) ? state.properties[pid] : null;
+      if (!p) return null;
+      var ctx = {
+        name: p.name || '', address: p.addrLot || p.addrRoad || '',
+        use: p.use || p.usage || '', area: p.exclusiveArea || null,
+        currentView: state.currentView || ''
+      };
+      if (typeof resolveBidEstimate === 'function') {
+        var be = resolveBidEstimate(pid);
+        if (be) {
+          ctx.baseValue = be.baseAi; ctx.estimatedBid = be.finalBid;
+          ctx.decision = be.decisionLabel;
+          if (be.cas) { ctx.bidRatePct = be.aiRatePct; ctx.bidRateScope = be.cas.scope; }
+        }
+      }
+      return ctx;
+    } catch (e) { return null; }
+  }
+
+  function el(tag, css, text) {
+    var e = document.createElement(tag);
+    if (css) e.style.cssText = css;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+
+  var panel, msgsBox, input, sendBtn, btn;
+
+  function scrollDown() { if (msgsBox) msgsBox.scrollTop = msgsBox.scrollHeight; }
+
+  function addBubble(role, text) {
+    var mine = role === 'user';
+    var row = el('div', 'display:flex;margin:8px 0;' + (mine ? 'justify-content:flex-end;' : 'justify-content:flex-start;'));
+    var b = el('div',
+      'max-width:82%;padding:9px 12px;border-radius:12px;font-size:13px;line-height:1.55;white-space:pre-wrap;word-break:break-word;'
+      + (mine ? 'background:' + NAVY + ';color:#fff;border-bottom-right-radius:4px;'
+              : 'background:#eef1f7;color:#1e293b;border-bottom-left-radius:4px;'),
+      text);
+    row.appendChild(b);
+    msgsBox.appendChild(row);
+    scrollDown();
+    return b;
+  }
+
+  function setBusy(on) {
+    busy = on;
+    sendBtn.disabled = on; input.disabled = on;
+    sendBtn.textContent = on ? '…' : '전송';
+  }
+
+  async function send() {
+    if (busy) return;
+    var q = (input.value || '').trim();
+    if (!q) return;
+    input.value = '';
+    history.push({ role: 'user', content: q });
+    addBubble('user', q);
+    setBusy(true);
+    var thinking = addBubble('assistant', '답변 작성 중…');
+    thinking.style.opacity = '0.6';
+    try {
+      var r = await fetch((window.BACKEND_URL || '') + '/api/assistant', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: history.slice(-24), context: buildContext() })
+      });
+      var d = await r.json();
+      if (!r.ok || d.error) {
+        thinking.style.opacity = '1'; thinking.style.color = '#b91c1c';
+        thinking.textContent = '⚠️ ' + (d.error || ('오류(' + r.status + ')'));
+        return;
+      }
+      thinking.style.opacity = '1';
+      thinking.textContent = d.reply;
+      history.push({ role: 'assistant', content: d.reply });
+    } catch (e) {
+      thinking.style.opacity = '1'; thinking.style.color = '#b91c1c';
+      thinking.textContent = '⚠️ 네트워크 오류로 답변을 받지 못했습니다.';
+    } finally {
+      setBusy(false); input.focus(); scrollDown();
+    }
+  }
+
+  function togglePanel(open) {
+    var show = (open == null) ? (panel.style.display === 'none') : open;
+    panel.style.display = show ? 'flex' : 'none';
+    btn.style.display = show ? 'none' : 'flex';
+    if (show) { setTimeout(function () { input.focus(); }, 0); scrollDown(); }
+  }
+
+  function build() {
+    // 열기 버튼
+    btn = el('button',
+      'position:fixed;right:22px;bottom:22px;z-index:9998;width:56px;height:56px;border-radius:50%;border:0;cursor:pointer;'
+      + 'background:' + NAVY + ';color:#fff;font-size:24px;box-shadow:0 6px 18px rgba(0,0,0,.28);display:flex;align-items:center;justify-content:center;');
+    btn.title = 'AI 도우미에게 물어보기'; btn.textContent = '💬';
+    btn.onclick = function () { togglePanel(true); };
+
+    // 패널
+    panel = el('div',
+      'position:fixed;right:22px;bottom:22px;z-index:9999;width:360px;max-width:calc(100vw - 28px);height:520px;max-height:calc(100vh - 44px);'
+      + 'display:none;flex-direction:column;background:#fff;border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;box-shadow:0 12px 36px rgba(0,0,0,.28);');
+
+    var head = el('div', 'display:flex;align-items:center;gap:8px;padding:12px 14px;background:linear-gradient(135deg,' + NAVY + ' 0%,' + NAVY_DEEP + ' 100%);color:#fff;');
+    head.appendChild(el('span', 'font-size:16px;', '💬'));
+    var htxt = el('div', 'flex:1;');
+    htxt.appendChild(el('div', 'font-weight:800;font-size:14px;', 'AI 도우미'));
+    htxt.appendChild(el('div', 'font-size:11px;opacity:.85;', '앱 사용법·현재 물건 질문에 답합니다'));
+    head.appendChild(htxt);
+    var closeBtn = el('button', 'background:transparent;border:0;color:#fff;font-size:20px;cursor:pointer;line-height:1;', '×');
+    closeBtn.title = '닫기'; closeBtn.onclick = function () { togglePanel(false); };
+    head.appendChild(closeBtn);
+    panel.appendChild(head);
+
+    msgsBox = el('div', 'flex:1;overflow-y:auto;padding:12px 12px 4px;background:#f8fafc;');
+    panel.appendChild(msgsBox);
+
+    var foot = el('div', 'display:flex;gap:8px;padding:10px;border-top:1px solid #e2e8f0;background:#fff;');
+    input = el('textarea', 'flex:1;resize:none;height:40px;max-height:120px;padding:9px 10px;border:1px solid #c2cad9;border-radius:8px;font-size:13px;font-family:inherit;');
+    input.placeholder = '예: 낙찰가율은 어떻게 정해지나요?';
+    input.rows = 1;
+    input.onkeydown = function (ev) {
+      if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); send(); }
+    };
+    sendBtn = el('button', 'flex:0 0 auto;padding:0 16px;border:0;border-radius:8px;background:' + NAVY + ';color:#fff;font-weight:700;font-size:13px;cursor:pointer;', '전송');
+    sendBtn.onclick = send;
+    foot.appendChild(input); foot.appendChild(sendBtn);
+    panel.appendChild(foot);
+
+    document.body.appendChild(btn);
+    document.body.appendChild(panel);
+
+    addBubble('assistant', '안녕하세요! 이 앱 사용법이나 지금 보고 계신 물건에 대해 무엇이든 물어보세요.\n예) "예상 배당표는 어떻게 계산되나요?", "이 물건 낙찰가율이 왜 이렇게 나왔나요?"');
+  }
+
+  if (document.readyState !== 'loading') build();
+  else document.addEventListener('DOMContentLoaded', build);
+})();
+</script>
+
 </body>
 </html>
