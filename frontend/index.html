@@ -857,6 +857,7 @@ table { border-collapse: collapse; width: 100%; }
   color: #1A2540; box-shadow: 0 1px 2px rgba(0,0,0,.12); white-space: nowrap; }
 .map-lbl::before { display: none; }  /* Leaflet 툴팁 화살표 제거 */
 .map-lbl-origin { color: #E6007E; border-color: #E6007E; }
+.map-lbl-origin-red { color: #dc2626; border-color: #dc2626; }  /* 거래사례 지도 본건(빨강) */
 .map-lbl-same { color: #CC00CC; border-color: #CC00CC; }
 .map-lbl-num { min-width: 18px; text-align: center; padding: 0 4px; border-radius: 9px;
   background: var(--kiwoom-navy, #1A2540); color: #fff; border-color: var(--kiwoom-navy, #1A2540); }
@@ -907,8 +908,8 @@ table { border-collapse: collapse; width: 100%; }
 
     <div class="sidebar-footer">
       <button class="btn-add" onclick="openPropertyModal()">🔍 물건 검색</button>
-      <button class="btn-add" onclick="openBulkModal()" style="margin-top:6px;background:rgba(255,255,255,0.08);">📚 등기부 대량 등록</button>
-      <button class="btn-add" onclick="downloadAllReportsZip()" style="margin-top:6px;background:rgba(255,255,255,0.08);" title="등록된 모든 물건의 리포트를 PDF로 만들어 ZIP으로 저장">📦 리포트 일괄 ZIP</button>
+      <button class="btn-add" onclick="openBulkModal()" style="margin-top:6px;background:rgba(255,255,255,0.16);color:#fff;">📚 등기부 대량 등록</button>
+      <button class="btn-add" onclick="downloadAllReportsZip()" style="margin-top:6px;background:rgba(255,255,255,0.16);color:#fff;" title="등록된 모든 물건의 리포트를 PDF로 만들어 ZIP으로 저장">📦 리포트 일괄 ZIP</button>
       <div id="buildStamp" style="margin-top:8px;text-align:center;font-size:10px;color:var(--ink-muted,#9aa3b2);letter-spacing:.02em;">build 2026-07-23 · 지도 심플</div>
     </div>
   </aside>
@@ -1858,6 +1859,18 @@ function renderView() {
     case 'report': renderReport(); break;
     case 'opinion': renderOpinion(); break;
   }
+
+  // 뷰(메뉴)나 물건이 바뀐 경우에만 화면을 최상단으로 올린다(전체 앱 공통).
+  // 같은 뷰·같은 물건의 제자리 재렌더(값 입력 등)에서는 스크롤 위치를 유지해 화면이 튀지 않게 한다.
+  const _navKey = state.currentView + '|' + (state.currentPropertyId || '');
+  if (window.__lastNavKey !== _navKey) {
+    window.__lastNavKey = _navKey;
+    try {
+      window.scrollTo(0, 0);
+      if (document.scrollingElement) document.scrollingElement.scrollTop = 0;
+      const _m = document.querySelector('.main'); if (_m) _m.scrollTop = 0;
+    } catch (e) {}
+  }
 }
 
 // ============================================================
@@ -2200,9 +2213,9 @@ function renderComparables() {
   let _caBanner = '';
   if (_ca && _ca.available && _ca.estimate_manwon) {
     const _u = _ca.unit_ppa_manwon ? ` · 선정사례 ㎡당 <strong>${fmt.won(_ca.unit_ppa_manwon)}</strong>/㎡` : '';
-    _caBanner = `<div class="callout callout--accent">
-      <div style="font-size:11px;letter-spacing:.14em;color:var(--kiwoom-pink-deep);font-weight:700;text-transform:uppercase;margin-bottom:6px;">📐 공시가격 개별보정 추정시세 · 본건 대표값</div>
-      <div style="font-family:var(--mono);font-size:30px;font-weight:800;color:var(--kiwoom-pink-deep);line-height:1.1;">${fmt.won(_ca.estimate_manwon)}</div>
+    _caBanner = `<div class="callout">
+      <div style="font-size:11px;letter-spacing:.14em;color:var(--kiwoom-navy);font-weight:700;text-transform:uppercase;margin-bottom:6px;">본건 예상시세</div>
+      <div style="font-family:var(--mono);font-size:30px;font-weight:800;color:var(--kiwoom-navy-deep);line-height:1.1;">${fmt.won(_ca.estimate_manwon)}</div>
       <div style="font-size:13px;color:var(--ink-soft);margin-top:6px;">본건 공시 <strong>${fmt.won(_ca.origin_gongsi_manwon)}</strong> × 공시배율 <strong>×${_ca.ratio}</strong> <span class="text-muted">(유사도 상위 ${_ca.n_used}/${_ca.n_total}건 매매 가중평균)</span>${_u}</div>
       <div class="text-small text-muted" style="margin-top:3px;">범위 ${fmt.won(_ca.estimate_lo_manwon)} ~ ${fmt.won(_ca.estimate_hi_manwon)} · 유사도순위 ①동일건물 ②거래일 ③사용승인일 ④면적 ⑤지역 · 추정낙찰가(05)에 반영</div>
     </div>`;
@@ -2337,7 +2350,7 @@ function renderComparables() {
       </table>`;
       })()}
       ${compsFiltered.length ? `
-      <div id="compMapNote" class="text-small text-muted" style="margin-top:12px;">🗺️ <span style="color:#E6007E;font-weight:700;">본건(분홍)</span> · <span style="color:var(--kiwoom-pink-deep,#CC00CC);font-weight:700;">본건 단지(자주)</span> · <span style="color:#1A2540;">타 단지(네이비)</span> — <strong>매매 거래만</strong> 표시합니다(경매 낙찰가 추정용). 마커의 <strong>번호(No.)는 위 목록 행 번호</strong>와 같습니다. 표의 <strong>매매 행을 클릭</strong>하면 지도가 그 위치로 이동, 마커 클릭 시 <strong>네이버 지도로 이동</strong>합니다.</div>
+      <div id="compMapNote" class="text-small text-muted" style="margin-top:12px;">🗺️ <span style="color:#dc2626;font-weight:700;">본건(빨강)</span> · <span style="color:#1A2540;font-weight:700;">그 외(네이비)</span> — <strong>매매 거래만</strong> 표시합니다(경매 낙찰가 추정용). 마커의 <strong>번호(No.)는 위 목록 행 번호</strong>와 같습니다. 표의 <strong>매매 행을 클릭</strong>하면 지도가 그 위치로 이동합니다.</div>
       <div style="margin-top:6px;"><button id="compBigBtn" class="btn btn-ghost" style="display:none;" onclick="openBigMap('comp')">🔎 지도 별도 창으로 크게 보기</button></div>
       <div id="compCasesMap" style="height:360px;border:1px solid var(--line);border-radius:6px;margin-top:4px;display:none;"></div>` : ''}
     </div>
@@ -2418,16 +2431,15 @@ async function _renderCompMap(p, comps) {
   const center = origin || resp.coords[comps.findIndex((x, i) => resp.coords[String(i)])];
   _compMap = L.map(box, { scrollWheelZoom: true }).setView(center, 14);
   _attachBaseLayers(_compMap);
-  const naverUrl = q => `https://map.naver.com/p/search/${encodeURIComponent((q || '').trim())}`;
   const pts = [];
   const bigMarkers = [];   // 별도 창(크게 보기)에서 재현할 마커 데이터
   if (origin) {
-    const originPopup = `<b>${p.name || '본건'}</b><br>본건${originApprox ? ' <span style="color:#888;">(동 중심 근사)</span>' : ''}${originAddr ? `<br><span style="color:#888;">${originAddr}</span>` : ''}<br><a href="${naverUrl(originAddr)}" target="_blank" rel="noopener" style="color:#E6007E;font-weight:600;">🔗 네이버 지도에서 보기</a>`;
-    L.circleMarker(origin, { radius: 9, color: '#fff', weight: 2, fillColor: '#E6007E', fillOpacity: 1 })
+    const originPopup = `<b>${p.name || '본건'}</b><br>본건${originApprox ? ' <span style="color:#888;">(동 중심 근사)</span>' : ''}${originAddr ? `<br><span style="color:#888;">${originAddr}</span>` : ''}`;
+    L.circleMarker(origin, { radius: 9, color: '#fff', weight: 2, fillColor: '#dc2626', fillOpacity: 1 })
       .addTo(_compMap)
-      .bindTooltip('본건', { permanent: true, direction: 'top', offset: [0, -8], className: 'map-lbl map-lbl-origin' })
+      .bindTooltip('본건', { permanent: true, direction: 'top', offset: [0, -8], className: 'map-lbl map-lbl-origin-red' })
       .bindPopup(originPopup);
-    bigMarkers.push({ lat: origin[0], lng: origin[1], origin: true, fill: '#E6007E', label: '본건', showLabel: true, cls: 'map-lbl map-lbl-origin', off: -8, popup: originPopup });
+    bigMarkers.push({ lat: origin[0], lng: origin[1], origin: true, fill: '#dc2626', label: '본건', showLabel: true, cls: 'map-lbl map-lbl-origin-red', off: -8, popup: originPopup });
     pts.push(origin);
   }
 
@@ -2445,15 +2457,15 @@ async function _renderCompMap(p, comps) {
     const same = !!(p.name && x.name === p.name);
     const addrFull = compAddr(x);
     const no = i + 1;   // 목록 번호와 동일 (표 행 index i ↔ 마커 번호)
-    const casePopup = `<b>#${no} ${nm}</b> <span style="color:#888;">${x.type || ''}</span><br>${fmt.date(x.date)} · <b>${fmt.won(x.price)}</b>${x.monthly ? ' / 월 ' + x.monthly + '만' : ''}<br>${x.area != null ? x.area + '㎡' : ''}${x.floor ? ' · ' + x.floor + '층' : ''}<br><a href="${naverUrl(addrFull)}" target="_blank" rel="noopener" style="color:${same ? '#CC00CC' : '#1A2540'};font-weight:600;">🔗 네이버 지도에서 보기</a>`;
+    const casePopup = `<b>#${no} ${nm}</b> <span style="color:#888;">${x.type || ''}</span><br>${fmt.date(x.date)} · <b>${fmt.won(x.price)}</b>${x.monthly ? ' / 월 ' + x.monthly + '만' : ''}<br>${x.area != null ? x.area + '㎡' : ''}${x.floor ? ' · ' + x.floor + '층' : ''}`;
     const m = L.circleMarker([lat, lng], { radius: 6, color: '#fff', weight: 1.5,
-      fillColor: same ? '#CC00CC' : '#1A2540', fillOpacity: 0.9 })
+      fillColor: '#1A2540', fillOpacity: 0.9 })
       .addTo(_compMap)
       .bindPopup(casePopup);
     // 목록 번호를 마커마다 영구 표시(단지명은 팝업에). 목록 행 ↔ 지도 마커 대응.
-    m.bindTooltip(String(no), { permanent: true, direction: 'top', offset: [0, -6], className: 'map-lbl map-lbl-num' + (same ? ' map-lbl-same' : '') });
+    m.bindTooltip(String(no), { permanent: true, direction: 'top', offset: [0, -6], className: 'map-lbl map-lbl-num' });
     _compMarkers[i] = { marker: m, latlng: [lat, lng] };
-    bigMarkers.push({ lat, lng, fill: same ? '#CC00CC' : '#1A2540', label: String(no), showLabel: true, cls: 'map-lbl map-lbl-num' + (same ? ' map-lbl-same' : ''), off: -6, popup: casePopup });
+    bigMarkers.push({ lat, lng, fill: '#1A2540', label: String(no), showLabel: true, cls: 'map-lbl map-lbl-num', off: -6, popup: casePopup });
     pts.push([lat, lng]);
   });
   if (pts.length > 1) _compMap.fitBounds(L.latLngBounds(pts).pad(0.15));
