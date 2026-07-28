@@ -2173,6 +2173,7 @@ function renderComparables() {
   // 유형 필터 적용된 목록 — 표와 지도가 같은 배열을 공유해 행 index ↔ 마커 index를 일치시킴
   const _compTypeF = window._compsFilter || '전체';
   const compsFiltered = (_compTypeF === '전체') ? comps : comps.filter(x => x.type === _compTypeF);
+  _compRowsCache = compsFiltered;   // focusCompCase가 클릭 행 유형을 알 수 있도록 캐시(행 index ↔ 마커 index와 동일)
 
   // 🆕 거래사례가 0건이면 국토부 실거래 자동수집(버튼 없이, 물건당 1회). 진행상태로 배너 표시.
   _maybeAutoCollect(p);
@@ -2317,7 +2318,8 @@ function renderComparables() {
               : `<strong>${fmt.won(x.price)}</strong>${x.monthly ? `<br><span class="text-small text-muted">월 ${x.monthly}만</span>` : ''}`;
             const sameDanji = oName && x.name === oName;
             const nameStyle = sameDanji ? ' style="color:var(--kiwoom-pink-deep,#CC00CC);font-weight:700;"' : '';
-            return `<tr data-cidx="${i}" onclick="focusCompCase(${i})" style="cursor:pointer;" title="지도에서 이 거래 위치로 이동">
+            const rowTitle = x.type === '매매' ? '지도에서 이 거래 위치로 이동' : '지도는 매매 거래만 표시 (클릭 시 안내)';
+            return `<tr data-cidx="${i}" onclick="focusCompCase(${i})" style="cursor:pointer;" title="${rowTitle}">
               <td class="num" style="text-align:center;font-weight:700;color:var(--kiwoom-navy);">${i + 1}</td>
               <td class="num" style="text-align:center;">${fmt.date(x.date)}</td>
               <td style="text-align:center;"><span class="badge badge-${x.type}">${x.type}</span></td>
@@ -2350,15 +2352,28 @@ function renderComparables() {
 // ============================================================
 let _compMap = null;
 let _compMarkers = {};   // 표 행 클릭 → 이동용: 거래 index → {marker, latlng}
+let _compRowsCache = []; // 현재 표에 그려진(필터 적용) 거래사례 — 클릭 행 유형 안내용
 
 function focusCompCase(i) {
   const rec = _compMarkers[i];
   const box = document.getElementById('compCasesMap');
-  if (box && box.style.display !== 'none') box.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  if (!rec || !_compMap) return;
-  _compMap.invalidateSize();
-  _compMap.setView(rec.latlng, 16, { animate: true });
-  rec.marker.openPopup();
+  // 매매 행: 마커가 있으면 지도를 그 위치로 이동 + 팝업
+  if (rec && _compMap) {
+    if (box && box.style.display !== 'none') box.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    _compMap.invalidateSize();
+    _compMap.setView(rec.latlng, 16, { animate: true });
+    rec.marker.openPopup();
+    return;
+  }
+  // 마커가 없는 경우(전세·월세, 또는 좌표 변환 실패/지도 미표시) — 조용히 무시하지 않고 안내
+  const row = _compRowsCache[i];
+  if (row && row.type && row.type !== '매매') {
+    showToast('🗺️ 지도는 <strong>매매 거래만</strong> 표시합니다(경매 낙찰가 추정용). 전세·월세는 지도 이동이 없습니다.', 'info', 3500);
+  } else if (!box || box.style.display === 'none') {
+    showToast('🗺️ 지도가 아직 표시되지 않았습니다 — 좌표 변환 키 미설정 또는 변환 실패일 수 있습니다.', 'warn', 4000);
+  } else {
+    showToast('🗺️ 이 거래는 주소 좌표를 찾지 못해 지도에 표시되지 않았습니다.', 'warn', 4000);
+  }
 }
 
 async function _renderCompMap(p, comps) {
