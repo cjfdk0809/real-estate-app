@@ -373,8 +373,8 @@ table { border-collapse: collapse; width: 100%; }
   font-weight: 600; 
   border-bottom: 1px solid var(--kiwoom-navy-deep); 
 }
-.tbl td { padding: 11px 12px; border-bottom: 1px solid var(--line); color: var(--ink); }
-.tbl th.text-right { text-align: right; }
+.tbl td { padding: 11px 12px; border-bottom: 1px solid var(--line); color: var(--ink); vertical-align: middle; }
+.tbl th { vertical-align: middle; }
 .tbl th.text-right { text-align: right; }
 .tbl tbody tr:hover { background: var(--bg-subtle); }
 .tbl .num { font-family: var(--mono); text-align: right; }
@@ -3069,7 +3069,7 @@ function distributionTableHTML(ra, bid, opts, meta) {
     <td></td>
   </tr>`;
   return `
-    ${meta.label ? `<div class="text-small" style="margin-bottom:6px;font-weight:700;color:${meta.badgeColor || 'var(--kiwoom-navy)'};">▸ ${meta.label} 시나리오 · 예상 낙찰가 ${_w(bid)}</div>` : ''}
+    ${meta.label ? `<div class="text-small" style="margin-bottom:6px;font-weight:700;color:${meta.badgeColor || 'var(--kiwoom-navy)'};">▸ ${meta.label}${meta.suffix != null ? meta.suffix : ' 시나리오'} · 예상 낙찰가 ${_w(bid)}</div>` : ''}
     ${_summary}
     <div style="overflow-x:auto;">
       <table class="tbl">
@@ -3213,35 +3213,6 @@ function renderScenarioAndNPL(p, auctions, rights) {
   const surplus = (distributable != null && ra.seniorClaim) ? (distributable - ra.seniorClaim) : null;
   const oursRec = computeOursRecovery(ra.classified, midBid, distOpts);
 
-  const scenarioCard = `
-  <div class="card mb-24">
-    <div class="card-title">예상 낙찰가 시나리오 <span class="text-muted text-small" style="font-weight:400;">· ${ap.source || '감정가 미입력'}${cas ? ' · 적용낙찰가율 ' + (cas.scope || '') + ' ' + mid + '%' : ''}</span></div>
-    ${!ap.value ? `<div class="empty"><div class="empty-text">감정가가 없습니다. 여기에 감정가를 직접 입력하세요.<br>
-      <input type="number" placeholder="감정가 (만원)" onchange="updateScenario('appraisal', this.value)" style="margin-top:10px;padding:8px;width:220px;"></div></div>` : `
-    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:16px;font-size:13px;">
-      <span class="text-muted">감정가</span> <strong class="mono">${fmt.won(ap.value)}</strong>
-      <span class="text-muted" style="margin-left:12px;">낙찰가율</span>
-      보수 <strong class="mono">${con}%</strong> · 중립 <strong class="mono text-accent">${mid}%</strong> · 적극 <strong class="mono">${agg}%</strong>
-      <span class="text-small text-muted">(04 경매 적용 낙찰가율 연계 · 조정은 경매 ‘낙찰가율 직접입력’)</span>
-      <span class="text-muted" style="margin-left:12px;">유찰저감</span>
-      <input type="number" value="${discount}" onchange="updateScenario('discount', this.value)" style="width:52px;padding:5px;">%
-      <span style="margin-left:12px;padding-left:12px;border-left:1px solid var(--line);color:var(--kiwoom-pink-deep,#CC00CC);font-weight:700;">AM 의견 낙찰가율</span>
-      <input type="number" value="${amRate}" step="0.1" onchange="updateScenario('mgrBidRate', this.value)" style="width:64px;padding:5px;border-color:var(--kiwoom-pink-deep,#CC00CC);">%
-    </div>
-    <table class="tbl">
-      <thead><tr><th>시나리오</th><th class="text-right">낙찰가율</th><th class="text-right">예상 낙찰가</th></tr></thead>
-      <tbody>
-        <tr><td><span class="badge" style="background:#a8884a;color:#fff;">보수</span></td><td class="num">${con}%</td><td class="price">${fmt.won(calc(con))}</td></tr>
-        <tr><td><span class="badge" style="background:#1e2a44;color:#fff;">중립</span></td><td class="num">${mid}%</td><td class="price text-accent">${fmt.won(midBid)}</td></tr>
-        <tr><td><span class="badge" style="background:#2d5a3d;color:#fff;">적극</span></td><td class="num">${agg}%</td><td class="price">${fmt.won(calc(agg))}</td></tr>
-        <tr><td><span class="badge" style="background:var(--kiwoom-pink-deep,#CC00CC);color:#fff;">AM 의견</span></td><td class="num">${amRate}%</td><td class="price" style="font-weight:800;">${fmt.won(amBid)}</td></tr>
-        <tr><td class="text-muted">1회 유찰 시 최저가</td><td class="num">${100 - discount}%</td><td class="price text-muted">${fmt.won(nextFloor)}</td></tr>
-      </tbody>
-    </table>
-    <div class="text-small text-muted" style="margin-top:8px;">※ 보수/중립/적극 낙찰가율은 04 경매 <strong>적용 낙찰가율</strong>과 자동 연계(보수 −5%p · 적극 +5%p). <strong style="color:var(--kiwoom-pink-deep,#CC00CC);">AM 의견</strong>은 담당자가 위 칸에서 직접 조정하며, 04 경매의 담당자안 낙찰가율과 동일값입니다.</div>
-    `}
-  </div>`;
-
   const nplCard = (ap.value && ra.seniorClaim) ? `
   <div class="card mb-24" style="border-left:4px solid var(--accent);">
     <div class="card-title">NPL 담보여력 분석 <span class="text-muted text-small" style="font-weight:400;">· 중립 시나리오 기준</span></div>
@@ -3291,50 +3262,41 @@ function renderScenarioAndNPL(p, auctions, rights) {
     </div>
   </div>` : '';
 
-  // ── 예상 배당표 (옥션원 예상배당표 양식) ─────────────────────────
-  const _scenDefs = [
-    { key: 'con', label: '보수', color: '#a8884a', bid: calc(con), rate: con },
-    { key: 'mid', label: '중립', color: '#1e2a44', bid: midBid, rate: mid },
-    { key: 'agg', label: '적극', color: '#2d5a3d', bid: calc(agg), rate: agg },
-    { key: 'am', label: 'AM 의견', color: '#CC00CC', bid: amBid, rate: amRate },
-  ];
+  // ── 예상 배당표 (옥션원 예상배당표 양식) — 추정낙찰가(채택안) 기준 ──────────
+  // 03 추정낙찰가에서 최종 채택한 안(AI안/담당자안)의 낙찰예상가를 매각대금으로 가배당표 산정.
+  const be = (typeof resolveBidEstimate === 'function') ? resolveBidEstimate(p.id) : null;
+  const finalBid = be ? be.finalBid : midBid;
+  const finalLabel = be ? be.decisionLabel : '중립';
+  const finalRate = be ? (be.decision === 'mgr' ? be.mRatePct : be.aiRatePct) : mid;
   const _distItems = _distributionItems(ra.classified);
-  const _selKey = ['con', 'mid', 'agg', 'am'].includes(sc.distScen) ? sc.distScen : 'mid';
-  const _selScen = _scenDefs.find(s => s.key === _selKey) || _scenDefs[1];
-  // 시나리오별 당사 회수 비교(요약)
-  const _cmp = _scenDefs.map(s => ({ ...s, d: computeDistribution(ra.classified, s.bid, distOpts) }));
-  const _hasOurs = _cmp[0].d.oursClaim > 0;
+  const _dFinal = computeDistribution(ra.classified, finalBid, distOpts);
+  const _hasOurs = _dFinal.oursClaim > 0;
 
-  const _selBtns = _scenDefs.map(s => `<button type="button" onclick="setDistScenario('${s.key}')"
-      style="padding:5px 12px;border-radius:6px;border:1px solid ${s.key === _selKey ? s.color : 'var(--line-strong,#ccc)'};cursor:pointer;font-size:12px;font-weight:700;
-      background:${s.key === _selKey ? s.color : '#fff'};color:${s.key === _selKey ? '#fff' : 'var(--ink-soft)'};">${s.label} ${s.rate}%</button>`).join('');
-
-  const _cmpRow = _hasOurs ? `
-    <div style="overflow-x:auto;margin-top:14px;">
+  const _oursRow = _hasOurs ? `
+    <div style="overflow-x:auto;margin-top:14px;max-width:460px;">
       <table class="tbl">
-        <thead><tr><th>구분</th>${_scenDefs.map(s => `<th class="text-right" style="color:${s.color};">${s.label}</th>`).join('')}</tr></thead>
+        <thead><tr><th>당사 채권 회수</th><th class="text-right">금액 · 비율</th></tr></thead>
         <tbody>
-          <tr><td>예상 낙찰가</td>${_cmp.map(s => `<td class="price">${fmt.won(s.bid)}</td>`).join('')}</tr>
-          <tr><td>실제 배당할 금액</td>${_cmp.map(s => `<td class="price text-accent">${fmt.won(s.d.pool0)}</td>`).join('')}</tr>
-          <tr style="font-weight:700;"><td>당사 회수액</td>${_cmp.map(s => `<td class="price">${fmt.won(s.d.oursAlloc)}</td>`).join('')}</tr>
-          <tr style="font-weight:700;"><td>당사 회수율</td>${_cmp.map(s => `<td class="num ${s.d.oursRate >= 100 ? '' : 'text-accent'}">${s.d.oursRate != null ? s.d.oursRate.toFixed(1) + '%' : '-'}</td>`).join('')}</tr>
+          <tr><td>당사 채권최고액</td><td class="price">${fmt.won(_dFinal.oursClaim)}</td></tr>
+          <tr style="font-weight:700;"><td>당사 예상 회수액</td><td class="price">${fmt.won(_dFinal.oursAlloc)}</td></tr>
+          <tr style="font-weight:700;"><td>당사 회수율</td><td class="num ${_dFinal.oursRate >= 100 ? '' : 'text-accent'}">${_dFinal.oursRate != null ? _dFinal.oursRate.toFixed(1) + '%' : '-'}</td></tr>
         </tbody>
       </table>
     </div>` : '';
 
   const distCard = (ap.value && _distItems.length) ? `
-  <div class="card mb-24" style="border-left:4px solid #1e2a44;">
-    <div class="card-title">예상 배당표 (가배당) <span class="text-muted text-small" style="font-weight:400;">· 옥션원 예상배당표 양식 · 시나리오 선택</span></div>
+  <div class="card mb-24" style="border-left:4px solid #011F8E;">
+    <div class="card-title">예상 배당표 (가배당) <span class="text-muted text-small" style="font-weight:400;">· 옥션원 예상배당표 양식 · 추정낙찰가(${finalLabel} 채택) 기준</span></div>
+    <div class="text-small text-muted" style="margin:-4px 0 12px;">03 추정낙찰가에서 최종 채택한 <strong>${finalLabel}</strong>의 낙찰예상가 <strong class="mono" style="color:#dc2626;">${fmt.won(finalBid)}</strong> <span style="color:var(--ink-muted);">(낙찰가율 ${finalRate}%)</span>를 매각대금으로 가배당표를 산정합니다.</div>
     <div class="no-print" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
-      ${_selBtns}
-      <span style="margin-left:8px;padding-left:12px;border-left:1px solid var(--line);color:var(--ink-muted);font-size:12px;">경매비용</span>
+      <span style="color:var(--ink-muted);font-size:12px;">경매비용</span>
       <input type="number" value="${distCost}" onchange="updateScenario('auctionCost', this.value)" style="width:100px;padding:5px;" placeholder="만원">
       <span style="color:var(--ink-muted);font-size:12px;">선순위총액</span>
       <input type="number" value="${prevDeposit}" onchange="updateScenario('prevDeposit', this.value)" style="width:100px;padding:5px;" placeholder="만원">
       <span class="text-small text-muted">(만원)</span>
     </div>
-    ${distributionTableHTML(ra, _selScen.bid, distOpts, { label: _selScen.label, badgeColor: _selScen.color })}
-    ${_cmpRow}
+    ${distributionTableHTML(ra, finalBid, distOpts, { label: finalLabel + ' 채택', suffix: '', badgeColor: '#011F8E' })}
+    ${_oursRow}
     <div class="text-small text-muted" style="margin-top:10px;line-height:1.7;">
       ※ 대표 등기부·매각물건명세서 기준으로 작성한 <strong>참고용 예상 배당표(가배당)</strong>입니다. 채권 금액·순위·내용에 따라 실제 배당표와 다를 수 있습니다.<br>
       ※ 담보물권 <strong>설정일(등기순위) 순</strong> 배당. <strong>최우선변제(소액임차·임금채권)·당해세·안분배당(동순위)·경매비용(입력분 제외)</strong>은 미반영. 채권액은 <strong>채권최고액</strong> 기준(실채권원금과 다를 수 있음). 인수금액은 배당재원에서 차감하지 않고 <strong>매수인 인수금액</strong>으로 별도 표기.
@@ -3342,8 +3304,9 @@ function renderScenarioAndNPL(p, auctions, rights) {
     </div>
   </div>` : '';
 
-  // NPL 담보여력 분석 2개 카드는 예상배당표(distCard)와 내용이 중복되어 제거함.
-  return scenarioCard + distCard;
+  // 예상 낙찰가 시나리오 카드는 제거(03 추정낙찰가 채택안으로 일원화).
+  // NPL 담보여력 분석 2개 카드도 예상배당표(distCard)와 내용이 중복되어 제거함.
+  return distCard;
 }
 
 // ============================================================
@@ -3909,7 +3872,7 @@ function renderRights() {
       <div class="card-title">권리관계 목록 <button class="btn btn-primary no-print" onclick="openRightModal()">＋ 추가</button></div>
       ${rights.length === 0 ? '<div class="empty"><div class="empty-text">등록된 권리가 없습니다. 등기부등본을 발급하여 입력하세요.</div></div>' : `
       <table class="tbl">
-        <thead><tr><th>설정일</th><th>유형</th><th class="no-print" style="text-align:center;">당사<br>근저당</th><th>권리자</th><th class="text-right">금액</th><th>월세</th><th>확정일자</th><th>인수여부</th><th>비고</th><th class="no-print"></th></tr></thead>
+        <thead><tr><th class="text-right">설정일</th><th>유형</th><th class="no-print" style="text-align:center;">당사<br>근저당</th><th>권리자</th><th class="text-right">금액</th><th class="text-right">월세</th><th class="text-right">확정일자</th><th>인수여부</th><th>비고</th><th class="no-print"></th></tr></thead>
         <tbody>
           ${rights.map(r => {
             const isAssumed = r.status === '인수';
@@ -3928,7 +3891,7 @@ function renderRights() {
           }).join('')}
         </tbody>
       </table>`}
-      <div class="text-small text-muted no-print" style="margin-top:10px;">※ 당사가 보유(매입)한 NPL 근저당권을 <strong>당사근저당</strong>에 체크하면(<strong>여러 건 선택 가능</strong>), 아래 <strong>NPL 담보여력 분석</strong>·<strong>예상 배당표</strong>에서 해당 채권들의 순위와 회수 가능 여부·시나리오별 회수액이 자동으로 표시됩니다.</div>
+      <div class="text-small text-muted no-print" style="margin-top:10px;">※ 당사가 보유(매입)한 NPL 근저당권을 <strong>당사근저당</strong>에 체크하면(<strong>여러 건 선택 가능</strong>), 아래 <strong>예상 배당표</strong>에서 해당 채권들의 순위와 회수 가능 여부·회수액이 자동으로 표시됩니다.</div>
     </div>
 
     ${renderScenarioAndNPL(p, auctions, state.rights[p.id] || [])}
