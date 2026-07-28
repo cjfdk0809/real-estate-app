@@ -2376,6 +2376,9 @@ function focusCompCase(i) {
     _compMap.invalidateSize();
     _compMap.setView(rec.latlng, 16, { animate: true });
     rec.marker.openPopup();
+    // 별도 창(크게 보기)이 열려 있으면 같이 이동
+    const bw = (window._bigMapWin || {}).comp;
+    if (bw && !bw.closed && typeof bw.focusBigIdx === 'function') { try { bw.focusBigIdx(i); } catch (e) {} }
     return;
   }
   // 마커가 없는 경우(전세·월세, 또는 좌표 변환 실패/지도 미표시) — 조용히 무시하지 않고 안내
@@ -2465,7 +2468,7 @@ async function _renderCompMap(p, comps) {
     // 목록 번호를 마커마다 영구 표시(단지명은 팝업에). 목록 행 ↔ 지도 마커 대응.
     m.bindTooltip(String(no), { permanent: true, direction: 'top', offset: [0, -6], className: 'map-lbl map-lbl-num' });
     _compMarkers[i] = { marker: m, latlng: [lat, lng] };
-    bigMarkers.push({ lat, lng, fill: '#1A2540', label: String(no), showLabel: true, cls: 'map-lbl map-lbl-num', off: -6, popup: casePopup });
+    bigMarkers.push({ lat, lng, idx: i, fill: '#1A2540', label: String(no), showLabel: true, cls: 'map-lbl map-lbl-num', off: -6, popup: casePopup });
     pts.push([lat, lng]);
   });
   if (pts.length > 1) _compMap.fitBounds(L.latLngBounds(pts).pad(0.15));
@@ -2473,7 +2476,7 @@ async function _renderCompMap(p, comps) {
   const saleShown = Object.keys(_compMarkers).length;
   if (!saleShown && note) note.innerHTML = '🗺️ 이 목록에 <strong>매매 거래가 없어</strong> 본건만 표시됩니다. (지도는 매매 거래만 · 경매 낙찰가 추정용)';
   window._bigMapData = window._bigMapData || {};
-  window._bigMapData.comp = { title: '거래사례 지도 · ' + (p.name || '본건'), center, zoom: 14, markers: bigMarkers };
+  window._bigMapData.comp = { title: '거래사례 지도 · ' + (p.name || '본건'), center, zoom: 14, markers: bigMarkers, legend: '<span style="color:#dc2626;">● 본건</span> &nbsp; <span style="color:#1A2540;">● 그 외</span>' };
   const btn = document.getElementById('compBigBtn'); if (btn) btn.style.display = '';
 }
 
@@ -3038,8 +3041,8 @@ function distributionTableHTML(ra, bid, opts, meta) {
       </tbody>
     </table>`;
   const _rows = d.rows.map((r, i) => {
-    const ours = r.isOurs ? ' style="background:rgba(204,0,204,0.06);"' : '';
-    const ourTag = r.isOurs ? ' <span class="badge" style="background:var(--kiwoom-pink-deep,#CC00CC);color:#fff;font-size:9px;">당사</span>' : '';
+    const ours = r.isOurs ? ' style="background:rgba(30,42,68,0.06);"' : '';
+    const ourTag = r.isOurs ? ' <span class="badge" style="background:var(--kiwoom-navy,#1A2540);color:#fff;font-size:9px;">당사</span>' : '';
     const assumedRow = r.status === '인수';
     return `<tr${ours}>
       <td class="num">${i + 1}</td>
@@ -3325,7 +3328,7 @@ function renderScenarioAndNPL(p, auctions, rights) {
       ${_selBtns}
       <span style="margin-left:8px;padding-left:12px;border-left:1px solid var(--line);color:var(--ink-muted);font-size:12px;">경매비용</span>
       <input type="number" value="${distCost}" onchange="updateScenario('auctionCost', this.value)" style="width:100px;padding:5px;" placeholder="만원">
-      <span style="color:var(--ink-muted);font-size:12px;">전경매보증금</span>
+      <span style="color:var(--ink-muted);font-size:12px;">선순위총액</span>
       <input type="number" value="${prevDeposit}" onchange="updateScenario('prevDeposit', this.value)" style="width:100px;padding:5px;" placeholder="만원">
       <span class="text-small text-muted">(만원)</span>
     </div>
@@ -3338,7 +3341,8 @@ function renderScenarioAndNPL(p, auctions, rights) {
     </div>
   </div>` : '';
 
-  return scenarioCard + nplCard + oursCard + distCard;
+  // NPL 담보여력 분석 2개 카드는 예상배당표(distCard)와 내용이 중복되어 제거함.
+  return scenarioCard + distCard;
 }
 
 // ============================================================
@@ -3544,7 +3548,7 @@ async function loadSimilarAuctionCases(p) {
         </table>
       </div>
       <div class="text-small text-muted" style="margin-top:6px;">일치 기준: 같은 동 / 같은 용도 / 면적 ±N% 중 2개 이상. 면적(1·3·5·7·10·15·20%)과 기간(1·3·6·12·24개월)을 함께 넓혀가며 조회 (채택: 면적 ±${d.area_tol_pct}% · ${d.period_label}).</div>
-      <div id="simMapNote" class="text-small text-muted" style="margin-top:12px;">🗺️ <span style="color:#E6007E;font-weight:700;">본건(분홍)</span> · <span style="color:var(--kiwoom-pink-deep,#CC00CC);font-weight:700;">동일 동(자주)</span> · <span style="color:#1A2540;">타 동(네이비)</span> — 마커를 <strong>클릭</strong>하면 팝업에서 <strong>네이버 지도로 이동</strong>합니다. 낙찰사례는 좌표가 없어 동 중심 근사 위치(참고용)입니다.</div>
+      <div id="simMapNote" class="text-small text-muted" style="margin-top:12px;">🗺️ <span style="color:#E6007E;font-weight:700;">본건(분홍)</span> · <span style="color:#1A2540;font-weight:700;">그 외(네이비)</span> — 표의 <strong>사례 행을 클릭</strong>하면 지도(및 별도 창)가 그 위치로 이동합니다. 낙찰사례는 좌표가 없어 동 중심 근사 위치(참고용)입니다.</div>
       <div style="margin-top:6px;"><button id="auctionBigBtn" class="btn btn-ghost" style="display:none;" onclick="openBigMap('auction')">🔎 지도 별도 창으로 크게 보기</button></div>
       <div id="simCasesMap" style="height:360px;border:1px solid var(--line);border-radius:6px;margin-top:4px;display:none;"></div>`;
 
@@ -3571,6 +3575,9 @@ function focusAuctionCase(i) {
   _auctionMap.invalidateSize();
   _auctionMap.setView(rec.latlng, 15, { animate: true });
   rec.marker.openPopup();
+  // 별도 창(크게 보기)이 열려 있으면 같이 이동
+  const bw = (window._bigMapWin || {}).auction;
+  if (bw && !bw.closed && typeof bw.focusBigIdx === 'function') { try { bw.focusBigIdx(i); } catch (e) {} }
 }
 
 // 지도 배경(베이스) 레이어 모음 — 키 불필요. 위성사진·밝은지도·기본을 전환할 수 있다.
@@ -3606,6 +3613,7 @@ function openBigMap(kind) {
   if (!d || !d.markers || !d.markers.length) { alert('먼저 지도를 불러온 뒤 다시 시도하세요.'); return; }
   const w = window.open('', 'bigmap_' + kind, 'width=1280,height=880');
   if (!w) { alert('팝업이 차단되었습니다. 브라우저 주소창의 팝업 차단을 해제해 주세요.'); return; }
+  window._bigMapWin = window._bigMapWin || {}; window._bigMapWin[kind] = w;   // 표 행 클릭 → 별도 창 이동 연동용
   const json = JSON.stringify(d).replace(/</g, '\\u003c');
   w.document.open();
   w.document.write('<!doctype html><html lang="ko"><head><meta charset="utf-8">'
@@ -3622,12 +3630,13 @@ function openBigMap(kind) {
     + '.map-lbl{background:rgba(255,255,255,.92);border:1px solid rgba(0,0,0,.12);border-radius:4px;padding:0 5px;font-size:12px;font-weight:700;color:#1A2540;box-shadow:0 1px 2px rgba(0,0,0,.12);white-space:nowrap;}'
     + '.map-lbl::before{display:none;}'
     + '.map-lbl-origin{color:#E6007E;border-color:#E6007E;}'
+    + '.map-lbl-origin-red{color:#dc2626;border-color:#dc2626;}'
     + '.map-lbl-same{color:#CC00CC;border-color:#CC00CC;}'
     + '.map-lbl-num{min-width:18px;text-align:center;padding:0 4px;border-radius:9px;background:#1A2540;color:#fff;border-color:#1A2540;}'
     + '.map-lbl-num.map-lbl-same{background:#CC00CC;border-color:#CC00CC;color:#fff;}'
     + '</style></head><body>'
     + '<div id="hd"><span class="lg">키움에프앤아이</span> <span>' + d.title + '</span>'
-    + '<span class="leg"><span style="color:#E6007E;">● 본건</span> &nbsp; <span style="color:#CC00CC;">● 본건 동일</span> &nbsp; <span style="color:#1A2540;">● 기타</span></span></div>'
+    + '<span class="leg">' + (d.legend || '<span style="color:#E6007E;">● 본건</span> &nbsp; <span style="color:#1A2540;">● 그 외</span>') + '</span></div>'
     + '<div id="map"></div>'
     + '<scr' + 'ipt>'
     + 'var D=' + json + ';'
@@ -3639,13 +3648,15 @@ function openBigMap(kind) {
     + '};'
     + 'bases["밝은 지도"].addTo(map);'
     + 'L.control.layers(bases,null,{position:"topright",collapsed:false}).addTo(map);'
-    + 'var pts=[];'
+    + 'var pts=[],byIdx={};'
     + 'D.markers.forEach(function(m){'
     + 'var mk=L.circleMarker([m.lat,m.lng],{radius:m.origin?10:7,color:"#fff",weight:m.origin?2:1.5,fillColor:m.fill,fillOpacity:m.origin?1:.9}).addTo(map).bindPopup(m.popup);'
     + 'if(m.showLabel){mk.bindTooltip(m.label,{permanent:true,direction:"top",offset:[0,m.off],className:m.cls});}'
+    + 'if(m.idx!=null){byIdx[m.idx]=mk;}'
     + 'pts.push([m.lat,m.lng]);'
     + '});'
     + 'if(pts.length>1){map.fitBounds(pts,{padding:[50,50]});}'
+    + 'window.focusBigIdx=function(i){var mk=byIdx[i];if(mk){map.setView(mk.getLatLng(),16,{animate:true});mk.openPopup();}};'
     + '</scr' + 'ipt></body></html>');
   w.document.close();
 }
@@ -3690,12 +3701,10 @@ async function _renderAuctionMap(p, items, targetDong) {
   const center = origin || resp.coords[items.findIndex((x, i) => resp.coords[String(i)])];
   _auctionMap = L.map(box, { scrollWheelZoom: true }).setView(center, 13);
   _attachBaseLayers(_auctionMap);
-  // 주소를 네이버 지도 검색으로 여는 링크 (좌표 키 없이도 동작)
-  const naverUrl = q => `https://map.naver.com/p/search/${encodeURIComponent((q || '').trim())}`;
   const pts = [];
   const bigMarkers = [];   // 별도 창(크게 보기)에서 재현할 마커 데이터
   if (origin) {
-    const originPopup = `<b>${p.name || '본건'}</b><br>본건${originApprox ? ' <span style="color:#888;">(동 중심 근사)</span>' : ''}${originAddr ? `<br><span style="color:#888;">${originAddr}</span>` : ''}<br><a href="${naverUrl(originAddr)}" target="_blank" rel="noopener" style="color:#E6007E;font-weight:600;">🔗 네이버 지도에서 보기</a>`;
+    const originPopup = `<b>${p.name || '본건'}</b><br>본건${originApprox ? ' <span style="color:#888;">(동 중심 근사)</span>' : ''}${originAddr ? `<br><span style="color:#888;">${originAddr}</span>` : ''}`;
     L.circleMarker(origin, { radius: 9, color: '#fff', weight: 2, fillColor: '#E6007E', fillOpacity: 1 })
       .addTo(_auctionMap)
       .bindTooltip('본건', { permanent: true, direction: 'top', offset: [0, -8], className: 'map-lbl map-lbl-origin' })
@@ -3716,21 +3725,21 @@ async function _renderAuctionMap(p, items, targetDong) {
     const lng = c[1] + rad * Math.sin(ang) / Math.cos(c[0] * Math.PI / 180);
     const same = !!(targetDong && dong === targetDong);
     const caseAddr = (x.address || dong || '').trim();
-    const casePopup = `<b>${dong} ${x.use_type || ''}</b><br>${x.sale_date || ''} · 낙찰가율 <b>${x.bid_rate != null ? x.bid_rate + '%' : '-'}</b><br>${x.area_sqm != null ? x.area_sqm + '㎡' : ''}${x.fail_count != null ? ' · 유찰 ' + x.fail_count + '회' : ''}<br><span style="color:#888;">동 중심 근사 위치</span><br><a href="${naverUrl(caseAddr)}" target="_blank" rel="noopener" style="color:${same ? '#CC00CC' : '#1A2540'};font-weight:600;">🔗 네이버 지도에서 보기</a>`;
+    const casePopup = `<b>${dong} ${x.use_type || ''}</b><br>${x.sale_date || ''} · 낙찰가율 <b>${x.bid_rate != null ? x.bid_rate + '%' : '-'}</b><br>${x.area_sqm != null ? x.area_sqm + '㎡' : ''}${x.fail_count != null ? ' · 유찰 ' + x.fail_count + '회' : ''}<br><span style="color:#888;">동 중심 근사 위치</span>`;
     const m = L.circleMarker([lat, lng], { radius: 6, color: '#fff', weight: 1.5,
-      fillColor: same ? '#CC00CC' : '#1A2540', fillOpacity: 0.9 })
+      fillColor: '#1A2540', fillOpacity: 0.9 })
       .addTo(_auctionMap)
       .bindPopup(casePopup);
-    // 동 이름 글자 라벨: 동별 첫 마커에만(겹침 방지). 같은 동은 강조색.
-    if (k === 1) m.bindTooltip(dong, { permanent: true, direction: 'top', offset: [0, -6], className: 'map-lbl' + (same ? ' map-lbl-same' : '') });
+    // 동 이름 글자 라벨: 동별 첫 마커에만(겹침 방지).
+    if (k === 1) m.bindTooltip(dong, { permanent: true, direction: 'top', offset: [0, -6], className: 'map-lbl' });
     _auctionMarkers[i] = { marker: m, latlng: [lat, lng] };   // 표 행 클릭 → 이동용
-    bigMarkers.push({ lat, lng, fill: same ? '#CC00CC' : '#1A2540', label: dong, showLabel: k === 1, cls: 'map-lbl' + (same ? ' map-lbl-same' : ''), off: -6, popup: casePopup });
+    bigMarkers.push({ lat, lng, idx: i, fill: '#1A2540', label: dong, showLabel: k === 1, cls: 'map-lbl', off: -6, popup: casePopup });
     pts.push([lat, lng]);
   });
   if (pts.length > 1) _auctionMap.fitBounds(L.latLngBounds(pts).pad(0.15));
   setTimeout(() => _auctionMap && _auctionMap.invalidateSize(), 100);
   window._bigMapData = window._bigMapData || {};
-  window._bigMapData.auction = { title: '경매 낙찰사례 지도 · ' + (p.name || '본건'), center, zoom: 13, markers: bigMarkers };
+  window._bigMapData.auction = { title: '경매 낙찰사례 지도 · ' + (p.name || '본건'), center, zoom: 13, markers: bigMarkers, legend: '<span style="color:#E6007E;">● 본건</span> &nbsp; <span style="color:#1A2540;">● 그 외</span>' };
   const btn = document.getElementById('auctionBigBtn'); if (btn) btn.style.display = '';
 }
 

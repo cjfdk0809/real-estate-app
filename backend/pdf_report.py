@@ -31,9 +31,9 @@ def _asset(name):
             return p
     return os.path.join(_HERE, name)
 
-NAVY = colors.HexColor('#1A2540')
+NAVY = colors.HexColor('#011F8E')   # 앱 메인 네이비 (헤더·표 머리글·밑줄) — 기존 근접-검정(#1A2540)에서 변경
 PINK = colors.HexColor('#E6007E')
-INK = colors.HexColor('#22272E')
+INK = colors.HexColor('#00164D')    # 본문 글자 네이비 — 기존 근접-검정(#22272E)에서 변경
 MUTED = colors.HexColor('#6B7280')
 LINE = colors.HexColor('#E5E7EB')
 
@@ -71,6 +71,8 @@ def _styles():
                               textColor=INK, alignment=2),
         'cellH': ParagraphStyle('cellH', fontName='NanumBold', fontSize=8.5, leading=12,
                               textColor=colors.white),
+        'cellHR': ParagraphStyle('cellHR', fontName='NanumBold', fontSize=8.5, leading=12,
+                              textColor=colors.white, alignment=2),
         'kvK': ParagraphStyle('kvK', fontName='Nanum', fontSize=9, leading=13,
                              textColor=MUTED),
         'kvV': ParagraphStyle('kvV', fontName='NanumBold', fontSize=9.5, leading=13,
@@ -135,7 +137,9 @@ def _kv_table(rows, st):
 
 
 def _grid_table(headers, rows, st, align=None):
-    head = [Paragraph(str(h), st['cellH']) for h in headers]
+    # 우측 정렬 컬럼(align[i]=='r')은 머리글도 우측 정렬해 숫자열과 세로선을 맞춘다.
+    head = [Paragraph(str(h), st['cellHR'] if (align and i < len(align) and align[i] == 'r') else st['cellH'])
+            for i, h in enumerate(headers)]
     body = []
     for r in rows:
         cells = []

@@ -573,14 +573,14 @@
       return '<tr>'
         + '<td style="padding:6px 0;color:var(--ink-soft);font-size:13px;">' + label + '<div style="color:var(--ink-muted);font-size:11px;">' + desc + '</div></td>'
         + '<td style="padding:6px 8px;text-align:right;color:var(--ink-muted);font-variant-numeric:tabular-nums;font-size:13px;">1.00</td>'
-        + '<td style="padding:6px 0 6px 8px;text-align:right;">' + facInput(which, mgrVal) + '</td>'
+        + '<td style="padding:6px 8px;text-align:right;">' + facInput(which, mgrVal) + '</td>'
         + '</tr>';
     };
     var rateRow = function (label, desc, aiPct, mgrPct) {
       return '<tr>'
         + '<td style="padding:6px 0;color:var(--ink-soft);font-size:13px;font-weight:600;">' + label + '<div style="color:var(--ink-muted);font-size:11px;font-weight:400;">' + desc + '</div></td>'
         + '<td style="padding:6px 8px;text-align:right;color:var(--ink-muted);font-variant-numeric:tabular-nums;font-size:13px;">' + aiPct + '%</td>'
-        + '<td style="padding:6px 0 6px 8px;text-align:right;white-space:nowrap;">'
+        + '<td style="padding:6px 8px;text-align:right;white-space:nowrap;">'
         + '<input type="number" min="' + CFG.minRate + '" max="' + CFG.maxRate + '" step="0.1" value="' + (Math.round(mgrPct * 10) / 10) + '" '
         + 'onchange="window.updateBidFactor(\'rate\', this.value)" '
         + 'style="width:60px;padding:4px 6px;text-align:right;font-variant-numeric:tabular-nums;border:1px solid var(--line-strong,#c2cad9);border-radius:6px;font-size:13px;font-weight:700;color:var(--ink);">'
@@ -588,11 +588,11 @@
         + '</tr>';
     };
     var priceBox = function (key, title, amount, sub, active) {
-      return '<label style="flex:1;min-width:158px;cursor:pointer;display:block;border:2px solid ' + (active ? PINK : 'var(--line,#dfe4ee)') + ';background:' + (active ? 'var(--kiwoom-pink-soft,#FFE6FF)' : 'transparent') + ';border-radius:10px;padding:12px 14px;">'
+      return '<label style="flex:1;min-width:158px;cursor:pointer;display:block;border:2px solid ' + (active ? '#dc2626' : 'var(--line,#dfe4ee)') + ';background:transparent;border-radius:10px;padding:12px 14px;">'
         + '<div style="display:flex;align-items:center;gap:8px;">'
-        + '<input type="radio" name="bidDecision_' + pid + '" ' + (active ? 'checked' : '') + ' onchange="window.setBidDecision(\'' + pid + '\',\'' + key + '\')" style="accent-color:' + PINK + ';width:16px;height:16px;">'
+        + '<input type="radio" name="bidDecision_' + pid + '" ' + (active ? 'checked' : '') + ' onchange="window.setBidDecision(\'' + pid + '\',\'' + key + '\')" style="accent-color:#dc2626;width:16px;height:16px;">'
         + '<span style="font-weight:700;color:var(--ink);font-size:13px;">' + title + '</span></div>'
-        + '<div class="mono" style="font-size:22px;font-weight:800;color:' + (active ? PINK : 'var(--ink-soft)') + ';margin-top:6px;line-height:1.1;">' + won(amount) + '</div>'
+        + '<div class="mono" style="font-size:22px;font-weight:800;color:' + (active ? 'var(--kiwoom-navy-deep)' : 'var(--ink-soft)') + ';margin-top:6px;line-height:1.1;">' + won(amount) + '</div>'
         + '<div style="color:var(--ink-muted);font-size:11px;margin-top:3px;">' + sub + '</div>'
         + '</label>';
     };
@@ -611,14 +611,14 @@
       + '</table>'
       + '<div style="margin-top:16px;font-weight:700;color:var(--ink);font-size:13px;">보정 요인 <span class="text-muted" style="font-weight:400;font-size:11px;">· 담당자안: 요인 0.50~1.50, 낙찰가율 ' + CFG.minRate + '~' + CFG.maxRate + '% 직접 입력</span></div>'
       + '<table style="width:100%;border-collapse:collapse;margin-top:6px;">'
-      + '<thead><tr><th style="text-align:left;font-size:11px;color:var(--ink-muted);font-weight:600;padding-bottom:6px;">항목</th><th style="text-align:center;font-size:15px;color:var(--ink);font-weight:800;padding-bottom:6px;">AI안</th><th style="text-align:center;font-size:15px;color:' + PINK + ';font-weight:800;padding-bottom:6px;">담당자안</th></tr></thead>'
+      + '<thead><tr><th style="text-align:left;font-size:11px;color:var(--ink-muted);font-weight:600;padding-bottom:6px;">항목</th><th style="text-align:right;width:130px;font-size:15px;color:var(--ink);font-weight:800;padding:0 8px 6px 8px;">AI안</th><th style="text-align:right;width:130px;font-size:15px;color:var(--kiwoom-navy);font-weight:800;padding:0 8px 6px 8px;">담당자안</th></tr></thead>'
       + '<tbody>'
       + facRow('단지외부요인', '교통·입지·학군·환경', be.mExt, 'ext')
       + facRow('단지내부요인', '브랜드·세대수·구조·노후도', be.mInt, 'int')
       + facRow('호별요인', '층·향·위치별 효용', be.mHo, 'ho')
       + rateRow('낙찰가율', cas.scope + (cas.asof ? ' · 한국부동산원 ' + cas.asof : ''), be.aiRatePct, be.mRatePct)
       + facRow('기타요인', '명도난이도·시장상황·급매 등 개별조정', be.mEtc, 'etc')
-      + '<tr style="border-top:1px solid var(--line,#dfe4ee);"><td style="padding:6px 0;font-weight:700;font-size:13px;color:var(--ink-soft);">요인 곱 <span style="font-weight:400;color:var(--ink-muted);font-size:11px;">(낙찰가율 제외)</span></td><td style="padding:6px 8px;text-align:right;font-weight:700;font-size:13px;">1.00</td><td style="padding:6px 0;text-align:right;font-weight:700;font-size:13px;color:' + PINK + ';">' + factorProd.toFixed(2) + '</td></tr>'
+      + '<tr style="border-top:1px solid var(--line,#dfe4ee);"><td style="padding:6px 0;font-weight:700;font-size:13px;color:var(--ink-soft);">요인 곱 <span style="font-weight:400;color:var(--ink-muted);font-size:11px;">(낙찰가율 제외)</span></td><td style="padding:6px 8px;text-align:right;font-weight:700;font-size:13px;">1.00</td><td style="padding:6px 8px;text-align:right;font-weight:700;font-size:13px;color:var(--kiwoom-navy);">' + factorProd.toFixed(2) + '</td></tr>'
       + '</tbody></table>'
       + '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;">'
       + priceBox('ai', 'AI안 채택', be.aiBid, '요인 1.00 · 낙찰가율 ' + be.aiRatePct + '%', dec === 'ai')
