@@ -4139,18 +4139,18 @@ function renderReport() {
     <div class="section-h">1. 본건 개요</div>
     <div class="grid grid-2 mb-24">
       <div>
-        <div class="info-row"><div class="info-label">단지명</div><div class="info-value">${p.name}</div></div>
-        <div class="info-row"><div class="info-label">소재지</div><div class="info-value">${p.addrRoad || p.addrLot}</div></div>
-        <div class="info-row"><div class="info-label">동·호</div><div class="info-value">${p.building} ${p.unit}</div></div>
-        <div class="info-row"><div class="info-label">전용면적</div><div class="info-value mono">${p.exclusiveArea}㎡ (${fmt.pyong(p.exclusiveArea)})</div></div>
-        <div class="info-row"><div class="info-label">공급면적</div><div class="info-value mono">${p.supplyArea}㎡ (${fmt.pyong(p.supplyArea)})</div></div>
+        <div class="info-row"><div class="info-label">단지명</div><div class="info-value">${p.name || '-'}</div></div>
+        <div class="info-row"><div class="info-label">소재지</div><div class="info-value">${p.addrRoad || p.addrLot || '-'}</div></div>
+        <div class="info-row"><div class="info-label">동·호</div><div class="info-value">${[p.building, p.unit].filter(Boolean).join(' ') || '-'}</div></div>
+        <div class="info-row"><div class="info-label">전용면적</div><div class="info-value mono">${p.exclusiveArea ? p.exclusiveArea + '㎡ (' + fmt.pyong(p.exclusiveArea) + ')' : '-'}</div></div>
+        ${p.supplyArea ? `<div class="info-row"><div class="info-label">공급면적</div><div class="info-value mono">${p.supplyArea}㎡ (${fmt.pyong(p.supplyArea)})</div></div>` : ''}
       </div>
       <div>
-        <div class="info-row"><div class="info-label">준공일</div><div class="info-value mono">${fmt.date(p.completionDate)}</div></div>
-        <div class="info-row"><div class="info-label">총 세대</div><div class="info-value mono">${p.totalUnits}세대</div></div>
-        <div class="info-row"><div class="info-label">시공·시행</div><div class="info-value">${p.contractor} / ${p.developer}</div></div>
-        <div class="info-row"><div class="info-label">용도지역</div><div class="info-value">${p.zoning}</div></div>
-        <div class="info-row"><div class="info-label">공시가격</div><div class="info-value mono">${p.publicPrice ? p.publicPrice.toLocaleString() + '원' : '-'}</div></div>
+        ${p.completionDate ? `<div class="info-row"><div class="info-label">준공일</div><div class="info-value mono">${fmt.date(p.completionDate)}</div></div>` : ''}
+        ${p.totalUnits ? `<div class="info-row"><div class="info-label">총 세대</div><div class="info-value mono">${p.totalUnits}세대</div></div>` : ''}
+        ${(p.contractor || p.developer) ? `<div class="info-row"><div class="info-label">시공·시행</div><div class="info-value">${[p.contractor, p.developer].filter(Boolean).join(' / ')}</div></div>` : ''}
+        ${p.zoning ? `<div class="info-row"><div class="info-label">용도지역</div><div class="info-value">${p.zoning}</div></div>` : ''}
+        ${p.publicPrice ? `<div class="info-row"><div class="info-label">공시가격</div><div class="info-value mono">${p.publicPrice.toLocaleString()}원</div></div>` : ''}
       </div>
     </div>
 
