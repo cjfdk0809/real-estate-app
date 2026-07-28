@@ -4337,7 +4337,9 @@ async function handleModalRegistryFile(file) {
     
     _pendingRegistryAnalysis = data.analysis;
     applyRegistryToModalForm(data.analysis);
-    
+    // 🆕 분석으로 주소·전용면적이 채워졌으면 즉시 실거래 백그라운드 선수집 시작(저장 대기 최소화)
+    prefetchTradesEarly();
+
     const a = data.analysis;
     const rightsCount = (a.rights_timeline || []).filter(r => !r.is_cancelled && r.amount).length;
     statusEl.innerHTML = `<div style="padding: 12px 14px; background: #ecfdf5; border-left: 3px solid #03c75a; border-radius: 6px; font-size: 12px; color: #065f46;">
@@ -4727,6 +4729,8 @@ async function autoLookupBuildingInfo() {
       statusDiv.innerHTML = `❌ 네트워크 오류: ${e.message}`;
     }
   }
+  // 🆕 표제부·시군구코드·전용면적이 준비되면 실거래를 백그라운드로 미리 수집(저장 대기 최소화)
+  prefetchTradesEarly();
 }
 
 // ============================================================
@@ -4971,6 +4975,54 @@ async function autoFetchComparables(propertyId, propertyData, ctx) {
     _progDone(0);
     return { error: e.message };
   }
+}
+
+// ── 실거래 백그라운드 '선(先)수집' ─────────────────────────────────────────────
+// 등기부 분석이 끝나 주소·면적이 잡히는 즉시(저장 전에) 실거래 수집을 백그라운드로 시작한다.
+// 담당자가 폼을 검토하는 동안 수집이 진행되므로, 저장 시 두 번째 대기가 사라지거나 크게 줄어든다.
+// autoFetchComparables 를 그대로 재사용(silent 모드)하며, 저장 시 같은 id·조건이면 결과를 재사용한다.
+let _preCollectId = null, _preCollectPromise = null, _preCollectResult = null, _preCollectDone = false, _preCollectSig = null;
+function _pcSig(o) {
+  o = o || {};
+  return [
+    (o.addrLot || o.addrRoad || '').replace(/\s/g, ''),
+    (o.name || '').replace(/\s/g, ''),
+    (o.usage || o.use || '').replace(/\s/g, ''),
+    String(o.exclusiveArea || '')
+  ].join('|');
+}
+function prefetchTradesEarly() {
+  try {
+    if (editingPropertyId) return;               // 편집 모드는 기존 흐름 유지
+    if (_preCollectPromise) return;              // 모달 세션당 1회만 시작
+    const form = document.getElementById('propertyForm');
+    if (!form) return;
+    const fd = Object.fromEntries(new FormData(form));
+    if (!(fd.addrLot || fd.addrRoad)) return;    // 주소 필수
+    if (!fd.exclusiveArea) return;               // 전용면적 없으면 조건 미달 → 저장 시 처리
+    const id = uid();
+    const pdata = Object.assign({ id }, fd, { exclusiveArea: Number(fd.exclusiveArea) });
+    const ctx = { lawdCd: _currentLawdCd, bun: _currentBun, silent: true, hadRegistry: !!_pendingRegistryAnalysis };
+    _preCollectId = id;
+    _preCollectSig = _pcSig(pdata);
+    _preCollectDone = false;
+    _preCollectResult = null;
+    _preCollectPromise = autoFetchComparables(id, pdata, ctx)
+      .then(res => { _preCollectResult = res; _preCollectDone = true; return res; })
+      .catch(err => { _preCollectResult = { error: (err && err.message) || '오류' }; _preCollectDone = true; });
+    console.log('[선수집] 실거래 백그라운드 선수집 시작 · id=', id, '· sig=', _preCollectSig);
+  } catch (e) { console.warn('[선수집] 스킵:', e); }
+}
+// 미저장 상태로 남은 선수집분(거래사례) 정리 + 상태 초기화
+function _resetPreCollect(cleanupOrphan) {
+  try {
+    if (cleanupOrphan && _preCollectId && !(state.properties && state.properties[_preCollectId])
+        && state.comparables && state.comparables[_preCollectId]) {
+      delete state.comparables[_preCollectId];
+      try { saveState(); } catch (e) {}
+    }
+  } catch (e) {}
+  _preCollectId = null; _preCollectPromise = null; _preCollectResult = null; _preCollectDone = false; _preCollectSig = null;
 }
 
 // 화면 우측 하단 토스트 알림
@@ -5828,6 +5880,7 @@ const COMMON_DONG_CODES = {
 let editingPropertyId = null;
 function openPropertyModal(id) {
   editingPropertyId = id || null;
+  _resetPreCollect(true);   // 직전 미저장 선수집분 정리 + 상태 초기화
   const form = document.getElementById('propertyForm');
   form.reset();
   // 단지 자동입력 박스 초기화
@@ -5921,7 +5974,7 @@ document.getElementById('propertyForm').addEventListener('submit', async (e) => 
   const data = Object.fromEntries(new FormData(e.target));
   const numericFields = ['exclusiveArea','supplyArea','commonArea','landShare','floor','totalFloors','totalUnits','publicPrice'];
   numericFields.forEach(k => { if (data[k]) data[k] = Number(data[k]); });
-  const id = editingPropertyId || uid();
+  const id = editingPropertyId || _preCollectId || uid();
   state.properties[id] = { id, ...data };
   if (!state.comparables[id]) state.comparables[id] = [];
   if (!state.auctions[id]) state.auctions[id] = [];
@@ -5950,8 +6003,19 @@ document.getElementById('propertyForm').addEventListener('submit', async (e) => 
   });
   renderView();
 
-  // Phase 3: 거래사례 자동수집 — 물건검색의 마지막 단계로 처리 (등기부분석 + 거래사례를 한 흐름으로)
-  const result = await autoFetchComparables(id, state.properties[id], _autoCtx);
+  // Phase 3: 거래사례 자동수집 — 분석 직후 백그라운드 '선수집'이 있으면 재사용해 대기 최소화
+  let result;
+  const _canReuse = !editingPropertyId && _preCollectId === id && _preCollectSig === _pcSig(state.properties[id]);
+  if (_canReuse && !_preCollectDone) {
+    showToast('⏳ 미리 시작한 실거래 수집을 마무리하는 중...', 'info', 2500);
+    try { await _preCollectPromise; } catch (e) {}
+  }
+  if (_canReuse && _preCollectResult && !_preCollectResult.skipped && !_preCollectResult.error) {
+    result = _preCollectResult;   // 선수집 완료분 재사용 → 저장 시 추가 대기 없음
+  } else {
+    result = await autoFetchComparables(id, state.properties[id], _autoCtx);
+  }
+  _resetPreCollect(false);
   const _regTag = _hadRegistry ? '등기부 분석 + ' : '';
   if (result.skipped) {
     showToast(
