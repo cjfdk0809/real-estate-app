@@ -3033,12 +3033,12 @@ function distributionTableHTML(ra, bid, opts, meta) {
   const d = computeDistribution(ra.classified, bid, opts);
   const _w = (v) => fmt.won(v);
   const _summary = `
-    <table class="tbl" style="margin-bottom:10px;">
+    <table class="tbl" style="margin-bottom:10px;max-width:460px;">
       <tbody>
-        <tr><td style="width:160px;color:var(--ink-muted);">매각(예상)대금</td><td class="price">${_w(bid)}</td>
-            <td style="width:130px;color:var(--ink-muted);">전(前)경매보증금</td><td class="price">${_w(d.deposit)}</td></tr>
-        <tr><td style="color:var(--ink-muted);">경매비용</td><td class="price">${_w(d.cost)}</td>
-            <td style="color:var(--ink-muted);">실제 배당할 금액</td><td class="price text-accent" style="font-weight:800;">${_w(d.pool0)}</td></tr>
+        <tr><td style="width:180px;color:var(--ink-muted);">채택안 금액</td><td class="price">${_w(bid)}</td></tr>
+        <tr><td style="color:var(--ink-muted);">경매비용</td><td class="price">${_w(d.cost)}</td></tr>
+        <tr><td style="color:var(--ink-muted);">선순위총액</td><td class="price">${_w(d.deposit)}</td></tr>
+        <tr><td style="color:var(--ink-muted);">실제 배당예상금액</td><td class="price text-accent" style="font-weight:800;">${_w(d.pool0)}</td></tr>
       </tbody>
     </table>`;
   const _rows = d.rows.map((r, i) => {
@@ -3075,8 +3075,8 @@ function distributionTableHTML(ra, bid, opts, meta) {
       <table class="tbl">
         <thead><tr>
           <th>순위</th><th>이유</th><th>채권자</th>
-          <th class="text-right">채권최고액</th><th class="text-right">배당금액</th><th class="text-right">배당비율</th>
-          <th class="text-right">미배당금액</th><th class="text-right">매수인<br>인수금액</th><th class="text-right">배당후<br>잔여금</th><th>소멸여부</th>
+          <th class="text-right">채권최고액</th><th class="text-right">배당금액</th><th class="text-right">배당율</th>
+          <th class="text-right">미배당금액</th><th class="text-right">인수금액</th><th class="text-right">잔여금</th><th>소멸</th>
         </tr></thead>
         <tbody>
           ${_rows || `<tr><td colspan="10" class="text-muted" style="text-align:center;padding:12px;">배당·인수 대상 권리가 없습니다.</td></tr>`}
@@ -3295,7 +3295,7 @@ function renderScenarioAndNPL(p, auctions, rights) {
       <input type="number" value="${prevDeposit}" onchange="updateScenario('prevDeposit', this.value)" style="width:100px;padding:5px;" placeholder="만원">
       <span class="text-small text-muted">(만원)</span>
     </div>
-    ${distributionTableHTML(ra, finalBid, distOpts, { label: finalLabel + ' 채택', suffix: '', badgeColor: '#011F8E' })}
+    ${distributionTableHTML(ra, finalBid, distOpts, {})}
     ${_oursRow}
     <div class="text-small text-muted" style="margin-top:10px;line-height:1.7;">
       ※ 대표 등기부·매각물건명세서 기준으로 작성한 <strong>참고용 예상 배당표(가배당)</strong>입니다. 채권 금액·순위·내용에 따라 실제 배당표와 다를 수 있습니다.<br>
@@ -4160,16 +4160,10 @@ function renderReport() {
   const _distOpts = { cost: _distCost, prevDeposit: _prevDeposit };
   const _distributable = _midBid != null ? Math.max(0, _midBid + _prevDeposit - _distCost) : null;
   const _recovery = (_distributable != null && ra.seniorClaim) ? Math.min(100, _distributable / ra.seniorClaim * 100) : null;
-  // 예상 배당표 — 화면과 동일 로직. 리포트는 4개 시나리오 각각의 상세표를 수록.
+  // 예상 배당표는 03 추정낙찰가 최종 채택안(AI안/담당자안) 기준으로 산정(06 모달과 동일).
+  const _fDist = _finalBid != null ? computeDistribution(ra.classified, _finalBid, _distOpts) : null;
+  const _fHasOurs = !!(_fDist && _fDist.oursClaim > 0);
   const _rItems = (typeof _distributionItems === 'function') ? _distributionItems(ra.classified) : [];
-  const _rScen = [
-    { label: '보수', color: '#a8884a', bid: _bid(_con), rate: _con },
-    { label: '중립', color: '#1e2a44', bid: _midBid, rate: _mid },
-    { label: '적극', color: '#2d5a3d', bid: _bid(_agg), rate: _agg },
-    { label: 'AM 의견', color: '#CC00CC', bid: _amBid, rate: _amRate },
-  ];
-  const _rCmp = _rScen.map(s => ({ ...s, d: computeDistribution(ra.classified, s.bid, _distOpts) }));
-  const _rHasOurs = _rCmp.length && _rCmp[0].d.oursClaim > 0;
 
   c.innerHTML = `
     <div class="page-head" style="display: flex; justify-content: space-between; align-items: flex-end; gap: 16px;">
@@ -4228,24 +4222,13 @@ function renderReport() {
       </tbody>
     </table>` : ''}
 
-    ${ap.value ? `
-    <div class="section-h">3-1. 예상 낙찰가 시나리오 &amp; NPL 담보여력</div>
-    <table class="tbl mb-16">
-      <thead><tr><th>시나리오</th><th class="text-right">낙찰가율</th><th class="text-right">예상 낙찰가</th></tr></thead>
-      <tbody>
-        <tr><td>보수</td><td class="num">${_con}%</td><td class="price">${fmt.won(_bid(_con))}</td></tr>
-        <tr><td>중립</td><td class="num">${_mid}%</td><td class="price text-accent">${fmt.won(_midBid)}</td></tr>
-        <tr><td>적극</td><td class="num">${_agg}%</td><td class="price">${fmt.won(_bid(_agg))}</td></tr>
-        <tr><td>AM 의견</td><td class="num">${_amRate}%</td><td class="price">${fmt.won(_amBid)}</td></tr>
-      </tbody>
-    </table>
+    ${(ap.value && ra.seniorClaim) ? `
+    <div class="section-h">3-1. NPL 담보여력</div>
     <div class="info-row"><div class="info-label">기준 감정가</div><div class="info-value mono">${fmt.won(ap.value)} <span class="text-muted text-small">(${ap.source})</span></div></div>
-    ${ra.seniorClaim ? `
     <div class="info-row"><div class="info-label">1순위 채권최고액</div><div class="info-value mono">${fmt.won(ra.seniorClaim)}${ra.seniorHolder ? ' (' + ra.seniorHolder + ')' : ''}</div></div>
     <div class="info-row"><div class="info-label">선순위 인수금액</div><div class="info-value mono">${fmt.won(ra.assumedTotal)}</div></div>
-    <div class="info-row"><div class="info-label">1순위 회수율(중립·추정)</div><div class="info-value mono text-accent">${_recovery != null ? _recovery.toFixed(1) + '%' : '-'}</div></div>
+    <div class="info-row"><div class="info-label">1순위 회수율(채택안 기준)</div><div class="info-value mono text-accent">${_finalRecovery != null ? _finalRecovery.toFixed(1) + '%' : '-'}</div></div>
     ${ra.hasTaxLien ? '<div class="notice" style="margin-top:8px;"><div class="notice-title">⚠️ 당해세 우선배당 리스크</div>압류(국세·지방세·건보) 등기 존재 — 당해세는 1순위 근저당보다 우선 배당될 수 있어 교부청구액(체납세액 총액) 확인 필수.</div>' : ''}
-    ` : ''}
     ` : ''}
 
     ${_be ? `
@@ -4264,17 +4247,16 @@ function renderReport() {
     ` : ''}
 
     ${(ap.value && _rItems.length) ? `
-    <div class="section-h">3-3. 예상 배당표 (가배당 · 중립 시나리오)</div>
-    ${distributionTableHTML(ra, _midBid, _distOpts, { label: '중립', badgeColor: '#1e2a44' })}
-    ${_rHasOurs ? `
-    <div class="text-small" style="margin-top:12px;margin-bottom:4px;font-weight:700;">시나리오별 당사 회수 비교</div>
-    <table class="tbl mb-16">
-      <thead><tr><th>구분</th>${_rScen.map(s => `<th class="text-right">${s.label} ${s.rate}%</th>`).join('')}</tr></thead>
+    <div class="section-h">3-3. 예상 배당표 (가배당 · ${_decLabel} 채택 기준)</div>
+    ${distributionTableHTML(ra, _finalBid, _distOpts, { label: _decLabel + ' 채택', suffix: '', badgeColor: '#011F8E' })}
+    ${_fHasOurs ? `
+    <div class="text-small" style="margin-top:12px;margin-bottom:4px;font-weight:700;">당사 채권 회수 (채택안 기준)</div>
+    <table class="tbl mb-16" style="max-width:460px;">
+      <thead><tr><th>구분</th><th class="text-right">금액 · 비율</th></tr></thead>
       <tbody>
-        <tr><td>예상 낙찰가</td>${_rCmp.map(s => `<td class="price">${fmt.won(s.bid)}</td>`).join('')}</tr>
-        <tr><td>실제 배당할 금액</td>${_rCmp.map(s => `<td class="price">${fmt.won(s.d.pool0)}</td>`).join('')}</tr>
-        <tr><td>당사 회수액</td>${_rCmp.map(s => `<td class="price">${fmt.won(s.d.oursAlloc)}</td>`).join('')}</tr>
-        <tr><td>당사 회수율</td>${_rCmp.map(s => `<td class="num">${s.d.oursRate != null ? s.d.oursRate.toFixed(1) + '%' : '-'}</td>`).join('')}</tr>
+        <tr><td>당사 채권최고액</td><td class="price">${fmt.won(_fDist.oursClaim)}</td></tr>
+        <tr><td>당사 예상 회수액</td><td class="price">${fmt.won(_fDist.oursAlloc)}</td></tr>
+        <tr><td>당사 회수율</td><td class="num">${_fDist.oursRate != null ? _fDist.oursRate.toFixed(1) + '%' : '-'}</td></tr>
       </tbody>
     </table>` : ''}
     <div class="text-small text-muted" style="margin-top:6px;line-height:1.6;">※ 대표 등기부·매각물건명세서 기준 참고용 예상 배당표(가배당). 담보물권 설정일(등기순위) 순 배당이며 최우선변제·당해세·안분배당·경매비용(입력분 제외)은 미반영, 채권액은 채권최고액 기준. 인수금액은 배당재원에서 차감하지 않고 매수인 인수금액으로 별도 표기. 실제 배당과 다를 수 있음.${ra.hasTaxLien ? ' 당해세 우선배당 리스크 있음(교부청구액 확인 필요).' : ''}</div>
