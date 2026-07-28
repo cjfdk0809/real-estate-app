@@ -3201,7 +3201,10 @@ function renderScenarioAndNPL(p, auctions, rights) {
     tax: _n0(sc.snrTax), mort: _n0(sc.snrMort), etc: _n0(sc.snrEtc),
   };
   const seniorTotal = _snr.lease + _snr.wage + _snr.curtax + _snr.tax + _snr.mort + _snr.etc;
-  const distOpts = { cost: distCost, senior: seniorTotal };
+  // 선순위 총액은 담당자 수동입력값으로 '실제 배당예상금액'에만 반영(요약).
+  // 아래 등기 상세 배당표는 낙찰가−경매비용 기준으로 독립 산정(참고용, 수동입력과 분리·이중차감 없음).
+  const distOpts = { cost: distCost };
+  const finalDistributable = finalBid != null ? Math.max(0, finalBid - distCost - seniorTotal) : null;
 
   // ── 예상 배당표 (옥션원 예상배당표 양식) — 추정낙찰가(채택안) 기준 ──────────
   // 03 추정낙찰가에서 최종 채택한 안(AI안/담당자안)의 낙찰예상가를 매각대금으로 가배당표 산정.
@@ -3248,14 +3251,14 @@ function renderScenarioAndNPL(p, auctions, rights) {
         <tr><td style="color:var(--ink-muted);">경매비용</td><td style="text-align:right;"><input type="number" min="0" step="1" value="${distCost || ''}" onchange="updateScenario('auctionCost', this.value)" style="width:130px;padding:5px;text-align:right;font-variant-numeric:tabular-nums;border:1px solid var(--line-strong,#c2cad9);border-radius:6px;" placeholder="0"> <span class="text-small text-muted">만원</span></td></tr>
         <tr style="border-top:1px solid var(--line,#dfe4ee);"><td style="font-weight:700;">선순위 총 금액 <span class="text-small text-muted" style="font-weight:400;">(1~6 합산)</span></td><td class="price" style="font-weight:800;">${fmt.won(seniorTotal)}</td></tr>
         ${_snrInputRows}
-        <tr style="border-top:2px solid var(--line-strong,#c2cad9);"><td style="font-weight:800;">실제 배당예상금액 <span class="text-small text-muted" style="font-weight:400;">(채택안−경매비용−선순위총액)</span></td><td class="price text-accent" style="font-weight:800;">${fmt.won(_dFinal.pool0)}</td></tr>
+        <tr style="border-top:2px solid var(--line-strong,#c2cad9);"><td style="font-weight:800;">실제 배당예상금액 <span class="text-small text-muted" style="font-weight:400;">(채택안−경매비용−선순위총액)</span></td><td class="price text-accent" style="font-weight:800;">${fmt.won(finalDistributable)}</td></tr>
       </tbody>
     </table>
     ${distributionTableHTML(ra, finalBid, distOpts, {})}
     ${_oursRow}
     <div class="text-small text-muted" style="margin-top:10px;line-height:1.7;">
-      ※ <strong>선순위 총 금액</strong>은 본건 배당에서 <strong>우선 변제되는 금액</strong>(최우선 임차보증금·임금채권·당해세·조세·선순위 근저당 등)을 직접 입력해 합산합니다. <strong>실제 배당예상금액 = 추정낙찰가 − 경매비용 − 선순위 총 금액.</strong><br>
-      ※ 아래 상세표는 <strong>등기부 권리</strong>를 설정일(등기순위) 순으로 배당한 참고용 가배당입니다. <strong>선순위 근저당</strong>란에는 상세표에 있는 채권을 <strong>중복 입력하지 마세요</strong>(이중 차감 방지). 채권액은 채권최고액 기준, 인수금액은 배당재원에서 차감하지 않고 매수인 인수금액으로 별도 표기.
+      ※ <strong>선순위 총 금액</strong>은 담당자가 본건 우선변제 예상액(최우선 임차보증금·임금채권·당해세·조세·선순위 근저당 등)을 <strong>직접 입력</strong>해 합산합니다. <strong>실제 배당예상금액 = 추정낙찰가 − 경매비용 − 선순위 총 금액.</strong><br>
+      ※ 아래 상세표는 <strong>등기부 권리</strong>를 설정일(등기순위) 순으로 배당한 <strong>참고용 가배당</strong>으로, 위 선순위 수동입력과는 <strong>별개(연동되지 않음)</strong>입니다. 채권액은 채권최고액 기준, 인수금액은 배당재원에서 차감하지 않고 매수인 인수금액으로 별도 표기.
       ${ra.hasTaxLien ? '<br><strong style="color:var(--accent);">당해세 우선배당 리스크:</strong> 압류 등기가 있어 당해세가 담보물권보다 우선 배당될 수 있습니다(교부청구액 확인 필요).' : ''}
     </div>
   </div>` : '';
@@ -4115,7 +4118,7 @@ function renderReport() {
   const _amRate = (sc.mgrBidRate != null && !isNaN(sc.mgrBidRate)) ? Number(sc.mgrBidRate) : _mid;
   const _amBid = _bid(_amRate);
   const _distCost = _fCost;
-  const _distOpts = { cost: _distCost, senior: _seniorTotalR };
+  const _distOpts = { cost: _distCost };   // 등기 상세 배당표는 낙찰가−경매비용 기준(선순위 수동입력과 분리)
   // 예상 배당표는 03 추정낙찰가 최종 채택안(AI안/담당자안) 기준으로 산정(06 모달과 동일).
   const _fDist = _finalBid != null ? computeDistribution(ra.classified, _finalBid, _distOpts) : null;
   const _fHasOurs = !!(_fDist && _fDist.oursClaim > 0);
