@@ -2464,7 +2464,8 @@ async function _renderCompMap(p, comps) {
     const m = L.circleMarker([lat, lng], { radius: 6, color: '#fff', weight: 1.5,
       fillColor: '#1A2540', fillOpacity: 0.9 })
       .addTo(_compMap)
-      .bindPopup(casePopup);
+      .bindPopup(casePopup, { autoPan: false });   // autoPan 끔 → 사례가 중앙에 유지되도록
+    m.on('click', function () { _compMap.setView(m.getLatLng(), _compMap.getZoom(), { animate: true }); });
     // 목록 번호를 마커마다 영구 표시(단지명은 팝업에). 목록 행 ↔ 지도 마커 대응.
     m.bindTooltip(String(no), { permanent: true, direction: 'top', offset: [0, -6], className: 'map-lbl map-lbl-num' });
     _compMarkers[i] = { marker: m, latlng: [lat, lng] };
@@ -3650,7 +3651,8 @@ function openBigMap(kind) {
     + 'L.control.layers(bases,null,{position:"topright",collapsed:false}).addTo(map);'
     + 'var pts=[],byIdx={};'
     + 'D.markers.forEach(function(m){'
-    + 'var mk=L.circleMarker([m.lat,m.lng],{radius:m.origin?10:7,color:"#fff",weight:m.origin?2:1.5,fillColor:m.fill,fillOpacity:m.origin?1:.9}).addTo(map).bindPopup(m.popup);'
+    + 'var mk=L.circleMarker([m.lat,m.lng],{radius:m.origin?10:7,color:"#fff",weight:m.origin?2:1.5,fillColor:m.fill,fillOpacity:m.origin?1:.9}).addTo(map).bindPopup(m.popup,{autoPan:false});'
+    + 'mk.on("click",function(){map.setView(mk.getLatLng(),map.getZoom(),{animate:true});});'
     + 'if(m.showLabel){mk.bindTooltip(m.label,{permanent:true,direction:"top",offset:[0,m.off],className:m.cls});}'
     + 'if(m.idx!=null){byIdx[m.idx]=mk;}'
     + 'pts.push([m.lat,m.lng]);'
@@ -3729,7 +3731,8 @@ async function _renderAuctionMap(p, items, targetDong) {
     const m = L.circleMarker([lat, lng], { radius: 6, color: '#fff', weight: 1.5,
       fillColor: '#1A2540', fillOpacity: 0.9 })
       .addTo(_auctionMap)
-      .bindPopup(casePopup);
+      .bindPopup(casePopup, { autoPan: false });   // autoPan 끔 → 사례가 중앙에 유지되도록
+    m.on('click', function () { _auctionMap.setView(m.getLatLng(), _auctionMap.getZoom(), { animate: true }); });
     // 동 이름 글자 라벨: 동별 첫 마커에만(겹침 방지).
     if (k === 1) m.bindTooltip(dong, { permanent: true, direction: 'top', offset: [0, -6], className: 'map-lbl' });
     _auctionMarkers[i] = { marker: m, latlng: [lat, lng] };   // 표 행 클릭 → 이동용
