@@ -2710,6 +2710,35 @@ def auction_rates():
         if hit:
             break
 
+    # ── 소프트 INFOCARE(동일 용도) 낙찰가율 ──────────────────────────────────
+    # 표본이 min_n 미만이어도 '해당 지역 동일 용도'의 INFOCARE(CSV) 낙찰가율을 확보한다.
+    # 프론트 캐스케이드는 이 값을 '한국부동산원 용도무관 종합'보다 우선 적용한다(사용자 요구).
+    #   ① 시군구 동일 용도(표본 1건 이상) → ② 시도 동일 용도 가중평균 → ③ 전국 동일 용도 가중평균
+    def _wmean(subrows):
+        num = den = 0.0
+        for rr in subrows:
+            v = rr.get('median_rate'); n = rr.get('sample_n') or 0
+            if v is not None and n > 0:
+                num += float(v) * n; den += n
+        return (round(num / den, 2), int(den)) if den > 0 else (None, 0)
+
+    soft_rate = soft_n = soft_scope = soft_region = None
+    if sigungu:
+        for m in _PERIOD_ORDER:
+            r = idx.get((sido or None, sigungu, m)) or idx.get((None, sigungu, m))
+            if r and r.get('median_rate') is not None and (r.get('sample_n') or 0) >= 1:
+                soft_rate, soft_n, soft_scope, soft_region = r.get('median_rate'), r.get('sample_n'), 'sigungu', sigungu
+                break
+    if soft_rate is None and sido:
+        _r, _n = _wmean([r for r in rows if r.get('sido') == sido])
+        if _r is not None:
+            soft_rate, soft_n, soft_scope, soft_region = _r, _n, 'sido', sido
+    if soft_rate is None:
+        _r, _n = _wmean(rows)
+        if _r is not None:
+            soft_rate, soft_n, soft_scope, soft_region = _r, _n, 'national', '전국'
+    _soft_asof = next((r.get('asof') for r in rows if r.get('asof')), None)
+
     # 집계(auction_rate_stats) 미존재해도 아래 동/유사도 가중은 원본에서 계산 가능하므로
     # 여기서 바로 종료하지 않는다. 최종적으로 hit·dong·sim 모두 없을 때만 미제공 처리.
     if hit:
@@ -2805,8 +2834,8 @@ def auction_rates():
         except Exception:
             sim_stat = None
 
-    # 집계·동·유사도 중 하나라도 있어야 제공. 모두 없으면 미제공(→ 프론트는 정적 통계 폴백).
-    if not (hit or dong_stat or sim_stat):
+    # 집계·동·유사도·소프트INFOCARE 중 하나라도 있어야 제공. 모두 없으면 미제공(→ 프론트는 정적 통계 폴백).
+    if not (hit or dong_stat or sim_stat or (soft_rate is not None)):
         return jsonify({'available': False, 'reason': '표본 부족'})
     _h = hit or {}
 
@@ -2838,6 +2867,9 @@ def auction_rates():
         'sim_n': (sim_stat or {}).get('n'),
         'sim_neff': (sim_stat or {}).get('neff'),
         'sim_ref_fail': (sim_stat or {}).get('ref_fail'),
+        # 소프트 INFOCARE(동일 용도) — 사례/실측 부족 시 프론트가 '용도무관 종합'보다 우선 적용.
+        'infocare_rate': soft_rate, 'infocare_n': soft_n,
+        'infocare_scope': soft_scope, 'infocare_region': soft_region, 'infocare_asof': _soft_asof,
     })
 
 
