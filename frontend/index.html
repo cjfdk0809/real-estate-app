@@ -3204,7 +3204,6 @@ function renderScenarioAndNPL(p, auctions, rights) {
   // 선순위 총액은 담당자 수동입력값으로 '실제 배당예상금액'에만 반영(요약).
   // 아래 등기 상세 배당표는 낙찰가−경매비용 기준으로 독립 산정(참고용, 수동입력과 분리·이중차감 없음).
   const distOpts = { cost: distCost };
-  const finalDistributable = finalBid != null ? Math.max(0, finalBid - distCost - seniorTotal) : null;
 
   // ── 예상 배당표 (옥션원 예상배당표 양식) — 추정낙찰가(채택안) 기준 ──────────
   // 03 추정낙찰가에서 최종 채택한 안(AI안/담당자안)의 낙찰예상가를 매각대금으로 가배당표 산정.
@@ -3212,6 +3211,7 @@ function renderScenarioAndNPL(p, auctions, rights) {
   const finalBid = be ? be.finalBid : midBid;
   const finalLabel = be ? be.decisionLabel : '중립';
   const finalRate = be ? (be.decision === 'mgr' ? be.mRatePct : be.aiRatePct) : mid;
+  const finalDistributable = finalBid != null ? Math.max(0, finalBid - distCost - seniorTotal) : null;
   const _distItems = _distributionItems(ra.classified);
   const _dFinal = computeDistribution(ra.classified, finalBid, distOpts);
   const _hasOurs = _dFinal.oursClaim > 0;
