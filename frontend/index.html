@@ -3453,12 +3453,15 @@ async function loadSimilarAuctionCases(p) {
     }).join('');
 
     body.innerHTML = `
+      ${d.approximate ? `<div class="text-small" style="margin-bottom:10px;padding:8px 10px;background:#FFF7E6;border:1px solid #F0D9A8;border-radius:6px;color:#8A6D00;">ℹ️ 본건 면적(<strong>${(p.exclusiveArea || p.supplyArea || '-')}㎡</strong>)에 <strong>±면적 조건으로 딱 맞는 사례가 없어</strong>, 같은 <strong>${d.region}</strong> 아파트 중 <strong>면적이 가장 가까운 매각사례</strong>를 참고용으로 표시합니다. <strong>면적차가 크므로</strong> 낙찰가·낙찰가율은 그대로 대입하지 말고 참고만 하세요. (추정치엔 반영 안 됨)</div>` : ''}
       <div style="margin-bottom:10px;">
-        <strong style="color:var(--green);">✓ ${d.count}건</strong>
+        ${d.approximate
+          ? `<strong style="color:#B45309;">≈ ${d.count}건</strong> · ${d.region} 아파트 · 면적 근접순 · ${d.period_label} <span class="text-muted text-small">(참고용·면적차 큼)</span>`
+          : `<strong style="color:var(--green);">✓ ${d.count}건</strong>
         · ${d.region}${d.region_level ? ` (${d.region_level} 단위)` : ''} · 면적 ±${d.area_tol_pct}% · ${d.period_label}
         ${d.median_bid_rate != null ? ` · 중앙 낙찰가율 <strong>${d.median_bid_rate}%</strong>` : ''}
         ${sameDongCount ? ` · <span style="color:var(--kiwoom-pink-deep,#CC00CC);font-weight:700;">본건 동일 ${rg.dong} ${sameDongCount}건</span>` : ''}
-        <span class="text-muted text-small">(참고용 · 동 사례 5건↑이면 추정에 우선 반영)</span>
+        <span class="text-muted text-small">(참고용 · 동 사례 5건↑이면 추정에 우선 반영)</span>`}
       </div>
       ${d.region_level && d.region_level !== '동' && rg.dong ? `<div class="text-small" style="margin-bottom:10px;padding:8px 10px;background:#FFF7E6;border:1px solid #F0D9A8;border-radius:6px;color:#8A6D00;">ℹ️ <strong>${rg.dong}</strong> 사례가 부족해 같은 <strong>${rg.sigungu || d.region}</strong> 범위(예전 사례 포함, ${d.period_label})까지 넓혀 조회했습니다. <strong>타 시·군은 시장이 달라 제외</strong>합니다. ${rg.dong} 사례가 쌓이면 자동으로 ${rg.dong}만 반영됩니다.</div>` : ''}
       <div style="max-height:340px;overflow-y:auto;border:1px solid var(--line);border-radius:6px;">

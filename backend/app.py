@@ -3034,6 +3034,59 @@ def auction_comparables():
     except Exception as e:
         return jsonify({'available': False, 'reason': str(e), 'items': []})
 
+    # ── 폴백: 사다리(최대 시군구·±30%·60개월)로도 0건이면, 같은 시·군·구·동일용도 매각
+    #    사례 중 '면적이 가장 가까운' N건을 참고용으로 노출(approximate=True). 표준 평형을
+    #    벗어난 본건(대형·초소형)에서 데이터가 있는데도 0건만 뜨는 문제를 막는다. 본건 대비
+    #    0.4~2.5배 밖(명백한 이상치·깨진 면적)은 제외. 추정치엔 반영하지 않는 참고 표기.
+    approximate = False
+    if not picked and area:
+        try:
+            frows = _fetch('sigungu')
+            _fcut = (today - _dt.timedelta(days=60 * 30)).isoformat()
+            cands = []
+            for r in frows:
+                if (r.get('sale_date') or '') < _fcut:
+                    continue
+                if not _region_ok(r, 'sigungu'):
+                    continue
+                if require_use and not (use_group and r.get('use_group') == use_group):
+                    continue
+                ra = r.get('area_sqm')
+                if not ra or ra <= 0:
+                    continue
+                ratio = ra / area
+                if ratio < 0.4 or ratio > 2.5:   # 명백한 이상치·깨진 면적(예: 본건 6062㎡) 제외
+                    continue
+                cands.append((abs(ra - area), r))
+            cands.sort(key=lambda t: t[0])
+            near = {}
+            for _, r in cands:
+                key = (r.get('court_name'), r.get('case_no'), r.get('item_no'))
+                if key in near:
+                    continue
+                hits = _hits(r, 0.30)
+                near[key] = {
+                    'court_name': r.get('court_name'), 'case_no': r.get('case_no'),
+                    'item_no': r.get('item_no'), 'use_type': r.get('use_type'),
+                    'dong': _dong_of(r), 'address': r.get('address'),
+                    'area_sqm': r.get('area_sqm'),
+                    'appraisal_price': r.get('appraisal_price'),
+                    'sale_price': r.get('sale_price'), 'bid_rate': r.get('bid_rate'),
+                    'sale_date': r.get('sale_date'), 'result': r.get('result'),
+                    'fail_count': r.get('fail_count'),
+                    'match_score': len(hits), 'match_hits': hits,
+                }
+                if len(near) >= 5:
+                    break
+            if near:
+                picked = sorted(near.values(),
+                                key=lambda x: (x.get('match_score', 0), x.get('sale_date') or ''),
+                                reverse=True)
+                approximate = True
+                chosen_level, chosen_period = 'sigungu', 60
+        except Exception:
+            approximate = False
+
     # 참고 지표: 조회된 사례의 중앙값 낙찰가율 (추정 반영은 안 함)
     rates = sorted(x['bid_rate'] for x in picked if x.get('bid_rate') is not None)
     med = None
@@ -3045,6 +3098,7 @@ def auction_comparables():
                12: '최근 12개월', 24: '최근 24개월', 36: '최근 36개월', 60: '최근 60개월'}
     return jsonify({
         'available': True, 'count': len(picked),
+        'approximate': approximate,   # True면 '면적차 큼·참고용' (±% 매칭 아님)
         'area_tol_pct': chosen_tol_pct,
         'period_months': chosen_period, 'period_label': _plabel.get(chosen_period),
         'region': _LEVEL_NAME.get(chosen_level) or sigungu,
