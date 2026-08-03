@@ -356,6 +356,8 @@
       sameComplexN: same.length, sigunguN: sg.length,
       useFactor: useFactor, useLabel: _useLabel(p.use || p.usage), usedReal: usedReal,
       failAdj: failAdj, effN: effN, conf: conf,
+      // 범위가 실제 분위수(sim/동/실측 p25·p75)인지, ±5%p 참고범위인지 구분(라벨 정확도)
+      rangeFromQuartile: !!(usedReal && _p25 != null && _p75 != null),
       rangeLo: sc.con, rangeHi: sc.agg };
   }
   window.resolveBidRateCascade = resolveBidRateCascade;
@@ -569,7 +571,7 @@
       note += '<div class="text-small" style="margin-top:7px;padding-top:7px;border-top:1px dashed var(--line,#dfe4ee);">'
         + '<span style="display:inline-block;padding:1px 9px;border-radius:10px;font-weight:700;color:#fff;background:' + cas.conf.color + ';">신뢰도 ' + cas.conf.grade + '</span> '
         + '<span class="text-muted">' + cas.conf.label + (cas.effN != null ? ' · 유효표본 ' + round1(cas.effN) + '건' : '') + '</span>'
-        + '<div class="text-muted" style="margin-top:4px;">추정 낙찰가율 범위 <strong>' + round1(cas.rangeLo) + '~' + round1(cas.rangeHi) + '%</strong> → 추정낙찰가 <strong>' + won(_loAmt) + ' ~ ' + won(_hiAmt) + '</strong> <span style="opacity:.8;">(25~75분위)</span></div>'
+        + '<div class="text-muted" style="margin-top:4px;">추정 낙찰가율 범위 <strong>' + round1(cas.rangeLo) + '~' + round1(cas.rangeHi) + '%</strong> → 추정낙찰가 <strong>' + won(_loAmt) + ' ~ ' + won(_hiAmt) + '</strong> <span style="opacity:.8;">(' + (cas.rangeFromQuartile ? '25~75분위' : '참고범위 ±5%p') + ')</span></div>'
         + '</div>';
     }
     // 낙찰가율 기준월 신선도 — 기준월이 오래되면 과거 통계 사용 가능성을 경고(수기 검토 유도)
