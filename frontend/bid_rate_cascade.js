@@ -90,6 +90,8 @@
     var g = _useGroup(p.use || p.usage);
     var rg = _parseRegion(p.addrLot || p.addrRoad || '');
     rg.sigungu = parseSigungu(p.addrLot || p.addrRoad || '') || rg.sigungu;   // 🆕 성남시 분당구 등 '구'까지 세분화(백엔드 저장키와 일치)
+    // 🆕 지번주소에 시도(예: '서울특별시')가 없으면 도로명주소에서 시도·시군구 보충 → 시군구 통계 폴백 방지
+    if (!rg.sido) { var _rr = _parseRegion(p.addrRoad || ''); rg.sido = _rr.sido || rg.sido; if (!rg.sigungu) rg.sigungu = _rr.sigungu; }
     var v = _realCache[_rsKey(g, rg.sido, rg.sigungu, rg.dong)];
     return v || null;
   }
@@ -100,6 +102,8 @@
     var g = _useGroup(p.use || p.usage);
     var rg = _parseRegion(p.addrLot || p.addrRoad || '');
     rg.sigungu = parseSigungu(p.addrLot || p.addrRoad || '') || rg.sigungu;   // 🆕 성남시 분당구 등 '구'까지 세분화(백엔드 저장키와 일치)
+    // 🆕 지번주소에 시도(예: '서울특별시')가 없으면 도로명주소에서 시도·시군구 보충 → 시군구 통계 폴백 방지
+    if (!rg.sido) { var _rr = _parseRegion(p.addrRoad || ''); rg.sido = _rr.sido || rg.sido; if (!rg.sigungu) rg.sigungu = _rr.sigungu; }
     var key = _rsKey(g, rg.sido, rg.sigungu, rg.dong);
     if (key in _realCache) return;
     try {
@@ -207,7 +211,11 @@
     var props = (state && state.properties) || {}, aucs = (state && state.auctions) || {};
     var p = props[pid] || {};
     var addr = p.addrLot || p.addrRoad || '';
-    var targetSg = parseSigungu(addr), targetSido = parseSido(addr);
+    // 지번주소에 시도가 없으면(예: '강남구 청담동') 도로명주소에서 시도·시군구를 보충 →
+    // 시군구 통계(한국부동산원·INFOCARE)를 건너뛰고 전국으로 폴백하던 문제 방지.
+    var _road = p.addrRoad || '';
+    var targetSg = parseSigungu(addr) || parseSigungu(_road);
+    var targetSido = parseSido(addr) || parseSido(_road);
 
     var same = (aucs[pid] || []).map(rateOf).filter(ok);
     var sg = [];
