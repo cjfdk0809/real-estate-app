@@ -77,6 +77,9 @@ def _styles():
                              textColor=MUTED),
         'kvV': ParagraphStyle('kvV', fontName='NanumBold', fontSize=9.5, leading=13,
                              textColor=INK),
+        # 채택가 강조: 분홍·글자 크기 약 2배
+        'kvVBig': ParagraphStyle('kvVBig', fontName='NanumBold', fontSize=19, leading=23,
+                             textColor=PINK),
     }
 
 
@@ -124,7 +127,10 @@ def _make_on_page(meta):
 
 # ---- 섹션 → flowable ----
 def _kv_table(rows, st):
-    data = [[Paragraph(str(k), st['kvK']), Paragraph(str(v), st['kvV'])] for k, v in rows]
+    # '채택가' 행은 분홍·큰 글씨로 강조(담당자 의견)
+    data = [[Paragraph(str(k), st['kvK']),
+             Paragraph(str(v), st['kvVBig'] if str(k).strip() == '채택가' else st['kvV'])]
+            for k, v in rows]
     t = Table(data, colWidths=[35 * mm, None])
     t.setStyle(TableStyle([
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
@@ -163,22 +169,41 @@ def _grid_table(headers, rows, st, align=None):
 
 
 def _sections_to_flowables(sections, st):
+    # 섹션 제목(h2)이 페이지 맨 아래에 홀로 남고 내용이 다음 장으로 넘어가는 것을 방지:
+    # 제목과 '바로 다음 내용의 첫 블록'을 KeepTogether로 묶어 함께 넘긴다.
     flow = []
+    pending_h2 = None
     for sec in sections or []:
         typ = sec.get('type')
         if typ == 'h2':
-            flow.append(Paragraph(sec.get('text', ''), st['h2']))
-        elif typ == 'text':
-            flow.append(Paragraph(sec.get('text', ''), st['body']))
+            # 직전에 내용 없는 제목이 대기 중이면 먼저 흘려보냄(빈 섹션 방어)
+            if pending_h2 is not None:
+                flow.append(pending_h2)
+            pending_h2 = Paragraph(sec.get('text', ''), st['h2'])
+            continue
+        blk = []
+        if typ == 'text':
+            blk.append(Paragraph(sec.get('text', ''), st['body']))
         elif typ == 'kv':
-            flow.append(_kv_table(sec.get('rows', []), st))
-            flow.append(Spacer(1, 4))
+            blk.append(_kv_table(sec.get('rows', []), st))
+            blk.append(Spacer(1, 4))
         elif typ == 'table':
-            flow.append(_grid_table(sec.get('headers', []), sec.get('rows', []),
-                                    st, sec.get('align')))
-            flow.append(Spacer(1, 4))
+            blk.append(_grid_table(sec.get('headers', []), sec.get('rows', []),
+                                   st, sec.get('align')))
+            blk.append(Spacer(1, 4))
         elif typ == 'spacer':
-            flow.append(Spacer(1, sec.get('h', 8)))
+            blk.append(Spacer(1, sec.get('h', 8)))
+        if not blk:
+            continue
+        if pending_h2 is not None:
+            # 제목 + 다음 내용 첫 블록을 한 덩어리로(같은 페이지에 함께)
+            flow.append(KeepTogether([pending_h2] + blk[:1]))
+            flow.extend(blk[1:])
+            pending_h2 = None
+        else:
+            flow.extend(blk)
+    if pending_h2 is not None:
+        flow.append(pending_h2)
     return flow
 
 
