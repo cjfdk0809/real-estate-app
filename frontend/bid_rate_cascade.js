@@ -34,25 +34,29 @@
   /* ===== 용도 계수 — 전국 용도별 낙찰가율(INFOCARE 통계) ÷ 아파트(98.1%) 실측 비율 =====
      아파트=기준(1.00). 다세대 78.6%→0.80 · 연립 67.9%(rh는 다세대 위주라 0.80) ·
      오피스텔(주거) 76.3%→0.78 · 단독·다가구 ~73%→0.74. (지역 실측이 있으면 이 계수 미적용) */
-  var USE_FACTOR = { apt: 1.00, rh: 0.80, offi: 0.78, sh: 0.74 };
+  // rh = 다세대(빌라·도시형생활 포함), yl = 연립 — INFOCARE가 둘을 구분하므로 용도별로 분리 적용.
+  var USE_FACTOR = { apt: 1.00, rh: 0.80, yl: 0.78, offi: 0.78, sh: 0.74 };
   function _useFactor(use) {
     var u = (use || '').replace(/\s/g, '');
     if (/오피스텔/.test(u)) return USE_FACTOR.offi;
-    if (/다세대|연립|빌라|도시형생활|도생/.test(u)) return USE_FACTOR.rh;
+    if (/연립/.test(u)) return USE_FACTOR.yl;
+    if (/다세대|빌라|도시형생활|도생/.test(u)) return USE_FACTOR.rh;
     if (/단독|다가구/.test(u)) return USE_FACTOR.sh;
     return USE_FACTOR.apt;
   }
   function _useLabel(use) {
     var u = (use || '').replace(/\s/g, '');
     if (/오피스텔/.test(u)) return '오피스텔';
-    if (/다세대|연립|빌라|도시형생활|도생/.test(u)) return '연립·다세대';
+    if (/연립/.test(u)) return '연립';
+    if (/다세대|빌라|도시형생활|도생/.test(u)) return '다세대';
     if (/단독|다가구/.test(u)) return '단독·다가구';
     return '아파트';
   }
   function _useGroup(use) {
     var u = (use || '').replace(/\s/g, '');
     if (/오피스텔/.test(u)) return 'offi';
-    if (/다세대|연립|빌라|도시형생활|도생/.test(u)) return 'rh';
+    if (/연립/.test(u)) return 'yl';
+    if (/다세대|빌라|도시형생활|도생/.test(u)) return 'rh';
     if (/단독|다가구/.test(u)) return 'sh';
     return 'apt';
   }
