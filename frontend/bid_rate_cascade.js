@@ -96,6 +96,17 @@
     return v || null;
   }
 
+  // 실측/INFOCARE 낙찰가율이 캐시에 로드됐는지(값이 null이어도 '로드 완료'로 간주).
+  // 로드 전에는 낙찰가율이 한국부동산원 종합↔인포케어로 '왔다갔다'하므로, 로드 완료 후에만 확정 렌더한다.
+  function _realLoaded(p) {
+    if (!p || typeof window.BACKEND_URL !== 'string') return true;   // 백엔드 없으면 게이트 생략
+    var g = _useGroup(p.use || p.usage);
+    var rg = _parseRegion(p.addrLot || p.addrRoad || '');
+    rg.sigungu = parseSigungu(p.addrLot || p.addrRoad || '') || rg.sigungu;
+    if (!rg.sido) { var _rr = _parseRegion(p.addrRoad || ''); rg.sido = _rr.sido || rg.sido; if (!rg.sigungu) rg.sigungu = _rr.sigungu; }
+    return _rsKey(g, rg.sido, rg.sigungu, rg.dong) in _realCache;
+  }
+
   // 물건 선택/저장 시 호출 → 실측 통계 미리 로드 (없으면 조용히 근사계수로 폴백)
   async function prefetchRealRates(p) {
     if (!p || typeof window.BACKEND_URL !== 'string') return;
@@ -669,6 +680,24 @@
     var vc = document.getElementById('viewContainer'); if (!vc) return;
     var pid = state.currentPropertyId; if (!pid) return;
     var host = document.getElementById('bidEstHost');
+    var p = (state.properties || {})[pid];
+    // 🆕 INFOCARE 실측 낙찰가율이 아직 로드 안 됐으면 먼저 로드 후 확정 렌더.
+    //    (로드 전 '한국부동산원 용도무관 종합'이 잠깐 떴다가 인포케어로 바뀌는 '왔다갔다' 방지)
+    if (p && typeof prefetchRealRates === 'function' && typeof window.BACKEND_URL === 'string' && !_realLoaded(p)) {
+      window.__bidPending = window.__bidPending || {};
+      var loading = '<div class="card mb-24" data-cascade="1"><div class="card-title">추정 낙찰가액</div>'
+        + '<div class="text-muted" style="padding:10px 0;display:flex;align-items:center;gap:8px;">'
+        + '<span style="width:14px;height:14px;border:2px solid var(--kiwoom-navy-soft,#c9d3ee);border-top-color:var(--kiwoom-navy,#011F8E);border-radius:50%;display:inline-block;animation:bidspin 1s linear infinite;"></span>'
+        + '지역·용도 실측 낙찰가율을 불러오는 중…</div>'
+        + '<style>@keyframes bidspin{to{transform:rotate(360deg);}}</style></div>';
+      if (host) { host.innerHTML = loading; }
+      else { Array.prototype.forEach.call(vc.querySelectorAll('[data-cascade="1"]'), function (n) { n.remove(); }); var _t = document.createElement('div'); _t.innerHTML = loading; vc.appendChild(_t.firstElementChild); }
+      if (!window.__bidPending[pid]) {
+        window.__bidPending[pid] = true;
+        prefetchRealRates(p).then(function () { if (state.currentPropertyId === pid) injectBidEst(); });
+      }
+      return;
+    }
     var html = cardHTML(pid);
     var empty = '<div class="card"><div class="text-muted">감정가 또는 거래사례가 없어 추정할 수 없습니다. 02 거래사례 / 04 경공매 사례 탭에서 데이터를 채워주세요.</div></div>';
     if (host) { host.innerHTML = html || empty; return; }
