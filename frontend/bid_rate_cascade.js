@@ -60,6 +60,26 @@
     if (/단독|다가구/.test(u)) return 'sh';
     return 'apt';
   }
+  // 물건의 '진짜 용도' 문자열을 결정한다. 등기 건물유형(usage)을 우선하되,
+  // '공동주택'처럼 애매하면 총층수로 판정한다(다세대·연립=4층 이하, 아파트=5층 이상 — 법적 기준).
+  // 이렇게 하지 않으면 '공동주택'이 기본값(아파트)으로 빠져 다세대에 아파트 낙찰가율이 적용됨.
+  function _resolveUseText(p) {
+    p = p || {};
+    var precise = (p.usage || '');   // 등기 표제부 건물유형(다세대주택/연립주택/아파트/공동주택 등)
+    var use = (p.use || '');         // 폼 드롭다운(다세대/연립 등)
+    var tf = parseInt(p.totalFloors, 10);
+    var lowRise = (!isNaN(tf) && tf > 0 && tf <= 4);   // 4층 이하 = 집합주거면 다세대·연립
+    if (/오피스텔/.test(precise) || /오피스텔/.test(use)) return '오피스텔';
+    if (/단독|다가구/.test(precise) || /단독|다가구/.test(use)) return '단독다가구';
+    if (/연립/.test(precise)) return '연립주택';
+    if (/다세대|빌라|도시형/.test(precise)) return '다세대주택';
+    if (/아파트/.test(precise)) return lowRise ? '다세대주택' : '아파트';   // 4층 이하 '아파트' 표기는 다세대로 교정
+    if (!isNaN(tf) && tf > 0) return lowRise ? '다세대주택' : '아파트';       // 공동주택 등 애매 → 총층수 판정
+    if (/다세대|빌라|도시형/.test(use)) return '다세대주택';                  // 총층수 없으면 드롭다운(다세대/연립→다세대)
+    if (/연립/.test(use)) return '연립주택';
+    if (/아파트/.test(use)) return '아파트';
+    return use || precise || '';
+  }
 
   /* ===== 실측 낙찰가율 (법원경매 매각결과 축적 DB) =====
      캐스케이드는 동기이므로, 물건 선택 시 prefetch로 캐시에 채운 뒤 읽는다.
@@ -91,7 +111,7 @@
   }
 
   function _realStat(p) {
-    var g = _useGroup(p.use || p.usage);
+    var g = _useGroup(_resolveUseText(p));
     var rg = _parseRegion(p.addrLot || p.addrRoad || '');
     rg.sigungu = parseSigungu(p.addrLot || p.addrRoad || '') || rg.sigungu;   // 🆕 성남시 분당구 등 '구'까지 세분화(백엔드 저장키와 일치)
     // 🆕 지번주소에 시도(예: '서울특별시')가 없으면 도로명주소에서 시도·시군구 보충 → 시군구 통계 폴백 방지
@@ -104,7 +124,7 @@
   // 로드 전에는 낙찰가율이 한국부동산원 종합↔인포케어로 '왔다갔다'하므로, 로드 완료 후에만 확정 렌더한다.
   function _realLoaded(p) {
     if (!p || typeof window.BACKEND_URL !== 'string') return true;   // 백엔드 없으면 게이트 생략
-    var g = _useGroup(p.use || p.usage);
+    var g = _useGroup(_resolveUseText(p));
     var rg = _parseRegion(p.addrLot || p.addrRoad || '');
     rg.sigungu = parseSigungu(p.addrLot || p.addrRoad || '') || rg.sigungu;
     if (!rg.sido) { var _rr = _parseRegion(p.addrRoad || ''); rg.sido = _rr.sido || rg.sido; if (!rg.sigungu) rg.sigungu = _rr.sigungu; }
@@ -114,7 +134,7 @@
   // 물건 선택/저장 시 호출 → 실측 통계 미리 로드 (없으면 조용히 근사계수로 폴백)
   async function prefetchRealRates(p) {
     if (!p || typeof window.BACKEND_URL !== 'string') return;
-    var g = _useGroup(p.use || p.usage);
+    var g = _useGroup(_resolveUseText(p));
     var rg = _parseRegion(p.addrLot || p.addrRoad || '');
     rg.sigungu = parseSigungu(p.addrLot || p.addrRoad || '') || rg.sigungu;   // 🆕 성남시 분당구 등 '구'까지 세분화(백엔드 저장키와 일치)
     // 🆕 지번주소에 시도(예: '서울특별시')가 없으면 도로명주소에서 시도·시군구 보충 → 시군구 통계 폴백 방지
@@ -270,7 +290,7 @@
     else { tier = 'default'; center = CFG.def.mid; }
 
     // 용도 계수 (근사) — 실측 통계가 없을 때만 적용. 실측이 있으면 그 값을 그대로 쓴다.
-    var useFactor = _useFactor(p.use || p.usage);
+    var useFactor = _useFactor(_resolveUseText(p));
     var real = _realStat(p);   // {median, p25, p75, n, ..., dongRate, dongN, dongRefFail} | null
     var usedReal = false;
     var failDelta = 0, failAdj = null;   // 유찰횟수 보정(실측 단계 전용)
@@ -348,20 +368,20 @@
     switch (tier) {
       case 'same_complex': scope = '본건 동일단지 낙찰사례'; break;
       case 'sigungu':      scope = (targetSg || '시군구') + ' 낙찰사례'; break;
-      case 'sim':          scope = _useLabel(p.use || p.usage) + ' 유사도 가중 낙찰가율 · '
+      case 'sim':          scope = _useLabel(_resolveUseText(p)) + ' 유사도 가중 낙찰가율 · '
                                  + (targetSg || real.sigungu || real.region || '') + ' 등 (면적·지역 근접, 유효표본 ' + round1(real.simNeff) + ')'; break;
-      case 'stat_dong':    scope = _useLabel(p.use || p.usage) + ' 실측 낙찰가율 · '
+      case 'stat_dong':    scope = _useLabel(_resolveUseText(p)) + ' 실측 낙찰가율 · '
                                  + (real.dongName || '동') + ' (동 단위, n=' + real.dongN + ')'; break;
-      case 'stat_real':    scope = _useLabel(p.use || p.usage) + ' 실측 낙찰가율 · '
+      case 'stat_real':    scope = _useLabel(_resolveUseText(p)) + ' 실측 낙찰가율 · '
                                  + (real.derivation || ((real.region || '전국') + ' (n=' + real.n + ')')); break;
-      case 'infocare':     scope = (real.infocareRegion || targetSg || '시군구') + ' ' + _useLabel(p.use || p.usage) + ' 낙찰가율(인포케어)'
+      case 'infocare':     scope = (real.infocareRegion || targetSg || '시군구') + ' ' + _useLabel(_resolveUseText(p)) + ' 낙찰가율(인포케어)'
                                  + (real.infocareScope && real.infocareScope !== 'sigungu' ? ' · ' + (real.infocareScope === 'national' ? '전국' : '시도') + ' 동일용도 평균' : '')
                                  + (real.infocareN != null ? ' (표본 ' + real.infocareN + '건)' : ''); break;
       case 'stat_sigungu': scope = (targetSg || '시군구') + ' 통계(용도무관 종합)'; break;
       case 'stat_national':scope = '전국 평균(용도무관 종합)'; break;
       default:             scope = '기본값(지역 미확인)';
     }
-    if (!usedReal && useFactor !== 1) scope += ' · 용도보정(근사) ' + _useLabel(p.use || p.usage) + '(×' + useFactor + ')';
+    if (!usedReal && useFactor !== 1) scope += ' · 용도보정(근사) ' + _useLabel(_resolveUseText(p)) + '(×' + useFactor + ')';
 
     if (effN == null) effN = sampleN;   // 동일단지·시군구 사례는 사례수로 신뢰도 산정
     var conf = _confGrade(effN);
@@ -369,7 +389,7 @@
     return { tier: tier, center: sc.mid, scenarios: sc, isStat: isStat, asof: asof,
       sampleN: sampleN, scope: scope, targetSigungu: targetSg, targetSido: targetSido,
       sameComplexN: same.length, sigunguN: sg.length,
-      useFactor: useFactor, useLabel: _useLabel(p.use || p.usage), usedReal: usedReal,
+      useFactor: useFactor, useLabel: _useLabel(_resolveUseText(p)), usedReal: usedReal,
       failAdj: failAdj, effN: effN, conf: conf,
       // 범위가 실제 분위수(sim/동/실측 p25·p75)인지, ±5%p 참고범위인지 구분(라벨 정확도)
       rangeFromQuartile: !!(usedReal && _p25 != null && _p75 != null),
