@@ -3780,31 +3780,60 @@ def _iter_csv_members(files):
                 yield base + ' (읽기 실패)', b''
 
 
-def _bulk_replace_rate_stats(rows, months, asof):
+def _bulk_replace_rate_stats(rows, months, asof, force=False):
     """rows(=[{sido,sigungu,use_group,sample_n,rate}])를 한 번에 적재.
     (period_months + 이번 업로드에 포함된 각 시도의 해당 시군구) 기존 행만 삭제 후 일괄 insert.
     행 단위 select/update 를 없애 대량(전국 ~250개)에서도 타임아웃 없이 idempotent 하게 동작한다.
-    반환: 기록된 행 수."""
+    ※ 다운그레이드 방지: 같은 (시도·시군구·용도군)에서 새 표본수가 기존보다 적으면 기존값을 유지한다.
+       (주2회 등 짧은 기간 스냅샷이 1년치를 덮어쓰는 것을 막음. force=True면 무조건 덮어씀)
+    반환: (기록 행 수, 표본 적어 유지된 행 수)."""
     if not rows:
-        return 0
+        return (0, 0)
     by_sido = {}
     for r in rows:
         by_sido.setdefault(r['sido'], set()).add(r['sigungu'])
-    # 정확히 '이번에 다시 올린 시군구'만 삭제 → 같은 시도의 다른 구 데이터는 보존.
+    # 기존값 조회(다운그레이드 방지용)
+    existing = {}
+    if not force:
+        for sido, sggs in by_sido.items():
+            try:
+                ex = (supabase.table('auction_rate_stats')
+                      .select('sido,sigungu,use_group,sample_n,median_rate,avg_rate,asof')
+                      .eq('period_months', months).eq('sido', sido)
+                      .in_('sigungu', sorted(sggs)).execute().data) or []
+            except Exception:
+                ex = []
+            for e in ex:
+                existing[(e.get('sido'), e.get('sigungu'), e.get('use_group'))] = e
+    # 최종본: 기존값으로 시작 → 새 표본이 기존 이상이면 교체(적으면 기존 유지)
+    final = dict(existing)
+    kept = 0
+    for r in rows:
+        k = (r['sido'], r['sigungu'], r['use_group'])
+        old = existing.get(k)
+        new_n = r.get('sample_n') or 0
+        old_n = (old or {}).get('sample_n') or 0
+        if (not force) and old is not None and new_n < old_n:
+            kept += 1
+            continue  # 표본 적음 → 기존 1년치 유지(덮어쓰기 방지)
+        final[k] = {'sido': r['sido'], 'sigungu': r['sigungu'], 'use_group': r['use_group'],
+                    'sample_n': new_n, 'median_rate': r['rate'], 'avg_rate': r['rate'], 'asof': asof}
+    # 영향 시군구 삭제 후 최종본 일괄 insert
     for sido, sggs in by_sido.items():
         (supabase.table('auction_rate_stats').delete()
          .eq('period_months', months).eq('sido', sido)
          .in_('sigungu', sorted(sggs)).execute())
-    recs = [{'sido': r['sido'], 'sigungu': r['sigungu'], 'use_group': r['use_group'],
-             'period_months': months, 'sample_n': r['sample_n'],
-             'median_rate': r['rate'], 'avg_rate': r['rate'], 'asof': asof}
-            for r in rows]
+    recs = [{'sido': v['sido'], 'sigungu': v['sigungu'], 'use_group': v['use_group'],
+             'period_months': months, 'sample_n': v.get('sample_n'),
+             'median_rate': v.get('median_rate'), 'avg_rate': v.get('avg_rate'),
+             'asof': v.get('asof', asof)}
+            for v in final.values()]
     written = 0
     for i in range(0, len(recs), 500):  # 500행씩 청크 insert
         chunk = recs[i:i + 500]
         supabase.table('auction_rate_stats').insert(chunk).execute()
         written += len(chunk)
-    return written
+    return (written, kept)
 
 
 # ============================================================
@@ -3824,6 +3853,7 @@ def admin_import_rates_bulk():
             '<label>기준월(asof) <input name="asof" placeholder="예: 2026-06 (비우면 오늘)" style="width:100%;padding:6px 8px"></label>'
             '<label>CSV 여러 개 또는 ZIP <input type="file" name="files" accept=".csv,.zip" multiple required></label>'
             '<label><input type="checkbox" name="commit" value="1"> 전체 적재(체크 안 하면 미리보기만)</label>'
+            '<label><input type="checkbox" name="force" value="1"> 강제 덮어쓰기(표본 적어도 무조건 교체 · 기본은 표본 적으면 기존 1년치 유지)</label>'
             '<label>관리자 키(적재 시 필요) <input name="key" style="width:100%;padding:6px 8px"></label>'
             '<button type="submit" style="padding:9px;background:#0f766e;color:#fff;border:0;border-radius:6px;font-weight:700;cursor:pointer">파싱 / 적재</button>'
             '</form>')
@@ -3844,6 +3874,7 @@ def admin_import_rates_bulk():
     months = int(_infocare_num(request.form.get('months') or 12)) or 12
     asof = (request.form.get('asof') or '').strip()
     commit = request.form.get('commit') == '1'
+    force = request.form.get('force') == '1'
     key = request.form.get('key') or ''
     if not asof:
         import datetime as _dtb2
@@ -3878,13 +3909,13 @@ def admin_import_rates_bulk():
         entries.append({'kind': 'ok', 'name': fname, 'sido': sido, 'sgg': sgg, 'agg': agg, 'cells': cells})
 
     # 2) 적재는 전체를 모아 한 번에(배치) — 행 단위 쓰기 제거로 대량에서도 타임아웃 없음.
-    write_cnt, commit_err = 0, None
+    write_cnt, kept_cnt, commit_err = 0, 0, None
     if commit:
         all_rows = [{'sido': e['sido'], 'sigungu': e['sgg'], 'use_group': x['use_group'],
                      'sample_n': x['sample_n'], 'rate': x['rate']}
                     for e in entries if e['kind'] == 'ok' for x in e['agg'] if x['rate'] is not None]
         try:
-            write_cnt = _bulk_replace_rate_stats(all_rows, months, asof)
+            write_cnt, kept_cnt = _bulk_replace_rate_stats(all_rows, months, asof, force=force)
         except Exception as e:
             commit_err = str(e)
 
@@ -3906,7 +3937,9 @@ def admin_import_rates_bulk():
                              f'<td><b>{_html.escape(e["sido"])} {_html.escape(e["sgg"])}</b></td>{e["cells"]}</tr>')
 
     summary = (f'<p style="margin-top:10px">인식 <b>{ok_cnt}</b>개 · 건너뜀 <b>{skip_cnt}</b>개'
-               + (f' · <span class="ok">적재 {write_cnt}행</span>' if commit and not commit_err
+               + (f' · <span class="ok">적재 {write_cnt}행</span>'
+                  + (f' · <span class="muted">표본 적어 기존 유지 {kept_cnt}건(다운그레이드 방지 · 강제로 덮으려면 "강제 덮어쓰기" 체크)</span>' if kept_cnt else '')
+                  if commit and not commit_err
                   else (f' · <span class="err">적재 실패: {_html.escape(commit_err)}</span>' if commit_err
                         else ' · <b>미리보기</b>(적재 안 함)')) + '</p>')
     tbl = ('<table><thead><tr><th>파일명</th><th>상태</th><th>인식지역</th>'
