@@ -865,7 +865,7 @@ table { border-collapse: collapse; width: 100%; }
 </style>
 <script src="/kfi_trade_collector.js?v=20260723d"></script>
 <script src="/auction_rates.js?v=20260723d"></script>
-<script src="/bid_rate_cascade.js?v=20260803d"></script>
+<script src="/bid_rate_cascade.js?v=20260803e"></script>
 </head>
 <body>
 
@@ -4401,7 +4401,8 @@ function buildPropertyFieldsFromRegistry(a) {
     set('floor', p.floor);
     set('totalFloors', p.total_floors);
     set('completionDate', p.registration_date);
-    set('usage', p.main_use);
+    // 등기 건물유형(building_type: 다세대주택/연립주택/아파트…)을 우선 → 낙찰가율 용도 판정 정확도↑
+    set('usage', p.building_type || p.main_use);
     // 등기 건물유형 → 용도 드롭다운 값 (유형별 거래사례 수집 트리거)
     const _mappedUse = _mapUseFromRegistry(p);
     if (_mappedUse) f.use = _mappedUse;
@@ -4715,7 +4716,7 @@ async function autoLookupBuildingInfo() {
       setIf('totalFloors', d.title.totalFloors || d.title.total_floors);
       setIf('totalUnits', d.title.totalUnits || d.title.total_units);
       setIf('completionDate', d.title.completionDate || d.title.completion_date);
-      setIf('usage', d.title.usage || d.title.main_use);
+      setIf('usage', d.title.building_type || d.title.usage || d.title.main_use);
     }
 
     // 공시가격 (price)
