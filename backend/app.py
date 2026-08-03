@@ -3529,12 +3529,14 @@ def admin_coverage():
 
 # ============================================================
 # INFOCARE 시군구 통계 CSV 적재 — 집합건물 주거용만 추출해 auction_rate_stats 갱신
-#   용도(집합건물): 다세대·연립→rh, 아파트·주상복합(주거)→apt, 오피스텔·오피스텔(주거)→offi
+#   용도(집합건물): 다세대·연립→rh, 아파트→apt(순수 아파트), 오피스텔·오피스텔(주거)→offi
+#   ※ 주상복합(주거)은 낙찰가율이 아파트와 크게 달라(예: 서울 아파트 102% vs 주상복합 79%),
+#      아파트값이 희석되지 않도록 apt 집계에서 제외한다. (인포케어 '아파트' 행값과 일치)
 #   낙찰가율 = Σ총낙찰가/Σ총감정가(용도군 재집계), sample_n = Σ낙찰건수.
 #   GET: 업로드 폼. POST: 파싱→미리보기(기본). commit=1 + key=ADMIN_SECRET 이면 실제 적재.
 #   URL: /admin/import-rates
 # ============================================================
-_INFOCARE_MAP = {'아파트': 'apt', '주상복합(주거)': 'apt', '다세대': 'rh', '연립': 'rh',
+_INFOCARE_MAP = {'아파트': 'apt', '다세대': 'rh', '연립': 'rh',
                  '오피스텔': 'offi', '오피스텔(주거)': 'offi'}
 
 # 파일명 시도 인식 → 저장 표준형(주소 파싱과 동일한 현행 공식명)
@@ -3654,7 +3656,7 @@ def _parse_infocare_csv(raw_bytes):
 
 @app.route('/admin/import-rates', methods=['GET', 'POST'])
 def admin_import_rates():
-    UG_LABEL = {'apt': '아파트(+주상복합주거)', 'rh': '연립·다세대', 'offi': '오피스텔'}
+    UG_LABEL = {'apt': '아파트', 'rh': '연립·다세대', 'offi': '오피스텔'}
     form = ('<form method="post" enctype="multipart/form-data" '
             'style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px 18px;margin:12px 0;display:grid;gap:10px;max-width:520px">'
             '<label>시도 <input name="sido" placeholder="예: 서울특별시" required style="width:100%;padding:6px 8px"></label>'
