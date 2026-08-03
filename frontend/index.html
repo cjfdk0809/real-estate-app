@@ -4416,7 +4416,7 @@ function buildPropertyFieldsFromRegistry(a) {
 // 등기부 분석 결과 → 06 권리분석 항목 배열 (모달 저장·대량등록 공용)
 function buildRightsFromRegistry(a) {
   if (!a || !a.rights_timeline) return [];
-  return a.rights_timeline
+  const built = a.rights_timeline
     .filter(r => !r.is_cancelled && r.amount)
     .map(r => ({
       id: uid(),
@@ -4427,6 +4427,28 @@ function buildRightsFromRegistry(a) {
       assumed: 'false',
       memo: r.description || ''
     }));
+  // 🆕 근저당권 이전(양도)·NPL 양수 중복 계상 방지:
+  //    채권최고액이 동일하고 '권리자가 다른' 근저당권은 같은 담보가 이전된 것으로 보고 1건으로 통합.
+  //    (순위=최초 설정일 유지, 채권자=현재(최종) 권리자). 같은 은행의 동일액 별건은 통합하지 않음.
+  const mortByAmt = {};
+  const out = [];
+  built.forEach(r => {
+    if (r.type === '근저당권') {
+      const k = String(r.amount);
+      const prev = mortByAmt[k];
+      if (prev && prev.holder !== r.holder) {
+        if ((r.date || '') < (prev.date || '')) prev.date = r.date;   // 최초 설정일(순위) 유지
+        prev._orig = prev._orig || prev.holder;
+        prev.holder = r.holder;                                       // 현재(최종) 채권자로 갱신
+        prev.memo = '근저당권 이전 통합 · 현재 채권자 ' + r.holder + ' (원 설정 ' + prev._orig + ')';
+        return;   // 중복 근저당은 새 행으로 추가하지 않음
+      }
+      if (!prev) mortByAmt[k] = r;
+    }
+    out.push(r);
+  });
+  out.forEach(r => { delete r._orig; });
+  return out;
 }
 
 // 등기부 분석 결과 → 메모 요약 문자열 (말소기준권리·임차인·경매)
