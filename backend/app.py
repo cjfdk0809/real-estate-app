@@ -3263,7 +3263,7 @@ def admin_backtest():
     fmt = (request.args.get('format') or 'html').strip()
     cut = (_dtb.date.today() - _dtb.timedelta(days=months * 30)).isoformat()
 
-    USE_LABELS = {'apt': '아파트', 'rh': '연립·다세대', 'sh': '단독·다가구', 'offi': '오피스텔'}
+    USE_LABELS = {'apt': '아파트', 'rh': '다세대', 'yl': '연립', 'sh': '단독·다가구', 'offi': '오피스텔'}
     POOL_MAX, MIN_POOL = 2500, 8
 
     def _fetch_pool(ug):
@@ -3297,7 +3297,7 @@ def admin_backtest():
 
     results = []
     g_sim, g_base = [], []   # 전체(용도무관) 공정비교용 누적
-    for ug in ['apt', 'rh', 'sh', 'offi']:
+    for ug in ['apt', 'rh', 'yl', 'sh', 'offi']:
         pool = _fetch_pool(ug)
         if len(pool) < MIN_POOL:
             results.append({'ug': ug, 'label': USE_LABELS[ug], 'pool': len(pool),
@@ -3459,8 +3459,8 @@ def admin_coverage():
         return jsonify({'error': f'표본 수집 실패: {e}'}), 502
     sample_capped = len(sample) >= SAMPLE_MAX
 
-    UGS = ['apt', 'rh', 'offi', 'sh']
-    UG_LABEL = {'apt': '아파트', 'rh': '연립·다세대', 'offi': '오피스텔', 'sh': '단독·다가구', '기타': '기타'}
+    UGS = ['apt', 'rh', 'yl', 'offi', 'sh']
+    UG_LABEL = {'apt': '아파트', 'rh': '다세대', 'yl': '연립', 'offi': '오피스텔', 'sh': '단독·다가구', '기타': '기타'}
     mat, sido_tot, dmin, dmax = {}, {}, None, None
     for r in sample:
         if r.get('bid_rate') is None:
@@ -3529,14 +3529,14 @@ def admin_coverage():
 
 # ============================================================
 # INFOCARE 시군구 통계 CSV 적재 — 집합건물 주거용만 추출해 auction_rate_stats 갱신
-#   용도(집합건물): 다세대·연립→rh, 아파트→apt(순수 아파트), 오피스텔·오피스텔(주거)→offi
+#   용도(집합건물): 다세대→rh, 연립→yl(용도별 분리), 아파트→apt(순수 아파트), 오피스텔·오피스텔(주거)→offi
 #   ※ 주상복합(주거)은 낙찰가율이 아파트와 크게 달라(예: 서울 아파트 102% vs 주상복합 79%),
 #      아파트값이 희석되지 않도록 apt 집계에서 제외한다. (인포케어 '아파트' 행값과 일치)
 #   낙찰가율 = Σ총낙찰가/Σ총감정가(용도군 재집계), sample_n = Σ낙찰건수.
 #   GET: 업로드 폼. POST: 파싱→미리보기(기본). commit=1 + key=ADMIN_SECRET 이면 실제 적재.
 #   URL: /admin/import-rates
 # ============================================================
-_INFOCARE_MAP = {'아파트': 'apt', '다세대': 'rh', '연립': 'rh',
+_INFOCARE_MAP = {'아파트': 'apt', '다세대': 'rh', '연립': 'yl',
                  '오피스텔': 'offi', '오피스텔(주거)': 'offi'}
 
 # 파일명 시도 인식 → 저장 표준형(주소 파싱과 동일한 현행 공식명)
@@ -3656,7 +3656,7 @@ def _parse_infocare_csv(raw_bytes):
 
 @app.route('/admin/import-rates', methods=['GET', 'POST'])
 def admin_import_rates():
-    UG_LABEL = {'apt': '아파트', 'rh': '연립·다세대', 'offi': '오피스텔'}
+    UG_LABEL = {'apt': '아파트', 'rh': '다세대', 'yl': '연립', 'offi': '오피스텔'}
     form = ('<form method="post" enctype="multipart/form-data" '
             'style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px 18px;margin:12px 0;display:grid;gap:10px;max-width:520px">'
             '<label>시도 <input name="sido" placeholder="예: 서울특별시" required style="width:100%;padding:6px 8px"></label>'
@@ -3846,7 +3846,7 @@ def _bulk_replace_rate_stats(rows, months, asof, force=False):
 # ============================================================
 @app.route('/admin/import-rates-bulk', methods=['GET', 'POST'])
 def admin_import_rates_bulk():
-    UG_LABEL = {'apt': '아파트', 'rh': '연립·다세대', 'offi': '오피스텔'}
+    UG_LABEL = {'apt': '아파트', 'rh': '다세대', 'yl': '연립', 'offi': '오피스텔'}
     form = ('<form method="post" enctype="multipart/form-data" '
             'style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px 18px;margin:12px 0;display:grid;gap:10px;max-width:560px">'
             '<label>기간(개월) <input name="months" value="12" style="width:100%;padding:6px 8px"></label>'
@@ -3900,7 +3900,7 @@ def admin_import_rates_bulk():
         cells = ''.join(
             f'<td style="text-align:right">{(vals[u]["rate"] if u in vals else "—")}{"%" if u in vals else ""}'
             f'<div class="muted">n={vals[u]["sample_n"] if u in vals else 0}</div></td>'
-            for u in ('apt', 'rh', 'offi'))
+            for u in ('apt', 'rh', 'yl', 'offi'))
         if not (sido and sgg):
             skip_cnt += 1
             entries.append({'kind': 'skip', 'name': fname, 'sido': sido, 'sgg': sgg, 'cells': cells})
@@ -3943,7 +3943,7 @@ def admin_import_rates_bulk():
                   else (f' · <span class="err">적재 실패: {_html.escape(commit_err)}</span>' if commit_err
                         else ' · <b>미리보기</b>(적재 안 함)')) + '</p>')
     tbl = ('<table><thead><tr><th>파일명</th><th>상태</th><th>인식지역</th>'
-           '<th>아파트</th><th>연립·다세대</th><th>오피스텔</th></tr></thead>'
+           '<th>아파트</th><th>다세대</th><th>연립</th><th>오피스텔</th></tr></thead>'
            f'<tbody>{"".join(rows_html)}</tbody></table>')
     tip = ('' if commit else '<p class="muted" style="margin-top:12px">☝️ 값·지역이 맞으면 <b>전체 적재</b> 체크 + 관리자 키 입력 후 같은 파일(또는 ZIP)을 다시 올리세요. '
            '지역인식 실패는 파일명에 <code>시도 시군구</code>를 넣어 다시 시도하세요.</p>')
@@ -4010,7 +4010,7 @@ def admin_rate_stats():
         return (f'<td style="text-align:center"><button type="submit" name="del" value="{_html.escape(raw, quote=True)}" '
                 'style="padding:3px 9px;background:#fee2e2;color:#b91c1c;border:1px solid #fecaca;border-radius:6px;cursor:pointer">삭제</button></td>')
 
-    body = ''.join(f'<tr><td><b>{_html.escape(sg)}</b></td>' + ''.join(_cell(sg, u) for u in ('apt', 'rh', 'offi'))
+    body = ''.join(f'<tr><td><b>{_html.escape(sg)}</b></td>' + ''.join(_cell(sg, u) for u in ('apt', 'rh', 'yl', 'offi'))
                    + f'<td class="muted">{mat[sg].get("apt",(None,None,""))[2] or ""}</td>' + _delbtn(sg) + '</tr>'
                    for sg in order)
     warn = ('<div style="margin:12px 0;padding:12px 16px;border-radius:8px;background:#fef2f2;border:1px solid #fecaca;color:#b91c1c;font-weight:600">'
@@ -4025,8 +4025,8 @@ def admin_rate_stats():
             f'{msg}{warn}'
             f'<form method="get"><input type="hidden" name="sido" value="{_html.escape(sido, quote=True)}"><input type="hidden" name="months" value="{months}">'
             '<div style="margin:8px 0"><label>관리자 키(삭제 시 필요) <input name="key" style="padding:5px 8px;width:280px"></label></div>'
-            '<table><thead><tr><th>시군구</th><th>아파트</th><th>연립·다세대</th><th>오피스텔</th><th>기준월</th><th></th></tr></thead>'
-            f'<tbody>{body or "<tr><td colspan=6>데이터 없음</td></tr>"}</tbody></table></form>'
+            '<table><thead><tr><th>시군구</th><th>아파트</th><th>다세대</th><th>연립</th><th>오피스텔</th><th>기준월</th><th></th></tr></thead>'
+            f'<tbody>{body or "<tr><td colspan=7>데이터 없음</td></tr>"}</tbody></table></form>'
             '<p class="muted" style="margin-top:14px">※ 삭제: 위 키 입력 후 해당 행의 [삭제] 클릭. (전체)=시도 통계는 삭제 버튼 없음.<br>'
             '※ 다른 시도는 <code>?sido=경기도</code> 처럼 바꿔서 조회하세요.</p>')
     return Response(html, mimetype='text/html; charset=utf-8')
